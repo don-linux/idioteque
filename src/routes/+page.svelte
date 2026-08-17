@@ -1,156 +1,250 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
+  import { onDestroy } from "svelte";
+  import FileTree from "$lib/components/FileTree.svelte";
+  import MarkdownEditor from "$lib/components/MarkdownEditor.svelte";
+  import { workspace } from "$lib/workspace.svelte";
 
-  let name = $state("");
-  let greetMsg = $state("");
+  let status = $derived.by(() => {
+    if (workspace.saveState === "error") return "error al guardar";
+    if (workspace.saveState === "saving") return "guardando";
+    if (workspace.dirty) return "sin guardar";
+    if (workspace.saveState === "saved") return "guardado";
+    return "";
+  });
 
-  async function greet(event: Event) {
-    event.preventDefault();
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    greetMsg = await invoke("greet", { name });
-  }
+  onDestroy(() => {
+    void workspace.flushSave();
+  });
 </script>
 
-<main class="container">
-  <h1>Welcome to Tauri + Svelte</h1>
+{#if workspace.root === null}
+  <main class="welcome">
+    <h1>idioteque</h1>
+    <p>Abre una carpeta para editar su contexto: <code>docs/</code>, <code>.agents/</code>, <code>.opencode/</code>.</p>
+    <button type="button" class="primary" onclick={() => workspace.openFolder()}>
+      Abrir carpeta
+    </button>
+    {#if workspace.error}
+      <p class="error">{workspace.error}</p>
+    {/if}
+  </main>
+{:else}
+  <div class="workspace">
+    <aside>
+      <header>
+        <span class="root" title={workspace.root}>{workspace.root}</span>
+        <button type="button" onclick={() => workspace.openFolder()}>Cambiar</button>
+      </header>
 
-  <div class="row">
-    <a href="https://vite.dev" target="_blank">
-      <img src="/vite.svg" class="logo vite" alt="Vite Logo" />
-    </a>
-    <a href="https://tauri.app" target="_blank">
-      <img src="/tauri.svg" class="logo tauri" alt="Tauri Logo" />
-    </a>
-    <a href="https://svelte.dev" target="_blank">
-      <img src="/svelte.svg" class="logo svelte-kit" alt="SvelteKit Logo" />
-    </a>
+      {#if workspace.hasContextRoots}
+        <nav>
+          <FileTree
+            nodes={workspace.tree}
+            selected={workspace.currentPath}
+            onSelect={(path) => workspace.openFile(path)}
+          />
+        </nav>
+      {:else}
+        <p class="hint">
+          Esta carpeta no tiene <code>docs/</code>, <code>.agents/</code> ni <code>.opencode/</code>.
+        </p>
+      {/if}
+    </aside>
+
+    <section>
+      {#if workspace.currentPath === null}
+        <p class="hint centered">Selecciona un archivo.</p>
+      {:else}
+        <header>
+          <span class="path">{workspace.currentPath}</span>
+          <span class="status" class:error={workspace.saveState === "error"}>{status}</span>
+        </header>
+        <MarkdownEditor
+          content={workspace.content}
+          onChange={(contents) => workspace.edit(contents)}
+        />
+      {/if}
+
+      {#if workspace.error}
+        <p class="error banner">{workspace.error}</p>
+      {/if}
+    </section>
   </div>
-  <p>Click on the Tauri, Vite, and SvelteKit logos to learn more.</p>
-
-  <form class="row" onsubmit={greet}>
-    <input id="greet-input" placeholder="Enter a name..." bind:value={name} />
-    <button type="submit">Greet</button>
-  </form>
-  <p>{greetMsg}</p>
-</main>
+{/if}
 
 <style>
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
-}
+  :global(:root) {
+    --bg: #14161a;
+    --surface: #191c21;
+    --surface-hover: #22262d;
+    --border: #2a2f37;
+    --text: #e4e6ea;
+    --text-muted: #9aa1ad;
+    --text-faint: #666d79;
+    --accent: #7aa2f7;
+    --accent-soft: #7aa2f722;
+    --danger: #f7768e;
+    --font-ui: Inter, system-ui, -apple-system, sans-serif;
+    --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, monospace;
 
-.logo.svelte-kit:hover {
-  filter: drop-shadow(0 0 2em #ff3e00);
-}
-
-:root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 400;
-
-  color: #0f0f0f;
-  background-color: #f6f6f6;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
-}
-
-.container {
-  margin: 0;
-  padding-top: 10vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  text-align: center;
-}
-
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
-}
-
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
-}
-
-.row {
-  display: flex;
-  justify-content: center;
-}
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-
-a:hover {
-  color: #535bf2;
-}
-
-h1 {
-  text-align: center;
-}
-
-input,
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-}
-
-button {
-  cursor: pointer;
-}
-
-button:hover {
-  border-color: #396cd8;
-}
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
-}
-
-input,
-button {
-  outline: none;
-}
-
-#greet-input {
-  margin-right: 5px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
+    color-scheme: dark;
   }
 
-  a:hover {
-    color: #24c8db;
+  :global(html),
+  :global(body) {
+    height: 100%;
+    margin: 0;
   }
 
-  input,
+  :global(body) {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-ui);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .welcome {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    height: 100vh;
+    text-align: center;
+  }
+
+  .welcome h1 {
+    margin: 0;
+    font-size: 1.6rem;
+    font-weight: 600;
+  }
+
+  .welcome p {
+    max-width: 34rem;
+    margin: 0;
+    color: var(--text-muted);
+  }
+
+  .workspace {
+    display: grid;
+    grid-template-columns: 16rem 1fr;
+    height: 100vh;
+  }
+
+  aside {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  aside header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .root {
+    flex: 1;
+    overflow: hidden;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    direction: rtl;
+    text-align: left;
+  }
+
+  nav {
+    flex: 1;
+    overflow: auto;
+    padding: 0.5rem;
+  }
+
+  section {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  section header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.6rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .path {
+    overflow: hidden;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .status {
+    flex-shrink: 0;
+    color: var(--text-faint);
+    font-size: 0.72rem;
+  }
+
+  .status.error {
+    color: var(--danger);
+  }
+
+  .hint {
+    margin: 0;
+    padding: 1rem;
+    color: var(--text-faint);
+    font-size: 0.82rem;
+  }
+
+  .centered {
+    display: grid;
+    flex: 1;
+    place-content: center;
+  }
+
+  .error {
+    color: var(--danger);
+    font-size: 0.8rem;
+  }
+
+  .banner {
+    margin: 0;
+    padding: 0.6rem 1.5rem;
+    border-top: 1px solid var(--border);
+  }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+  }
+
   button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.35rem 0.7rem;
+    background: var(--surface-hover);
+    color: var(--text);
+    font: inherit;
+    font-size: 0.8rem;
+    cursor: pointer;
   }
-  button:active {
-    background-color: #0f0f0f69;
-  }
-}
 
+  button:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  button.primary {
+    padding: 0.5rem 1.1rem;
+    font-size: 0.9rem;
+  }
 </style>

@@ -8,6 +8,18 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [sveltekit()],
 
+  // Prebundling CodeMirror splits @codemirror/state into duplicate instances,
+  // which makes the editor reject its own extensions.
+  optimizeDeps: {
+    exclude: [
+      "codemirror",
+      "@codemirror/lang-markdown",
+      "@codemirror/language-data",
+      "@codemirror/state",
+      "@codemirror/view",
+    ],
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
