@@ -40,7 +40,7 @@ class Workspace {
   /// Guards against a slow read landing after the user picked another file.
   #loadToken = 0;
 
-  get hasContextRoots(): boolean {
+  get hasMarkdown(): boolean {
     return this.tree.length > 0;
   }
 

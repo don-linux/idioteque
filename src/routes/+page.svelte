@@ -20,7 +20,7 @@
 {#if workspace.root === null}
   <main class="welcome">
     <h1>idioteque</h1>
-    <p>Abre una carpeta para editar su contexto: <code>docs/</code>, <code>.agents/</code>, <code>.opencode/</code>.</p>
+    <p>Abre una carpeta para ver y editar sus archivos markdown.</p>
     <button type="button" class="primary" onclick={() => workspace.openFolder()}>
       Abrir carpeta
     </button>
@@ -36,7 +36,7 @@
         <button type="button" onclick={() => workspace.openFolder()}>Cambiar</button>
       </header>
 
-      {#if workspace.hasContextRoots}
+      {#if workspace.hasMarkdown}
         <nav>
           <FileTree
             nodes={workspace.tree}
@@ -45,9 +45,7 @@
           />
         </nav>
       {:else}
-        <p class="hint">
-          Esta carpeta no tiene <code>docs/</code>, <code>.agents/</code> ni <code>.opencode/</code>.
-        </p>
+        <p class="hint">Esta carpeta no tiene archivos markdown.</p>
       {/if}
     </aside>
 

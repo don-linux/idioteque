@@ -3,9 +3,10 @@ use std::path::{Component, Path, PathBuf};
 
 use serde::Serialize;
 
-/// The only directories the frontend is ever allowed to see or touch.
-const CONTEXT_ROOTS: [&str; 3] = ["docs", ".agents", ".opencode"];
 const MARKDOWN_EXTENSION: &str = "md";
+
+/// Noise we never walk. Hidden agent dirs (`.cursor`, `.agents`, …) are not here.
+const SKIP_DIRS: [&str; 5] = [".git", "node_modules", "target", "dist", ".svelte-kit"];
 
 #[derive(Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -29,26 +30,34 @@ fn is_markdown(path: &Path) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case(MARKDOWN_EXTENSION))
 }
 
+fn should_skip_dir(name: &str) -> bool {
+    SKIP_DIRS.contains(&name)
+}
+
 fn sort_by_name(nodes: &mut [TreeNode]) {
     nodes.sort_by_key(|node| node.name.to_lowercase());
 }
 
-/// Rejects anything that is not a plain descendant of one of the context roots,
-/// before the path ever reaches the filesystem.
+fn child_path(prefix: &str, name: &str) -> String {
+    if prefix.is_empty() {
+        name.to_string()
+    } else {
+        format!("{prefix}/{name}")
+    }
+}
+
+/// Rejects `..`, `.`, and absolute paths before anything reaches the filesystem.
 fn join_relative(root: &str, relative: &str) -> Result<PathBuf, String> {
     let relative = Path::new(relative);
-    let mut components = relative.components();
 
-    let context_root = match components.next() {
-        Some(Component::Normal(name)) => name.to_string_lossy().into_owned(),
-        _ => return Err("Ruta inválida".to_string()),
-    };
-
-    if !CONTEXT_ROOTS.contains(&context_root.as_str()) {
-        return Err(format!("`{context_root}` no es una carpeta de contexto"));
+    if relative.as_os_str().is_empty() {
+        return Err("Ruta inválida".to_string());
     }
 
-    if components.any(|component| !matches!(component, Component::Normal(_))) {
+    if !relative
+        .components()
+        .all(|component| matches!(component, Component::Normal(_)))
+    {
         return Err("Ruta inválida".to_string());
     }
 
@@ -91,9 +100,13 @@ fn collect_children(directory: &Path, prefix: &str) -> Vec<TreeNode> {
         }
 
         let name = entry.file_name().to_string_lossy().into_owned();
-        let path = format!("{prefix}/{name}");
+        let path = child_path(prefix, &name);
 
         if file_type.is_dir() {
+            if should_skip_dir(&name) {
+                continue;
+            }
+
             let children = collect_children(&entry.path(), &path);
             if children.is_empty() {
                 continue;
@@ -129,16 +142,7 @@ pub fn list_context_tree(root: String) -> Result<Vec<TreeNode>, String> {
         return Err(format!("`{root}` no es una carpeta"));
     }
 
-    Ok(CONTEXT_ROOTS
-        .iter()
-        .filter(|name| root_path.join(name).is_dir())
-        .map(|name| TreeNode {
-            name: (*name).to_string(),
-            path: (*name).to_string(),
-            kind: NodeKind::Dir,
-            children: collect_children(&root_path.join(name), name),
-        })
-        .collect())
+    Ok(collect_children(root_path, ""))
 }
 
 #[tauri::command]
@@ -171,4 +175,147 @@ pub fn write_markdown(root: String, path: String, contents: String) -> Result<()
         let _ = fs::remove_file(&temporary);
         format!("No se pudo guardar `{path}`: {error}")
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static FIXTURE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    struct Fixture {
+        root: PathBuf,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let seq = FIXTURE_SEQ.fetch_add(1, Ordering::Relaxed);
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos();
+            let root = std::env::temp_dir().join(format!("idioteque-ws-{nanos}-{seq}"));
+            fs::create_dir_all(&root).expect("create fixture root");
+            Self { root }
+        }
+
+        fn path(&self, relative: &str) -> PathBuf {
+            self.root.join(relative)
+        }
+
+        fn write_md(&self, relative: &str, contents: &str) {
+            let path = self.path(relative);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).expect("create parent");
+            }
+            fs::write(path, contents).expect("write markdown");
+        }
+
+        fn mkdir(&self, relative: &str) {
+            fs::create_dir_all(self.path(relative)).expect("create dir");
+        }
+
+        fn root_str(&self) -> String {
+            self.root.to_string_lossy().into_owned()
+        }
+
+        fn tree(&self) -> Vec<TreeNode> {
+            list_context_tree(self.root_str()).expect("list tree")
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn names(nodes: &[TreeNode]) -> Vec<&str> {
+        nodes.iter().map(|node| node.name.as_str()).collect()
+    }
+
+    fn find<'a>(nodes: &'a [TreeNode], name: &str) -> &'a TreeNode {
+        nodes
+            .iter()
+            .find(|node| node.name == name)
+            .unwrap_or_else(|| panic!("missing node `{name}`"))
+    }
+
+    #[test]
+    fn tree_includes_hidden_agent_dirs_and_docs() {
+        let fixture = Fixture::new();
+        fixture.write_md("README.md", "# root\n");
+        fixture.write_md("docs/guide.md", "# guide\n");
+        fixture.write_md(".cursor/rules/agent.md", "# cursor\n");
+        fixture.write_md(".agents/persona.md", "# agent\n");
+
+        let tree = fixture.tree();
+        assert_eq!(names(&tree), [".agents", ".cursor", "docs", "README.md"]);
+
+        let cursor = find(&tree, ".cursor");
+        assert_eq!(cursor.path, ".cursor");
+        assert_eq!(find(&cursor.children, "rules").path, ".cursor/rules");
+        assert_eq!(
+            find(&find(&cursor.children, "rules").children, "agent.md").path,
+            ".cursor/rules/agent.md"
+        );
+    }
+
+    #[test]
+    fn tree_skips_node_modules() {
+        let fixture = Fixture::new();
+        fixture.write_md("docs/note.md", "# note\n");
+        fixture.write_md("node_modules/pkg/README.md", "# hidden by skip\n");
+
+        let tree = fixture.tree();
+        assert_eq!(names(&tree), ["docs"]);
+        assert!(tree.iter().all(|node| node.name != "node_modules"));
+    }
+
+    #[test]
+    fn join_relative_rejects_parent_escape() {
+        let fixture = Fixture::new();
+        fixture.write_md("docs/note.md", "# note\n");
+
+        let error = join_relative(&fixture.root_str(), "../secret.md").unwrap_err();
+        assert_eq!(error, "Ruta inválida");
+
+        let error = join_relative(&fixture.root_str(), "docs/../secret.md").unwrap_err();
+        assert_eq!(error, "Ruta inválida");
+    }
+
+    #[test]
+    fn resolve_markdown_allows_hidden_and_rejects_non_md() {
+        let fixture = Fixture::new();
+        fixture.write_md(".cursor/rules/agent.md", "ok\n");
+        fixture.mkdir("docs");
+        fs::write(fixture.path("docs/notes.txt"), "nope").expect("write txt");
+
+        let hidden = resolve_markdown(&fixture.root_str(), ".cursor/rules/agent.md")
+            .expect("hidden markdown");
+        assert!(hidden.ends_with("agent.md"));
+
+        let error = resolve_markdown(&fixture.root_str(), "docs/notes.txt").unwrap_err();
+        assert_eq!(error, "Solo se pueden abrir archivos .md");
+    }
+
+    #[test]
+    fn read_and_write_markdown_roundtrip() {
+        let fixture = Fixture::new();
+        fixture.write_md(".cursor/rules/agent.md", "before\n");
+
+        let root = fixture.root_str();
+        let path = ".cursor/rules/agent.md".to_string();
+
+        assert_eq!(
+            read_markdown(root.clone(), path.clone()).expect("read"),
+            "before\n"
+        );
+
+        write_markdown(root.clone(), path.clone(), "after\n".to_string()).expect("write");
+        assert_eq!(read_markdown(root, path).expect("reread"), "after\n");
+    }
 }
