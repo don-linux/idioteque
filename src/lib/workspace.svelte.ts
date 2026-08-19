@@ -70,7 +70,10 @@ class Workspace {
     this.saveState = "idle";
     this.#loadToken += 1;
 
-    await appConfig.record(path);
+    const recorded = await appConfig.record(path);
+    if (recorded) {
+      this.root = recorded;
+    }
   }
 
   async closeWorkspace(): Promise<void> {

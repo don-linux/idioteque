@@ -81,8 +81,8 @@
         />
       {/if}
 
-      {#if workspace.error}
-        <p class="error banner">{workspace.error}</p>
+      {#if workspace.error || appConfig.error}
+        <p class="error banner">{workspace.error ?? appConfig.error}</p>
       {/if}
     </section>
   </div>
