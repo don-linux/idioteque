@@ -1,0 +1,108 @@
+import { describe, expect, it, vi } from "vitest";
+import {
+  dockFromAlt,
+  handleTerminalShortcut,
+  isTerminalDockShortcut,
+  nextDockToggle,
+  type TerminalDock,
+} from "./terminal-dock";
+
+describe("nextDockToggle", () => {
+  it("opens a closed panel at the requested dock", () => {
+    expect(nextDockToggle(false, "right", "bottom")).toEqual({ open: true, dock: "bottom" });
+    expect(nextDockToggle(false, "bottom", "right")).toEqual({ open: true, dock: "right" });
+  });
+
+  it("closes when the panel is already at that dock", () => {
+    expect(nextDockToggle(true, "bottom", "bottom")).toEqual({ open: false, dock: "bottom" });
+    expect(nextDockToggle(true, "right", "right")).toEqual({ open: false, dock: "right" });
+  });
+
+  it("moves an open panel to the other dock without closing", () => {
+    expect(nextDockToggle(true, "bottom", "right")).toEqual({ open: true, dock: "right" });
+    expect(nextDockToggle(true, "right", "bottom")).toEqual({ open: true, dock: "bottom" });
+  });
+});
+
+describe("dockFromAlt / isTerminalDockShortcut", () => {
+  it("maps alt to the right dock", () => {
+    expect(dockFromAlt(false)).toBe("bottom");
+    expect(dockFromAlt(true)).toBe("right");
+  });
+
+  it("matches only Ctrl+J and Ctrl+Alt+J", () => {
+    expect(isTerminalDockShortcut({ code: "KeyJ", ctrlKey: true, metaKey: false, shiftKey: false })).toBe(
+      true,
+    );
+    expect(isTerminalDockShortcut({ code: "KeyL", ctrlKey: true, metaKey: false, shiftKey: false })).toBe(
+      false,
+    );
+    expect(isTerminalDockShortcut({ code: "KeyJ", ctrlKey: true, metaKey: true, shiftKey: false })).toBe(
+      false,
+    );
+    expect(isTerminalDockShortcut({ code: "KeyJ", ctrlKey: true, metaKey: false, shiftKey: true })).toBe(
+      false,
+    );
+    expect(isTerminalDockShortcut({ code: "KeyJ", ctrlKey: false, metaKey: false, shiftKey: false })).toBe(
+      false,
+    );
+  });
+});
+
+function key(
+  partial: Partial<{
+    code: string;
+    ctrlKey: boolean;
+    metaKey: boolean;
+    shiftKey: boolean;
+    altKey: boolean;
+  }> = {},
+) {
+  return {
+    code: "KeyJ",
+    ctrlKey: true,
+    metaKey: false,
+    shiftKey: false,
+    altKey: false,
+    preventDefault: vi.fn(),
+    stopPropagation: vi.fn(),
+    stopImmediatePropagation: vi.fn(),
+    ...partial,
+  };
+}
+
+describe("handleTerminalShortcut", () => {
+  it("is a no-op without a workspace", () => {
+    const event = key();
+    const toggle = vi.fn();
+
+    handleTerminalShortcut(event, { hasWorkspace: false, toggle });
+
+    expect(toggle).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(event.stopPropagation).not.toHaveBeenCalled();
+  });
+
+  it("toggles bottom on Ctrl+J and stops the event from reaching xterm", () => {
+    const event = key({ altKey: false });
+    const toggle = vi.fn<(dock: TerminalDock) => void>();
+
+    handleTerminalShortcut(event, { hasWorkspace: true, toggle });
+
+    expect(toggle).toHaveBeenCalledTimes(1);
+    expect(toggle).toHaveBeenCalledWith("bottom");
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(event.stopPropagation).toHaveBeenCalledTimes(1);
+    expect(event.stopImmediatePropagation).toHaveBeenCalledTimes(1);
+  });
+
+  it("toggles right on Ctrl+Alt+J", () => {
+    const event = key({ altKey: true });
+    const toggle = vi.fn<(dock: TerminalDock) => void>();
+
+    handleTerminalShortcut(event, { hasWorkspace: true, toggle });
+
+    expect(toggle).toHaveBeenCalledWith("right");
+    expect(toggle).not.toHaveBeenCalledWith("bottom");
+  });
+});

@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
+  import { isTerminalDockShortcut } from "$lib/terminal-dock";
   import { terminal } from "$lib/terminal.svelte";
   import "@xterm/xterm/css/xterm.css";
 
@@ -13,7 +14,8 @@
   let fit: FitAddon | undefined;
 
   function fitAndResize(): void {
-    if (!view || !fit) return;
+    if (!view || !fit || !terminal.open || !host) return;
+    if (host.clientWidth < 2 || host.clientHeight < 2) return;
 
     try {
       fit.fit();
@@ -21,6 +23,7 @@
       return;
     }
 
+    terminal.rememberPark(host.clientWidth, host.clientHeight);
     void terminal.resize(view.cols, view.rows);
   }
 
@@ -42,6 +45,7 @@
     const fitAddon = new FitAddon();
 
     xterm.loadAddon(fitAddon);
+    xterm.attachCustomKeyEventHandler((event) => !isTerminalDockShortcut(event));
     xterm.open(host);
     view = xterm;
     fit = fitAddon;
