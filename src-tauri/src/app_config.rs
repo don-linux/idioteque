@@ -9,6 +9,7 @@ const CONFIG_VERSION: u32 = 1;
 const MAX_RECENTS: usize = 24;
 const CONFIG_DIR_NAME: &str = ".idioteque";
 const CONFIG_FILE_NAME: &str = "config.json";
+const CONFIG_TMP_NAME: &str = ".config.json.idioteque.tmp";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -83,11 +84,10 @@ fn save_to_path(path: &Path, config: &StoredConfig) -> Result<(), String> {
     let json = serde_json::to_string_pretty(config)
         .map_err(|error| format!("No se pudo serializar la configuración: {error}"))?;
 
-    let temporary = parent.join(".config.json.idioteque.tmp");
+    let temporary = parent.join(CONFIG_TMP_NAME);
 
-    fs::write(&temporary, json).map_err(|error| {
-        format!("No se pudo escribir la configuración: {error}")
-    })?;
+    fs::write(&temporary, json)
+        .map_err(|error| format!("No se pudo escribir la configuración: {error}"))?;
 
     fs::rename(&temporary, path).map_err(|error| {
         let _ = fs::remove_file(&temporary);
@@ -102,13 +102,7 @@ fn record_recent(config: StoredConfig, path: String, opened_at: String) -> Store
         .filter(|recent| recent.path != path)
         .collect();
 
-    recents.insert(
-        0,
-        StoredRecent {
-            path,
-            opened_at,
-        },
-    );
+    recents.insert(0, StoredRecent { path, opened_at });
     recents.truncate(MAX_RECENTS);
 
     StoredConfig {
@@ -123,9 +117,51 @@ fn remove_recent(config: StoredConfig, path: &str) -> StoredConfig {
         recents: config
             .recents
             .into_iter()
-            .filter(|recent| recent.path != path)
+            .filter(|recent| !same_recent_path(&recent.path, path))
             .collect(),
     }
+}
+
+fn same_recent_path(stored: &str, requested: &str) -> bool {
+    if path_keys_match(stored, requested) {
+        return true;
+    }
+
+    match resolve_folder(requested) {
+        Ok(canonical) => path_keys_match(stored, &canonical),
+        Err(_) => false,
+    }
+}
+
+fn path_keys_match(left: &str, right: &str) -> bool {
+    if left == right {
+        return true;
+    }
+
+    strip_windows_extended_prefix(trim_trailing_seps(left))
+        == strip_windows_extended_prefix(trim_trailing_seps(right))
+}
+
+fn trim_trailing_seps(path: &str) -> &str {
+    let trimmed = path.trim_end_matches(['/', '\\']);
+    if trimmed.is_empty() || trimmed.ends_with(':') {
+        path
+    } else {
+        trimmed
+    }
+}
+
+/// `\\?\C:\Users\…` → `C:\Users\…`. Leave `\\?\UNC\…` alone.
+fn strip_windows_extended_prefix(path: &str) -> &str {
+    match path.strip_prefix(r#"\\?\"#) {
+        Some(rest) if !rest.starts_with("UNC\\") && !rest.starts_with("UNC/") => rest,
+        _ => path,
+    }
+}
+
+fn portable_path(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    strip_windows_extended_prefix(&raw).to_string()
 }
 
 fn annotate(config: StoredConfig) -> AppConfig {
@@ -174,14 +210,14 @@ fn format_unix_utc(secs: u64) -> String {
 }
 
 fn resolve_folder(path: &str) -> Result<String, String> {
-    let canonical = fs::canonicalize(path)
-        .map_err(|error| format!("No se pudo abrir `{path}`: {error}"))?;
+    let canonical =
+        fs::canonicalize(path).map_err(|error| format!("No se pudo abrir `{path}`: {error}"))?;
 
     if !canonical.is_dir() {
         return Err(format!("`{path}` no es una carpeta"));
     }
 
-    Ok(canonical.to_string_lossy().into_owned())
+    Ok(portable_path(&canonical))
 }
 
 fn mutate_config(
@@ -258,7 +294,9 @@ mod tests {
     fn format_unix_utc_known_instants() {
         assert_eq!(format_unix_utc(0), "1970-01-01T00:00:00Z");
         assert_eq!(format_unix_utc(86_400), "1970-01-02T00:00:00Z");
+        assert_eq!(format_unix_utc(86_399), "1970-01-01T23:59:59Z");
         assert_eq!(format_unix_utc(1_704_067_200), "2024-01-01T00:00:00Z");
+        assert_eq!(format_unix_utc(1_709_164_800), "2024-02-29T00:00:00Z");
         assert_eq!(format_unix_utc(1_755_476_700), "2025-08-18T00:25:00Z");
     }
 
@@ -273,6 +311,28 @@ mod tests {
     }
 
     #[test]
+    fn parse_config_unknown_version_drops_valid_recents() {
+        assert_eq!(
+            parse_config(
+                br#"{
+                  "version": 99,
+                  "recents": [
+                    { "path": "/tmp/docs", "openedAt": "2026-08-18T20:25:00Z" }
+                  ]
+                }"#,
+            ),
+            default_config()
+        );
+    }
+
+    #[test]
+    fn parse_config_missing_recents_is_empty() {
+        let parsed = parse_config(br#"{"version":1}"#);
+        assert_eq!(parsed.version, 1);
+        assert!(parsed.recents.is_empty());
+    }
+
+    #[test]
     fn parse_config_reads_versioned_json() {
         let parsed = parse_config(
             br#"{
@@ -284,6 +344,7 @@ mod tests {
         );
 
         assert_eq!(parsed.version, 1);
+        assert_eq!(parsed.recents.len(), 1);
         assert_eq!(parsed.recents[0].path, "/tmp/docs");
         assert_eq!(parsed.recents[0].opened_at, "2026-08-18T20:25:00Z");
     }
@@ -319,9 +380,34 @@ mod tests {
         };
 
         let next = record_recent(config, "/new".into(), "2026-01-02T00:00:00Z".into());
-        assert_eq!(next.recents.len(), MAX_RECENTS);
+        assert_eq!(MAX_RECENTS, 24);
+        assert_eq!(next.recents.len(), 24);
         assert_eq!(next.recents[0].path, "/new");
         assert!(next.recents.iter().all(|recent| recent.path != "/23"));
+    }
+
+    #[test]
+    fn record_recent_rerecords_at_cap_without_dropping_other() {
+        let recents = (0..24)
+            .map(|index| recent(&format!("/{index}"), "2026-01-01T00:00:00Z"))
+            .collect();
+        let config = StoredConfig {
+            version: 1,
+            recents,
+        };
+
+        let next = record_recent(config, "/5".into(), "2026-01-02T00:00:00Z".into());
+        assert_eq!(next.recents.len(), 24);
+        assert_eq!(next.recents[0].path, "/5");
+        assert_eq!(next.recents[0].opened_at, "2026-01-02T00:00:00Z");
+        assert_eq!(
+            next.recents
+                .iter()
+                .filter(|recent| recent.path == "/5")
+                .count(),
+            1
+        );
+        assert!(next.recents.iter().any(|recent| recent.path == "/23"));
     }
 
     #[test]
@@ -337,6 +423,60 @@ mod tests {
     }
 
     #[test]
+    fn remove_recent_keeps_other_entries() {
+        let config = StoredConfig {
+            version: 1,
+            recents: vec![
+                recent("/a", "2026-01-01T00:00:00Z"),
+                recent("/b", "2026-01-02T00:00:00Z"),
+            ],
+        };
+
+        assert_eq!(
+            remove_recent(config, "/a").recents,
+            vec![recent("/b", "2026-01-02T00:00:00Z")]
+        );
+    }
+
+    #[test]
+    fn remove_recent_trims_slash_on_missing_folder() {
+        let config = StoredConfig {
+            version: 1,
+            recents: vec![
+                recent("/gone", "2026-01-01T00:00:00Z"),
+                recent("/keep", "2026-01-02T00:00:00Z"),
+            ],
+        };
+
+        assert_eq!(
+            remove_recent(config, "/gone/").recents,
+            vec![recent("/keep", "2026-01-02T00:00:00Z")]
+        );
+    }
+
+    #[test]
+    fn remove_recent_matches_existing_folder_with_trailing_slash() {
+        let home = Home::new();
+        let dir = home.root.join("docs");
+        fs::create_dir_all(&dir).expect("docs");
+        let canonical = resolve_folder(&dir.to_string_lossy()).expect("resolve");
+
+        let config = StoredConfig {
+            version: 1,
+            recents: vec![
+                recent(&canonical, "2026-01-01T00:00:00Z"),
+                recent("/keep", "2026-01-02T00:00:00Z"),
+            ],
+        };
+
+        let with_slash = format!("{canonical}/");
+        assert_eq!(
+            remove_recent(config, &with_slash).recents,
+            vec![recent("/keep", "2026-01-02T00:00:00Z")]
+        );
+    }
+
+    #[test]
     fn load_and_save_roundtrip_creates_dotfolder() {
         let home = Home::new();
         let path = home.config_path();
@@ -344,12 +484,9 @@ mod tests {
 
         let loaded = load_from_path(&path);
         assert_eq!(loaded, default_config());
+        assert!(!path.exists());
 
-        let recorded = record_recent(
-            loaded,
-            "/tmp/docs".into(),
-            "2026-08-18T20:25:00Z".into(),
-        );
+        let recorded = record_recent(loaded, "/tmp/docs".into(), "2026-08-18T20:25:00Z".into());
         save_to_path(&path, &recorded).expect("save");
 
         assert!(path.exists());
@@ -364,6 +501,21 @@ mod tests {
         let disk = fs::read_to_string(&path).expect("read disk");
         assert!(disk.contains("\"openedAt\""));
         assert!(disk.contains("/tmp/docs"));
+        assert!(!path.with_file_name(CONFIG_TMP_NAME).exists());
+    }
+
+    #[test]
+    fn save_to_path_overwrites_existing_config() {
+        let home = Home::new();
+        let path = home.config_path();
+        let first = record_recent(default_config(), "/a".into(), "2026-01-01T00:00:00Z".into());
+        save_to_path(&path, &first).expect("save first");
+
+        let second = record_recent(default_config(), "/b".into(), "2026-01-02T00:00:00Z".into());
+        save_to_path(&path, &second).expect("save second");
+
+        assert_eq!(load_from_path(&path), second);
+        assert!(!path.with_file_name(CONFIG_TMP_NAME).exists());
     }
 
     #[test]
@@ -376,7 +528,10 @@ mod tests {
             version: 1,
             recents: vec![
                 recent(&existing.to_string_lossy(), "2026-01-01T00:00:00Z"),
-                recent("/definitely/missing/idioteque-folder", "2026-01-02T00:00:00Z"),
+                recent(
+                    "/definitely/missing/idioteque-folder",
+                    "2026-01-02T00:00:00Z",
+                ),
             ],
         };
 
@@ -387,6 +542,22 @@ mod tests {
     }
 
     #[test]
+    fn annotate_file_is_not_existing_folder() {
+        let home = Home::new();
+        let file = home.root.join("note.md");
+        fs::write(&file, "x").expect("write file");
+
+        let config = StoredConfig {
+            version: 1,
+            recents: vec![recent(&file.to_string_lossy(), "2026-01-01T00:00:00Z")],
+        };
+
+        let annotated = annotate(config);
+        assert_eq!(annotated.recents.len(), 1);
+        assert!(!annotated.recents[0].exists);
+    }
+
+    #[test]
     fn resolve_folder_rejects_files() {
         let home = Home::new();
         let file = home.root.join("note.md");
@@ -394,5 +565,39 @@ mod tests {
 
         let error = resolve_folder(&file.to_string_lossy()).unwrap_err();
         assert!(error.contains("no es una carpeta"));
+    }
+
+    #[test]
+    fn resolve_folder_ok_canonicalizes() {
+        let home = Home::new();
+        let foo = home.root.join("foo");
+        fs::create_dir_all(&foo).expect("foo");
+
+        let via_slash = resolve_folder(&format!("{}/", foo.display())).expect("slash");
+        let via_dotdot =
+            resolve_folder(&foo.join("..").join("foo").to_string_lossy()).expect("dotdot");
+
+        assert_eq!(via_slash, via_dotdot);
+        assert!(!via_slash.ends_with('/'));
+        assert!(Path::new(&via_slash).is_dir());
+    }
+
+    #[test]
+    fn resolve_folder_missing_path_errors() {
+        let error = resolve_folder("/definitely/missing/idioteque-folder").unwrap_err();
+        assert!(error.contains("No se pudo abrir"));
+    }
+
+    #[test]
+    fn strip_windows_extended_prefix_drive_but_not_unc() {
+        assert_eq!(
+            strip_windows_extended_prefix(r#"\\?\C:\Users\x"#),
+            r#"C:\Users\x"#
+        );
+        assert_eq!(
+            strip_windows_extended_prefix(r#"\\?\UNC\server\share"#),
+            r#"\\?\UNC\server\share"#
+        );
+        assert_eq!(strip_windows_extended_prefix("/home/x"), "/home/x");
     }
 }
