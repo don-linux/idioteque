@@ -1,7 +1,11 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Mutex;
+use std::time::Duration;
 
+use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode, DebounceEventResult};
 use serde::Serialize;
+use tauri::{AppHandle, Emitter, State};
 
 const MARKDOWN_EXTENSION: &str = "md";
 
@@ -177,6 +181,101 @@ pub fn write_markdown(root: String, path: String, contents: String) -> Result<()
     })
 }
 
+#[tauri::command]
+pub fn delete_markdown(root: String, path: String) -> Result<(), String> {
+    let target = resolve_markdown(&root, &path)?;
+
+    fs::remove_file(&target).map_err(|error| format!("No se pudo borrar `{path}`: {error}"))
+}
+
+pub struct WatchState {
+    inner: Mutex<Option<notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>>>,
+}
+
+impl Default for WatchState {
+    fn default() -> Self {
+        Self {
+            inner: Mutex::new(None),
+        }
+    }
+}
+
+/// Whether a filesystem event should refresh the markdown tree.
+pub(crate) fn watch_path_matters(root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+
+    if relative.as_os_str().is_empty() {
+        return true;
+    }
+
+    for component in relative.components() {
+        let name = component.as_os_str().to_string_lossy();
+
+        if should_skip_dir(&name) {
+            return false;
+        }
+
+        if name.ends_with(".idioteque.tmp") {
+            return false;
+        }
+    }
+
+    true
+}
+
+#[tauri::command]
+pub fn watch_workspace(
+    app: AppHandle,
+    state: State<WatchState>,
+    root: String,
+) -> Result<(), String> {
+    let root_path = PathBuf::from(&root);
+
+    if !root_path.is_dir() {
+        return Err(format!("`{root}` no es una carpeta"));
+    }
+
+    let canonical = fs::canonicalize(&root_path).map_err(|error| error.to_string())?;
+    let watch_root = canonical.clone();
+
+    let mut inner = state.inner.lock().map_err(|error| error.to_string())?;
+    *inner = None;
+
+    let mut debouncer = new_debouncer(
+        Duration::from_millis(250),
+        move |result: DebounceEventResult| {
+            let Ok(events) = result else {
+                return;
+            };
+
+            if events
+                .iter()
+                .any(|event| watch_path_matters(&watch_root, &event.path))
+            {
+                let _ = app.emit("workspace-fs", ());
+            }
+        },
+    )
+    .map_err(|error| format!("No se pudo vigilar la carpeta: {error}"))?;
+
+    debouncer
+        .watcher()
+        .watch(&canonical, RecursiveMode::Recursive)
+        .map_err(|error| format!("No se pudo vigilar la carpeta: {error}"))?;
+
+    *inner = Some(debouncer);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn unwatch_workspace(state: State<WatchState>) -> Result<(), String> {
+    let mut inner = state.inner.lock().map_err(|error| error.to_string())?;
+    *inner = None;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,5 +416,52 @@ mod tests {
 
         write_markdown(root.clone(), path.clone(), "after\n".to_string()).expect("write");
         assert_eq!(read_markdown(root, path).expect("reread"), "after\n");
+    }
+
+    #[test]
+    fn delete_markdown_removes_file_and_rejects_escape() {
+        let fixture = Fixture::new();
+        fixture.write_md("docs/note.md", "bye\n");
+
+        let root = fixture.root_str();
+        delete_markdown(root.clone(), "docs/note.md".to_string()).expect("delete");
+
+        assert!(!fixture.path("docs/note.md").exists());
+        assert!(read_markdown(root.clone(), "docs/note.md".to_string()).is_err());
+
+        let escape = delete_markdown(root, "../secret.md".to_string()).unwrap_err();
+        assert_eq!(escape, "Ruta inválida");
+    }
+
+    #[test]
+    fn delete_markdown_rejects_non_md() {
+        let fixture = Fixture::new();
+        fixture.mkdir("docs");
+        fs::write(fixture.path("docs/notes.txt"), "nope").expect("write txt");
+
+        let error = delete_markdown(fixture.root_str(), "docs/notes.txt".to_string()).unwrap_err();
+        assert_eq!(error, "Solo se pueden abrir archivos .md");
+    }
+
+    #[test]
+    fn watch_ignores_tmp_and_skip_dirs() {
+        let root = Path::new("/workspace");
+
+        assert!(watch_path_matters(root, Path::new("/workspace")));
+        assert!(watch_path_matters(root, Path::new("/workspace/docs/note.md")));
+        assert!(watch_path_matters(
+            root,
+            Path::new("/workspace/.agents/persona.md")
+        ));
+        assert!(!watch_path_matters(
+            root,
+            Path::new("/workspace/docs/.note.md.idioteque.tmp")
+        ));
+        assert!(!watch_path_matters(
+            root,
+            Path::new("/workspace/node_modules/pkg/README.md")
+        ));
+        assert!(!watch_path_matters(root, Path::new("/workspace/.git/HEAD")));
+        assert!(!watch_path_matters(root, Path::new("/other/docs/note.md")));
     }
 }

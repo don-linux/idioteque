@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { ask, open } from "@tauri-apps/plugin-dialog";
 import { appConfig } from "$lib/app-config.svelte";
+import { terminal } from "$lib/terminal.svelte";
 
 const AUTOSAVE_DELAY_MS = 500;
 
@@ -26,6 +28,15 @@ function messageFrom(error: unknown): string {
   return String(error);
 }
 
+function treeHasFile(nodes: TreeNode[], path: string): boolean {
+  for (const node of nodes) {
+    if (node.kind === "file" && node.path === path) return true;
+    if (node.kind === "dir" && treeHasFile(node.children, path)) return true;
+  }
+
+  return false;
+}
+
 class Workspace {
   root = $state<string | null>(null);
   tree = $state<TreeNode[]>([]);
@@ -40,6 +51,7 @@ class Workspace {
   #writing: Promise<void> = Promise.resolve();
   /// Guards against a slow read landing after the user picked another file.
   #loadToken = 0;
+  #unlisten: UnlistenFn | null = null;
 
   get hasMarkdown(): boolean {
     return this.tree.length > 0;
@@ -54,6 +66,7 @@ class Workspace {
 
   async openRoot(path: string): Promise<void> {
     await this.flushSave();
+    await this.#leaveSession();
 
     try {
       this.tree = await invoke<TreeNode[]>("list_context_tree", { root: path });
@@ -64,29 +77,24 @@ class Workspace {
     }
 
     this.root = path;
-    this.currentPath = null;
-    this.content = "";
-    this.dirty = false;
-    this.saveState = "idle";
-    this.#loadToken += 1;
+    this.#dropOpenFile();
 
     const recorded = await appConfig.record(path);
     if (recorded) {
       this.root = recorded;
     }
+
+    await this.#startWatch(this.root);
   }
 
   async closeWorkspace(): Promise<void> {
     await this.flushSave();
+    await this.#leaveSession();
 
     this.root = null;
     this.tree = [];
-    this.currentPath = null;
-    this.content = "";
-    this.dirty = false;
-    this.saveState = "idle";
+    this.#dropOpenFile();
     this.error = null;
-    this.#loadToken += 1;
   }
 
   async refreshTree(): Promise<void> {
@@ -124,6 +132,61 @@ class Workspace {
     }
   }
 
+  async deleteFile(path: string): Promise<void> {
+    const root = this.root;
+    if (!root) return;
+
+    const confirmed = await ask(`¿Borrar ${path}?`, {
+      title: "idioteque",
+      kind: "warning",
+    });
+    if (!confirmed) return;
+
+    this.#cancelPending(path);
+
+    try {
+      await invoke("delete_markdown", { root, path });
+      this.error = null;
+    } catch (error) {
+      this.error = messageFrom(error);
+      return;
+    }
+
+    if (this.currentPath === path) {
+      this.#dropOpenFile();
+    }
+
+    await this.refreshTree();
+  }
+
+  async reloadFromDisk(): Promise<void> {
+    const root = this.root;
+    if (!root) return;
+
+    const path = this.currentPath;
+    await this.refreshTree();
+
+    if (path === null || this.currentPath !== path) return;
+
+    if (!treeHasFile(this.tree, path)) {
+      this.#dropOpenFile();
+      return;
+    }
+
+    if (this.dirty) return;
+
+    try {
+      const contents = await invoke<string>("read_markdown", { root, path });
+      if (this.currentPath !== path || this.dirty) return;
+      if (contents === this.content) return;
+      this.content = contents;
+    } catch (error) {
+      if (this.currentPath !== path) return;
+      this.#dropOpenFile();
+      this.error = messageFrom(error);
+    }
+  }
+
   edit(contents: string): void {
     const path = this.currentPath;
     if (!path) return;
@@ -146,6 +209,56 @@ class Workspace {
     }
 
     await this.#drainPending();
+  }
+
+  #dropOpenFile(): void {
+    this.currentPath = null;
+    this.content = "";
+    this.dirty = false;
+    this.saveState = "idle";
+    this.#loadToken += 1;
+  }
+
+  #cancelPending(path: string): void {
+    if (this.#pending?.path === path) {
+      this.#pending = null;
+    }
+
+    if (this.#timer !== null) {
+      clearTimeout(this.#timer);
+      this.#timer = null;
+    }
+  }
+
+  async #leaveSession(): Promise<void> {
+    await this.#stopWatch();
+    await terminal.teardown();
+  }
+
+  async #startWatch(root: string): Promise<void> {
+    await this.#stopWatch();
+
+    try {
+      await invoke("watch_workspace", { root });
+      this.#unlisten = await listen("workspace-fs", () => {
+        void this.reloadFromDisk();
+      });
+    } catch (error) {
+      this.error = messageFrom(error);
+    }
+  }
+
+  async #stopWatch(): Promise<void> {
+    if (this.#unlisten) {
+      this.#unlisten();
+      this.#unlisten = null;
+    }
+
+    try {
+      await invoke("unwatch_workspace");
+    } catch {
+      // Watcher may already be gone.
+    }
   }
 
   #drainPending(): Promise<void> {

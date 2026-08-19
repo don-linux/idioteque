@@ -6,11 +6,20 @@
     nodes,
     selected,
     onSelect,
+    onDelete,
   }: {
     nodes: TreeNode[];
     selected: string | null;
     onSelect: (path: string) => void;
+    onDelete: (path: string) => void;
   } = $props();
+
+  function onFileKeydown(event: KeyboardEvent, path: string): void {
+    if (event.key !== "Delete") return;
+    event.preventDefault();
+    event.stopPropagation();
+    onDelete(path);
+  }
 </script>
 
 <ul>
@@ -20,20 +29,30 @@
         <span class="dir">{node.name}</span>
         <div class="children">
           {#if node.children.length > 0}
-            <FileTree nodes={node.children} {selected} {onSelect} />
+            <FileTree nodes={node.children} {selected} {onSelect} {onDelete} />
           {:else}
             <p class="empty">sin archivos .md</p>
           {/if}
         </div>
       {:else}
-        <button
-          type="button"
-          class="file"
-          class:selected={node.path === selected}
-          onclick={() => onSelect(node.path)}
-        >
-          {node.name}
-        </button>
+        <div class="row" class:selected={node.path === selected}>
+          <button
+            type="button"
+            class="file"
+            onclick={() => onSelect(node.path)}
+            onkeydown={(event) => onFileKeydown(event, node.path)}
+          >
+            {node.name}
+          </button>
+          <button
+            type="button"
+            class="delete"
+            aria-label="Borrar {node.name}"
+            onclick={() => onDelete(node.path)}
+          >
+            ×
+          </button>
+        </div>
       {/if}
     </li>
   {/each}
@@ -69,9 +88,25 @@
     font-style: italic;
   }
 
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 0.15rem;
+    border-radius: 4px;
+  }
+
+  .row:hover,
+  .row.selected {
+    background: var(--surface-hover);
+  }
+
+  .row.selected {
+    background: var(--accent-soft);
+  }
+
   .file {
-    display: block;
-    width: 100%;
+    flex: 1;
+    min-width: 0;
     padding: 0.25rem 0.4rem;
     border: 0;
     border-radius: 4px;
@@ -83,12 +118,33 @@
     cursor: pointer;
   }
 
-  .file:hover {
-    background: var(--surface-hover);
+  .row.selected .file {
+    color: var(--accent);
   }
 
-  .file.selected {
-    background: var(--accent-soft);
-    color: var(--accent);
+  .delete {
+    flex-shrink: 0;
+    width: 1.4rem;
+    height: 1.4rem;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-faint);
+    font-size: 1rem;
+    line-height: 1;
+    opacity: 0;
+    cursor: pointer;
+  }
+
+  .row:hover .delete,
+  .row.selected .delete,
+  .delete:focus-visible {
+    opacity: 1;
+  }
+
+  .delete:hover {
+    background: var(--surface-hover);
+    color: var(--danger);
   }
 </style>

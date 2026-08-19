@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, type Snippet } from "svelte";
   import { appConfig } from "$lib/app-config.svelte";
 
-  let { children } = $props();
+  let { children }: { children: Snippet } = $props();
 
   onMount(() => {
     void appConfig.load();
@@ -33,6 +33,7 @@
     --font-ui: Inter, system-ui, -apple-system, sans-serif;
     --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, monospace;
     --footer-height: 2.75rem;
+    --term-size: 280px;
 
     color-scheme: dark;
   }
@@ -59,7 +60,7 @@
   .page {
     flex: 1;
     min-height: 0;
-    overflow: auto;
+    overflow: hidden;
   }
 
   footer {

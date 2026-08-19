@@ -3,7 +3,9 @@
   import FileTree from "$lib/components/FileTree.svelte";
   import MarkdownEditor from "$lib/components/MarkdownEditor.svelte";
   import RecentGrid from "$lib/components/RecentGrid.svelte";
+  import TerminalPanel from "$lib/components/TerminalPanel.svelte";
   import { appConfig } from "$lib/app-config.svelte";
+  import { terminal } from "$lib/terminal.svelte";
   import { workspace } from "$lib/workspace.svelte";
 
   let status = $derived.by(() => {
@@ -14,10 +16,48 @@
     return "";
   });
 
+  function onKeydown(event: KeyboardEvent): void {
+    if (workspace.root === null) return;
+    if (event.code !== "KeyJ" || !event.ctrlKey || event.metaKey) return;
+
+    event.preventDefault();
+    terminal.toggle(event.altKey ? "right" : "bottom");
+  }
+
+  let stopResize: (() => void) | null = null;
+
+  function startResize(event: PointerEvent): void {
+    event.preventDefault();
+    stopResize?.();
+
+    const vertical = terminal.dock === "bottom";
+    const start = vertical ? event.clientY : event.clientX;
+    const startSize = terminal.size;
+    const viewport = vertical ? window.innerHeight : window.innerWidth;
+
+    function move(next: PointerEvent): void {
+      const current = vertical ? next.clientY : next.clientX;
+      terminal.setSize(startSize + (start - current), viewport);
+    }
+
+    function up(): void {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      stopResize = null;
+    }
+
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    stopResize = up;
+  }
+
   onDestroy(() => {
+    stopResize?.();
     void workspace.flushSave();
   });
 </script>
+
+<svelte:window onkeydown={onKeydown} />
 
 {#if workspace.root === null}
   <main class="home">
@@ -46,7 +86,12 @@
     {/if}
   </main>
 {:else}
-  <div class="workspace">
+  <div
+    class="workspace"
+    class:term-bottom={terminal.open && terminal.dock === "bottom"}
+    class:term-right={terminal.open && terminal.dock === "right"}
+    style:--term-size="{terminal.size}px"
+  >
     <aside>
       <header>
         <span class="root" title={workspace.root}>{workspace.root}</span>
@@ -60,6 +105,7 @@
             nodes={workspace.tree}
             selected={workspace.currentPath}
             onSelect={(path) => workspace.openFile(path)}
+            onDelete={(path) => workspace.deleteFile(path)}
           />
         </nav>
       {:else}
@@ -67,7 +113,7 @@
       {/if}
     </aside>
 
-    <section>
+    <section class="editor-col">
       {#if workspace.currentPath === null}
         <p class="hint centered">Selecciona un archivo.</p>
       {:else}
@@ -81,10 +127,24 @@
         />
       {/if}
 
-      {#if workspace.error || appConfig.error}
-        <p class="error banner">{workspace.error ?? appConfig.error}</p>
+      {#if workspace.error || appConfig.error || terminal.error}
+        <p class="error banner">{workspace.error ?? appConfig.error ?? terminal.error}</p>
       {/if}
     </section>
+
+    {#if terminal.open || terminal.alive}
+      <div class="term-slot" class:parked={!terminal.open}>
+        {#if terminal.open}
+          <button
+            type="button"
+            class="split"
+            aria-label="Redimensionar terminal"
+            onpointerdown={startResize}
+          ></button>
+        {/if}
+        <TerminalPanel cwd={workspace.root} />
+      </div>
+    {/if}
   </div>
 {/if}
 
@@ -93,7 +153,8 @@
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
-    min-height: 100%;
+    height: 100%;
+    overflow: auto;
     padding: 2rem 2rem 3rem;
   }
 
@@ -124,15 +185,32 @@
   .workspace {
     display: grid;
     grid-template-columns: 16rem 1fr;
+    grid-template-rows: 1fr;
     height: 100%;
+    min-height: 0;
+  }
+
+  .workspace.term-bottom {
+    grid-template-columns: 16rem 1fr;
+    grid-template-rows: 1fr var(--term-size);
+  }
+
+  .workspace.term-right {
+    grid-template-columns: 16rem 1fr var(--term-size);
+    grid-template-rows: 1fr;
   }
 
   aside {
     display: flex;
     flex-direction: column;
     min-width: 0;
+    min-height: 0;
     border-right: 1px solid var(--border);
     background: var(--surface);
+  }
+
+  .workspace.term-bottom aside {
+    grid-row: 1 / -1;
   }
 
   aside header {
@@ -160,13 +238,23 @@
     padding: 0.5rem;
   }
 
-  section {
+  .editor-col {
     display: flex;
     flex-direction: column;
     min-width: 0;
+    min-height: 0;
   }
 
-  section header {
+  .workspace.term-bottom .editor-col {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .workspace.term-right .editor-col {
+    grid-column: 2;
+  }
+
+  .editor-col header {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -216,6 +304,60 @@
     margin: 0;
     padding: 0.6rem 1.5rem;
     border-top: 1px solid var(--border);
+  }
+
+  .term-slot {
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+    background: var(--bg);
+  }
+
+  .workspace.term-bottom .term-slot {
+    flex-direction: column;
+    grid-column: 2;
+    grid-row: 2;
+    border-top: 1px solid var(--border);
+  }
+
+  .workspace.term-right .term-slot {
+    flex-direction: row;
+    grid-column: 3;
+    border-left: 1px solid var(--border);
+  }
+
+  .term-slot.parked {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+    visibility: hidden;
+  }
+
+  .split {
+    flex-shrink: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: var(--border);
+  }
+
+  .workspace.term-bottom .split {
+    width: 100%;
+    height: 4px;
+    cursor: row-resize;
+  }
+
+  .workspace.term-right .split {
+    width: 4px;
+    height: 100%;
+    cursor: col-resize;
+  }
+
+  .split:hover {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: inherit;
   }
 
   button {
