@@ -1,0 +1,398 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Manager};
+
+const CONFIG_VERSION: u32 = 1;
+const MAX_RECENTS: usize = 24;
+const CONFIG_DIR_NAME: &str = ".idioteque";
+const CONFIG_FILE_NAME: &str = "config.json";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredRecent {
+    path: String,
+    opened_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct StoredConfig {
+    version: u32,
+    #[serde(default)]
+    recents: Vec<StoredRecent>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentFolder {
+    pub path: String,
+    pub opened_at: String,
+    pub exists: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppConfig {
+    pub version: u32,
+    pub recents: Vec<RecentFolder>,
+}
+
+fn default_config() -> StoredConfig {
+    StoredConfig {
+        version: CONFIG_VERSION,
+        recents: Vec::new(),
+    }
+}
+
+fn config_file_in(home: &Path) -> PathBuf {
+    home.join(CONFIG_DIR_NAME).join(CONFIG_FILE_NAME)
+}
+
+fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|error| format!("No se pudo resolver el home: {error}"))?;
+    Ok(config_file_in(&home))
+}
+
+fn parse_config(bytes: &[u8]) -> StoredConfig {
+    match serde_json::from_slice::<StoredConfig>(bytes) {
+        Ok(config) if config.version == CONFIG_VERSION => config,
+        _ => default_config(),
+    }
+}
+
+fn load_from_path(path: &Path) -> StoredConfig {
+    match fs::read(path) {
+        Ok(bytes) => parse_config(&bytes),
+        Err(_) => default_config(),
+    }
+}
+
+fn save_to_path(path: &Path, config: &StoredConfig) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Ruta de configuración inválida".to_string())?;
+
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("No se pudo crear `{}`: {error}", parent.display()))?;
+
+    let json = serde_json::to_string_pretty(config)
+        .map_err(|error| format!("No se pudo serializar la configuración: {error}"))?;
+
+    let temporary = parent.join(".config.json.idioteque.tmp");
+
+    fs::write(&temporary, json).map_err(|error| {
+        format!("No se pudo escribir la configuración: {error}")
+    })?;
+
+    fs::rename(&temporary, path).map_err(|error| {
+        let _ = fs::remove_file(&temporary);
+        format!("No se pudo guardar la configuración: {error}")
+    })
+}
+
+fn record_recent(config: StoredConfig, path: String, opened_at: String) -> StoredConfig {
+    let mut recents: Vec<StoredRecent> = config
+        .recents
+        .into_iter()
+        .filter(|recent| recent.path != path)
+        .collect();
+
+    recents.insert(
+        0,
+        StoredRecent {
+            path,
+            opened_at,
+        },
+    );
+    recents.truncate(MAX_RECENTS);
+
+    StoredConfig {
+        version: CONFIG_VERSION,
+        recents,
+    }
+}
+
+fn remove_recent(config: StoredConfig, path: &str) -> StoredConfig {
+    StoredConfig {
+        version: CONFIG_VERSION,
+        recents: config
+            .recents
+            .into_iter()
+            .filter(|recent| recent.path != path)
+            .collect(),
+    }
+}
+
+fn annotate(config: StoredConfig) -> AppConfig {
+    AppConfig {
+        version: config.version,
+        recents: config
+            .recents
+            .into_iter()
+            .map(|recent| RecentFolder {
+                exists: Path::new(&recent.path).is_dir(),
+                path: recent.path,
+                opened_at: recent.opened_at,
+            })
+            .collect(),
+    }
+}
+
+fn now_rfc3339() -> String {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    format_unix_utc(secs)
+}
+
+/// Civil date from Unix seconds, UTC. Howard Hinnant's `civil_from_days`.
+fn format_unix_utc(secs: u64) -> String {
+    let days = (secs / 86_400) as i64;
+    let tod = secs % 86_400;
+    let hour = tod / 3600;
+    let min = (tod % 3600) / 60;
+    let sec = tod % 60;
+
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+
+    format!("{y:04}-{m:02}-{d:02}T{hour:02}:{min:02}:{sec:02}Z")
+}
+
+fn resolve_folder(path: &str) -> Result<String, String> {
+    let canonical = fs::canonicalize(path)
+        .map_err(|error| format!("No se pudo abrir `{path}`: {error}"))?;
+
+    if !canonical.is_dir() {
+        return Err(format!("`{path}` no es una carpeta"));
+    }
+
+    Ok(canonical.to_string_lossy().into_owned())
+}
+
+fn mutate_config(
+    app: &AppHandle,
+    mutate: impl FnOnce(StoredConfig) -> StoredConfig,
+) -> Result<AppConfig, String> {
+    let path = config_path(app)?;
+    let next = mutate(load_from_path(&path));
+    save_to_path(&path, &next)?;
+    Ok(annotate(next))
+}
+
+#[tauri::command]
+pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
+    let path = config_path(&app)?;
+    Ok(annotate(load_from_path(&path)))
+}
+
+#[tauri::command]
+pub fn record_recent_folder(app: AppHandle, path: String) -> Result<AppConfig, String> {
+    let canonical = resolve_folder(&path)?;
+    let opened_at = now_rfc3339();
+
+    mutate_config(&app, |config| record_recent(config, canonical, opened_at))
+}
+
+#[tauri::command]
+pub fn remove_recent_folder(app: AppHandle, path: String) -> Result<AppConfig, String> {
+    mutate_config(&app, |config| remove_recent(config, &path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static FIXTURE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    struct Home {
+        root: PathBuf,
+    }
+
+    impl Home {
+        fn new() -> Self {
+            let seq = FIXTURE_SEQ.fetch_add(1, Ordering::Relaxed);
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos();
+            let root = std::env::temp_dir().join(format!("idioteque-home-{nanos}-{seq}"));
+            fs::create_dir_all(&root).expect("create fake home");
+            Self { root }
+        }
+
+        fn config_path(&self) -> PathBuf {
+            config_file_in(&self.root)
+        }
+    }
+
+    impl Drop for Home {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn recent(path: &str, opened_at: &str) -> StoredRecent {
+        StoredRecent {
+            path: path.to_string(),
+            opened_at: opened_at.to_string(),
+        }
+    }
+
+    #[test]
+    fn format_unix_utc_known_instants() {
+        assert_eq!(format_unix_utc(0), "1970-01-01T00:00:00Z");
+        assert_eq!(format_unix_utc(86_400), "1970-01-02T00:00:00Z");
+        assert_eq!(format_unix_utc(1_704_067_200), "2024-01-01T00:00:00Z");
+        assert_eq!(format_unix_utc(1_755_476_700), "2025-08-18T00:25:00Z");
+    }
+
+    #[test]
+    fn parse_config_recovers_from_missing_or_broken() {
+        assert_eq!(parse_config(b""), default_config());
+        assert_eq!(parse_config(b"{not json"), default_config());
+        assert_eq!(
+            parse_config(br#"{"version":99,"recents":[]}"#),
+            default_config()
+        );
+    }
+
+    #[test]
+    fn parse_config_reads_versioned_json() {
+        let parsed = parse_config(
+            br#"{
+              "version": 1,
+              "recents": [
+                { "path": "/tmp/docs", "openedAt": "2026-08-18T20:25:00Z" }
+              ]
+            }"#,
+        );
+
+        assert_eq!(parsed.version, 1);
+        assert_eq!(parsed.recents[0].path, "/tmp/docs");
+        assert_eq!(parsed.recents[0].opened_at, "2026-08-18T20:25:00Z");
+    }
+
+    #[test]
+    fn record_recent_dedupes_and_moves_to_front() {
+        let config = StoredConfig {
+            version: 1,
+            recents: vec![
+                recent("/a", "2026-01-01T00:00:00Z"),
+                recent("/b", "2026-01-02T00:00:00Z"),
+            ],
+        };
+
+        let next = record_recent(config, "/b".into(), "2026-01-03T00:00:00Z".into());
+        assert_eq!(
+            next.recents,
+            vec![
+                recent("/b", "2026-01-03T00:00:00Z"),
+                recent("/a", "2026-01-01T00:00:00Z"),
+            ]
+        );
+    }
+
+    #[test]
+    fn record_recent_caps_at_max() {
+        let recents = (0..MAX_RECENTS)
+            .map(|index| recent(&format!("/{index}"), "2026-01-01T00:00:00Z"))
+            .collect();
+        let config = StoredConfig {
+            version: 1,
+            recents,
+        };
+
+        let next = record_recent(config, "/new".into(), "2026-01-02T00:00:00Z".into());
+        assert_eq!(next.recents.len(), MAX_RECENTS);
+        assert_eq!(next.recents[0].path, "/new");
+        assert!(next.recents.iter().all(|recent| recent.path != "/23"));
+    }
+
+    #[test]
+    fn remove_recent_is_idempotent() {
+        let config = StoredConfig {
+            version: 1,
+            recents: vec![recent("/a", "2026-01-01T00:00:00Z")],
+        };
+
+        let next = remove_recent(config, "/a");
+        assert!(next.recents.is_empty());
+        assert!(remove_recent(next, "/a").recents.is_empty());
+    }
+
+    #[test]
+    fn load_and_save_roundtrip_creates_dotfolder() {
+        let home = Home::new();
+        let path = home.config_path();
+        assert!(!path.exists());
+
+        let loaded = load_from_path(&path);
+        assert_eq!(loaded, default_config());
+
+        let recorded = record_recent(
+            loaded,
+            "/tmp/docs".into(),
+            "2026-08-18T20:25:00Z".into(),
+        );
+        save_to_path(&path, &recorded).expect("save");
+
+        assert!(path.exists());
+        assert_eq!(
+            path.parent().and_then(|parent| parent.file_name()),
+            Some(std::ffi::OsStr::new(".idioteque"))
+        );
+
+        let reread = load_from_path(&path);
+        assert_eq!(reread, recorded);
+
+        let disk = fs::read_to_string(&path).expect("read disk");
+        assert!(disk.contains("\"openedAt\""));
+        assert!(disk.contains("/tmp/docs"));
+    }
+
+    #[test]
+    fn annotate_marks_missing_folders_without_dropping_them() {
+        let home = Home::new();
+        let existing = home.root.join("alive");
+        fs::create_dir_all(&existing).expect("create alive");
+
+        let config = StoredConfig {
+            version: 1,
+            recents: vec![
+                recent(&existing.to_string_lossy(), "2026-01-01T00:00:00Z"),
+                recent("/definitely/missing/idioteque-folder", "2026-01-02T00:00:00Z"),
+            ],
+        };
+
+        let annotated = annotate(config);
+        assert_eq!(annotated.recents.len(), 2);
+        assert!(annotated.recents[0].exists);
+        assert!(!annotated.recents[1].exists);
+    }
+
+    #[test]
+    fn resolve_folder_rejects_files() {
+        let home = Home::new();
+        let file = home.root.join("note.md");
+        fs::write(&file, "x").expect("write file");
+
+        let error = resolve_folder(&file.to_string_lossy()).unwrap_err();
+        assert!(error.contains("no es una carpeta"));
+    }
+}

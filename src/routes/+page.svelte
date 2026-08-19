@@ -2,6 +2,8 @@
   import { onDestroy } from "svelte";
   import FileTree from "$lib/components/FileTree.svelte";
   import MarkdownEditor from "$lib/components/MarkdownEditor.svelte";
+  import RecentGrid from "$lib/components/RecentGrid.svelte";
+  import { appConfig } from "$lib/app-config.svelte";
   import { workspace } from "$lib/workspace.svelte";
 
   let status = $derived.by(() => {
@@ -18,14 +20,29 @@
 </script>
 
 {#if workspace.root === null}
-  <main class="welcome">
-    <h1>idioteque</h1>
-    <p>Abre una carpeta para ver y editar sus archivos markdown.</p>
-    <button type="button" class="primary" onclick={() => workspace.openFolder()}>
-      Abrir carpeta
-    </button>
-    {#if workspace.error}
-      <p class="error">{workspace.error}</p>
+  <main class="home">
+    <header>
+      <div>
+        <h1>idioteque</h1>
+        <p>Abre una carpeta para ver y editar sus archivos markdown.</p>
+      </div>
+      <button type="button" class="primary" onclick={() => workspace.openFolder()}>
+        Abrir carpeta
+      </button>
+    </header>
+
+    {#if appConfig.recents.length === 0 && appConfig.loaded}
+      <p class="empty">Todavía no hay carpetas en el historial.</p>
+    {/if}
+
+    <RecentGrid
+      recents={appConfig.recents}
+      onOpen={(path) => workspace.openRoot(path)}
+      onRemove={(path) => appConfig.remove(path)}
+    />
+
+    {#if workspace.error || appConfig.error}
+      <p class="error">{workspace.error ?? appConfig.error}</p>
     {/if}
   </main>
 {:else}
@@ -33,6 +50,7 @@
     <aside>
       <header>
         <span class="root" title={workspace.root}>{workspace.root}</span>
+        <button type="button" onclick={() => workspace.closeWorkspace()}>Inicio</button>
         <button type="button" onclick={() => workspace.openFolder()}>Cambiar</button>
       </header>
 
@@ -71,62 +89,42 @@
 {/if}
 
 <style>
-  :global(:root) {
-    --bg: #14161a;
-    --surface: #191c21;
-    --surface-hover: #22262d;
-    --border: #2a2f37;
-    --text: #e4e6ea;
-    --text-muted: #9aa1ad;
-    --text-faint: #666d79;
-    --accent: #7aa2f7;
-    --accent-soft: #7aa2f722;
-    --danger: #f7768e;
-    --font-ui: Inter, system-ui, -apple-system, sans-serif;
-    --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, monospace;
-
-    color-scheme: dark;
-  }
-
-  :global(html),
-  :global(body) {
-    height: 100%;
-    margin: 0;
-  }
-
-  :global(body) {
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--font-ui);
-    -webkit-font-smoothing: antialiased;
-  }
-
-  .welcome {
+  .home {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 0.75rem;
-    height: 100vh;
-    text-align: center;
+    gap: 1.5rem;
+    min-height: 100%;
+    padding: 2rem 2rem 3rem;
   }
 
-  .welcome h1 {
-    margin: 0;
+  .home header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1.5rem;
+  }
+
+  .home h1 {
+    margin: 0 0 0.35rem;
     font-size: 1.6rem;
     font-weight: 600;
   }
 
-  .welcome p {
+  .home p {
     max-width: 34rem;
     margin: 0;
     color: var(--text-muted);
   }
 
+  .empty {
+    color: var(--text-faint);
+    font-size: 0.85rem;
+  }
+
   .workspace {
     display: grid;
     grid-template-columns: 16rem 1fr;
-    height: 100vh;
+    height: 100%;
   }
 
   aside {
@@ -218,11 +216,6 @@
     margin: 0;
     padding: 0.6rem 1.5rem;
     border-top: 1px solid var(--border);
-  }
-
-  code {
-    font-family: var(--font-mono);
-    font-size: 0.85em;
   }
 
   button {

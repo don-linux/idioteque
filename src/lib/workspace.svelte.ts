@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { appConfig } from "$lib/app-config.svelte";
 
 const AUTOSAVE_DELAY_MS = 500;
 
@@ -48,17 +49,41 @@ class Workspace {
     const selected = await open({ directory: true, multiple: false });
     if (typeof selected !== "string") return;
 
+    await this.openRoot(selected);
+  }
+
+  async openRoot(path: string): Promise<void> {
     await this.flushSave();
 
-    this.root = selected;
+    try {
+      this.tree = await invoke<TreeNode[]>("list_context_tree", { root: path });
+      this.error = null;
+    } catch (error) {
+      this.error = messageFrom(error);
+      return;
+    }
+
+    this.root = path;
+    this.currentPath = null;
+    this.content = "";
+    this.dirty = false;
+    this.saveState = "idle";
+    this.#loadToken += 1;
+
+    await appConfig.record(path);
+  }
+
+  async closeWorkspace(): Promise<void> {
+    await this.flushSave();
+
+    this.root = null;
+    this.tree = [];
     this.currentPath = null;
     this.content = "";
     this.dirty = false;
     this.saveState = "idle";
     this.error = null;
     this.#loadToken += 1;
-
-    await this.refreshTree();
   }
 
   async refreshTree(): Promise<void> {
