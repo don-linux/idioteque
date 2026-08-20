@@ -10,8 +10,14 @@
     clampFontSize,
     xtermFontFamily,
   } from "$lib/terminal-font";
+  import {
+    TERMINAL_ANSI_SLOTS,
+    TERMINAL_THEMES,
+    resolveTerminalTheme,
+  } from "$lib/terminal-theme";
 
   let previewFamily = $derived(xtermFontFamily(settingsEditor.fontFamily));
+  let previewTheme = $derived(resolveTerminalTheme(settingsEditor.theme));
 
   onMount(() => {
     void appConfig.listSystemFonts();
@@ -22,12 +28,16 @@
     (event.currentTarget as HTMLInputElement).value = String(next);
     settingsEditor.setSize(next);
   }
+
+  function onThemeChange(event: Event): void {
+    settingsEditor.setTheme((event.currentTarget as HTMLSelectElement).value);
+  }
 </script>
 
 <section class="section" aria-labelledby="terminal-heading">
   <h2 id="terminal-heading">Terminal</h2>
   <p class="lead">
-    Fuente y tamaño del panel integrado. Se aplican al guardar o con Ctrl+S.
+    Fuente, tamaño y tema del panel integrado. Se aplican al guardar o con Ctrl+S.
   </p>
 
   <div class="field">
@@ -75,13 +85,33 @@
     </div>
   </div>
 
-  <p
+  <div class="field">
+    <label for="terminal-theme">Tema</label>
+    <select id="terminal-theme" value={settingsEditor.theme} onchange={onThemeChange}>
+      {#each TERMINAL_THEMES as entry (entry.id)}
+        <option value={entry.id}>{entry.label}</option>
+      {/each}
+    </select>
+  </div>
+
+  <div
     class="preview"
-    style:font-family={previewFamily}
-    style:font-size={`${settingsEditor.fontSize}px`}
+    style:background={previewTheme.background}
+    style:color={previewTheme.foreground}
   >
-    {TERMINAL_FONT_PREVIEW}
-  </p>
+    <div class="swatches" aria-hidden="true">
+      {#each TERMINAL_ANSI_SLOTS as slot (slot)}
+        <span class="swatch" style:background={previewTheme[slot]}></span>
+      {/each}
+    </div>
+    <p
+      class="preview-sample"
+      style:background={previewTheme.background}
+      style:color={previewTheme.foreground}
+      style:font-family={previewFamily}
+      style:font-size={`${settingsEditor.fontSize}px`}
+    >{TERMINAL_FONT_PREVIEW}</p>
+  </div>
 
   {#if appConfig.error}
     <p class="error">{appConfig.error}</p>
@@ -188,6 +218,23 @@
     font-size: 0.78rem;
   }
 
+  select {
+    box-sizing: border-box;
+    width: min(32rem, 100%);
+    padding: 0.5rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-size: 0.9rem;
+  }
+
+  select:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
   .preview {
     margin: 0;
     padding: 0.75rem 0.85rem;
@@ -197,5 +244,23 @@
     color: var(--text);
     line-height: 1.4;
     white-space: pre;
+  }
+
+  .preview-sample {
+    margin: 0;
+  }
+
+  .swatches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    margin-bottom: 0.55rem;
+  }
+
+  .swatch {
+    display: block;
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 2px;
   }
 </style>
