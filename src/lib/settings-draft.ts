@@ -1,6 +1,7 @@
 export interface TerminalDraft {
   fontFamily: string | null;
   fontSize: number;
+  theme: string;
 }
 
 export function normalizeFontFamily(family: string | null | undefined): string | null {
@@ -9,5 +10,9 @@ export function normalizeFontFamily(family: string | null | undefined): string |
 }
 
 export function isSettingsDirty(draft: TerminalDraft, saved: TerminalDraft): boolean {
-  return draft.fontFamily !== saved.fontFamily || draft.fontSize !== saved.fontSize;
+  return (
+    draft.fontFamily !== saved.fontFamily ||
+    draft.fontSize !== saved.fontSize ||
+    draft.theme !== saved.theme
+  );
 }

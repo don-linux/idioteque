@@ -14,20 +14,24 @@ describe("normalizeFontFamily", () => {
 });
 
 describe("isSettingsDirty", () => {
-  const saved = { fontFamily: "MesloLGS NF", fontSize: 15 };
+  const saved = { fontFamily: "MesloLGS NF", fontSize: 15, theme: "tokyo-night" };
 
   it("is clean when draft matches the saved config", () => {
     expect(isSettingsDirty(saved, saved)).toBe(false);
   });
 
-  it("is dirty when the family or size changes", () => {
+  it("is dirty when the family, size, or theme changes", () => {
     expect(isSettingsDirty({ ...saved, fontFamily: null }, saved)).toBe(true);
     expect(isSettingsDirty({ ...saved, fontSize: 16 }, saved)).toBe(true);
+    expect(isSettingsDirty({ ...saved, theme: "dracula" }, saved)).toBe(true);
   });
 
-  it("is clean again when the user reverts both fields", () => {
+  it("is clean again when the user reverts all fields", () => {
     expect(
-      isSettingsDirty({ fontFamily: "MesloLGS NF", fontSize: 15 }, saved),
+      isSettingsDirty(
+        { fontFamily: "MesloLGS NF", fontSize: 15, theme: "tokyo-night" },
+        saved,
+      ),
     ).toBe(false);
   });
 });

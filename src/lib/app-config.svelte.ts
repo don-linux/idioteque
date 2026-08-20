@@ -9,6 +9,11 @@ import {
   DEFAULT_TERMINAL_FONT_SIZE,
   type SystemFont,
 } from "$lib/terminal-font";
+import {
+  DEFAULT_TERMINAL_THEME_ID,
+  resolveTerminalThemeId,
+  type TerminalThemeId,
+} from "$lib/terminal-theme";
 
 export interface RecentFolder {
   path: string;
@@ -19,6 +24,7 @@ export interface RecentFolder {
 export interface TerminalSettings {
   fontFamily: string | null;
   fontSize: number;
+  theme: string;
 }
 
 export interface FooterSettings {
@@ -47,6 +53,7 @@ class AppConfig {
   recents = $state<RecentFolder[]>([]);
   terminalFontFamily = $state<string | null>(null);
   terminalFontSize = $state(DEFAULT_TERMINAL_FONT_SIZE);
+  terminalTheme = $state<TerminalThemeId>(DEFAULT_TERMINAL_THEME_ID);
   footerOrder = $state<FooterActionId[]>([...DEFAULT_FOOTER_ACTION_ORDER]);
   fonts = $state.raw<SystemFont[]>([]);
   fontsLoaded = $state(false);
@@ -59,6 +66,7 @@ class AppConfig {
     this.recents = config.recents;
     this.terminalFontFamily = normalizeFamily(config.terminal.fontFamily);
     this.terminalFontSize = clampFontSize(config.terminal.fontSize);
+    this.terminalTheme = resolveTerminalThemeId(config.terminal.theme);
     this.footerOrder = normalizeFooterOrder(config.footer?.actionOrder);
     this.error = null;
   }
@@ -75,6 +83,7 @@ class AppConfig {
       this.recents = [];
       this.terminalFontFamily = null;
       this.terminalFontSize = DEFAULT_TERMINAL_FONT_SIZE;
+      this.terminalTheme = DEFAULT_TERMINAL_THEME_ID;
       this.footerOrder = [...DEFAULT_FOOTER_ACTION_ORDER];
       this.error = messageFrom(error);
     } finally {
@@ -131,17 +140,23 @@ class AppConfig {
     }
   }
 
-  async saveTerminal(input: { fontFamily: string | null; fontSize: number }): Promise<void> {
+  async saveTerminal(input: {
+    fontFamily: string | null;
+    fontSize: number;
+    theme: string;
+  }): Promise<void> {
     const fontFamily = normalizeFamily(input.fontFamily);
     const fontSize = clampFontSize(input.fontSize);
+    const theme = resolveTerminalThemeId(input.theme);
     this.terminalFontFamily = fontFamily;
     this.terminalFontSize = fontSize;
+    this.terminalTheme = theme;
 
     const gen = ++this.#gen;
 
     try {
       const config = await invoke<AppConfigDto>("update_terminal_settings", {
-        terminal: { fontFamily, fontSize },
+        terminal: { fontFamily, fontSize, theme },
       });
       if (gen !== this.#gen) return;
       this.apply(config);

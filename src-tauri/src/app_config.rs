@@ -14,6 +14,17 @@ const CONFIG_DIR_NAME: &str = ".idioteque";
 const CONFIG_FILE_NAME: &str = "config.json";
 const CONFIG_TMP_NAME: &str = ".config.json.idioteque.tmp";
 const DEFAULT_ACTION_ORDER: [&str; 4] = ["home", "folder", "settings", "terminal"];
+const DEFAULT_THEME: &str = "tokyo-night";
+const KNOWN_THEMES: [&str; 8] = [
+    "tokyo-night",
+    "dracula",
+    "nord",
+    "gruvbox-dark",
+    "catppuccin-mocha",
+    "one-half-dark",
+    "solarized-dark",
+    "campbell",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,6 +40,8 @@ struct StoredTerminal {
     font_family: Option<String>,
     #[serde(default = "default_font_size")]
     font_size: u8,
+    #[serde(default = "default_theme")]
+    theme: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,6 +75,7 @@ pub struct RecentFolder {
 pub struct TerminalSettings {
     pub font_family: Option<String>,
     pub font_size: u8,
+    pub theme: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -69,6 +83,7 @@ pub struct TerminalSettings {
 pub struct TerminalSettingsUpdate {
     pub font_family: Option<String>,
     pub font_size: u8,
+    pub theme: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -96,10 +111,15 @@ fn default_font_size() -> u8 {
     13
 }
 
+fn default_theme() -> String {
+    DEFAULT_THEME.to_string()
+}
+
 fn default_terminal() -> StoredTerminal {
     StoredTerminal {
         font_family: None,
         font_size: default_font_size(),
+        theme: default_theme(),
     }
 }
 
@@ -152,15 +172,30 @@ fn normalize_font_family(family: Option<String>) -> Option<String> {
     })
 }
 
+fn is_known_theme(id: &str) -> bool {
+    KNOWN_THEMES.contains(&id)
+}
+
+fn normalize_theme(theme: String) -> String {
+    let trimmed = theme.trim();
+    if is_known_theme(trimmed) {
+        trimmed.to_string()
+    } else {
+        default_theme()
+    }
+}
+
 fn apply_terminal(
     mut config: StoredConfig,
     font_family: Option<String>,
     font_size: u8,
+    theme: String,
 ) -> StoredConfig {
     config.version = CONFIG_VERSION;
     config.terminal = StoredTerminal {
         font_family: normalize_font_family(font_family),
         font_size: clamp_font_size(font_size),
+        theme: normalize_theme(theme),
     };
     config
 }
@@ -328,6 +363,7 @@ fn annotate(config: StoredConfig) -> AppConfig {
         terminal: TerminalSettings {
             font_family: normalize_font_family(config.terminal.font_family),
             font_size: clamp_font_size(config.terminal.font_size),
+            theme: normalize_theme(config.terminal.theme),
         },
         footer: FooterSettings {
             action_order: normalize_action_order(config.footer.action_order),
@@ -411,7 +447,12 @@ pub fn update_terminal_settings(
     terminal: TerminalSettingsUpdate,
 ) -> Result<AppConfig, String> {
     mutate_config(&app, |config| {
-        apply_terminal(config, terminal.font_family, terminal.font_size)
+        apply_terminal(
+            config,
+            terminal.font_family,
+            terminal.font_size,
+            terminal.theme,
+        )
     })
 }
 
@@ -475,6 +516,7 @@ mod tests {
         StoredTerminal {
             font_family: Some("JetBrainsMono Nerd Font".into()),
             font_size: 16,
+            theme: "dracula".into(),
         }
     }
 
@@ -555,6 +597,28 @@ mod tests {
             Some("JetBrainsMono Nerd Font")
         );
         assert_eq!(parsed.terminal.font_size, 16);
+        assert_eq!(parsed.terminal.theme, "tokyo-night");
+    }
+
+    #[test]
+    fn parse_config_reads_terminal_theme() {
+        let parsed = parse_config(
+            br#"{
+              "version": 1,
+              "recents": [],
+              "terminal": { "fontSize": 13, "theme": "dracula" }
+            }"#,
+        );
+        assert_eq!(parsed.terminal.theme, "dracula");
+    }
+
+    #[test]
+    fn annotate_unknown_theme_falls_back_to_tokyo_night() {
+        let mut config = default_config();
+        config.terminal.theme = "  not-a-theme  ".into();
+
+        let annotated = annotate(config);
+        assert_eq!(annotated.terminal.theme, "tokyo-night");
     }
 
     #[test]
@@ -810,13 +874,37 @@ mod tests {
 
     #[test]
     fn apply_terminal_clamps_size_and_trims_family() {
-        let next = apply_terminal(default_config(), Some("  Hack Nerd Font  ".into()), 3);
+        let next = apply_terminal(
+            default_config(),
+            Some("  Hack Nerd Font  ".into()),
+            3,
+            "tokyo-night".into(),
+        );
         assert_eq!(next.terminal.font_family.as_deref(), Some("Hack Nerd Font"));
         assert_eq!(next.terminal.font_size, MIN_FONT_SIZE);
 
-        let wide = apply_terminal(default_config(), Some("".into()), 99);
+        let wide = apply_terminal(default_config(), Some("".into()), 99, "tokyo-night".into());
         assert_eq!(wide.terminal.font_family, None);
         assert_eq!(wide.terminal.font_size, MAX_FONT_SIZE);
+    }
+
+    #[test]
+    fn apply_terminal_keeps_theme_when_changing_font() {
+        let next = apply_terminal(
+            default_config(),
+            Some("Hack".into()),
+            16,
+            "nord".into(),
+        );
+        assert_eq!(next.terminal.font_family.as_deref(), Some("Hack"));
+        assert_eq!(next.terminal.font_size, 16);
+        assert_eq!(next.terminal.theme, "nord");
+    }
+
+    #[test]
+    fn apply_terminal_unknown_theme_falls_back() {
+        let next = apply_terminal(default_config(), None, 13, "  ghost  ".into());
+        assert_eq!(next.terminal.theme, "tokyo-night");
     }
 
     #[test]
@@ -914,7 +1002,7 @@ mod tests {
         let mut config = default_config();
         config.footer = custom_footer();
 
-        let next = apply_terminal(config, Some("Hack".into()), 16);
+        let next = apply_terminal(config, Some("Hack".into()), 16, "tokyo-night".into());
         assert_eq!(next.footer, custom_footer());
         assert_eq!(next.terminal.font_family.as_deref(), Some("Hack"));
     }
@@ -975,12 +1063,18 @@ mod tests {
     fn save_and_load_roundtrip_terminal_settings() {
         let home = Home::new();
         let path = home.config_path();
-        let stored = apply_terminal(default_config(), Some("JetBrainsMono Nerd Font".into()), 16);
+        let stored = apply_terminal(
+            default_config(),
+            Some("JetBrainsMono Nerd Font".into()),
+            16,
+            "tokyo-night".into(),
+        );
         save_to_path(&path, &stored).expect("save");
 
         let disk = fs::read_to_string(&path).expect("read disk");
         assert!(disk.contains("JetBrainsMono Nerd Font"));
         assert!(disk.contains("\"fontSize\": 16"));
+        assert!(disk.contains("tokyo-night"));
 
         let reread = load_from_path(&path);
         assert_eq!(reread.terminal, stored.terminal);
