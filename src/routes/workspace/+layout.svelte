@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import FooterActions from "$lib/components/FooterActions.svelte";
+  import FooterTransient from "$lib/components/FooterTransient.svelte";
+  import { handleSaveShortcut } from "$lib/save-shortcut";
   import { handleTerminalShortcut } from "$lib/terminal-dock";
   import { terminal } from "$lib/terminal.svelte";
   import { workspace } from "$lib/workspace.svelte";
@@ -8,6 +10,7 @@
   let { children }: { children: Snippet } = $props();
 
   function onWindowKeydown(event: KeyboardEvent): void {
+    handleSaveShortcut(event, { save: () => void workspace.save() });
     handleTerminalShortcut(event, {
       hasWorkspace: workspace.root !== null,
       toggle: (dock) => terminal.toggle(dock),
@@ -22,7 +25,10 @@
     {@render children()}
   </div>
   <footer>
-    <span class="brand">idioteque</span>
+    <div class="footer-start">
+      <span class="brand">idioteque</span>
+      <FooterTransient />
+    </div>
     <FooterActions />
   </footer>
 </div>
@@ -54,6 +60,14 @@
     border-top: 1px solid var(--border);
     background: var(--bg);
     color: var(--text-faint);
+  }
+
+  .footer-start {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    align-items: center;
+    gap: 0.75rem;
   }
 
   .brand {

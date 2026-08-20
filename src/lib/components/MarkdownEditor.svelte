@@ -3,6 +3,7 @@
   import { EditorView, basicSetup } from "codemirror";
   import { markdown } from "@codemirror/lang-markdown";
   import { languages } from "@codemirror/language-data";
+  import { externalDocumentSpec } from "$lib/editor-sync";
 
   let {
     content,
@@ -50,14 +51,10 @@
     const next = content;
     if (!ready || !view || view.state.doc.toString() === next) return;
 
-    const head = Math.min(view.state.selection.main.head, next.length);
     const scroll = view.scrollDOM.scrollTop;
 
     applying = true;
-    view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: next },
-      selection: { anchor: head },
-    });
+    view.dispatch(externalDocumentSpec(view.state, next));
     view.scrollDOM.scrollTop = scroll;
     applying = false;
   });

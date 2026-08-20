@@ -84,7 +84,9 @@
     }
 
     if (id === "home") {
-      void workspace.closeWorkspace().then(() => goto(ROUTES.home));
+      void workspace.closeWorkspace().then((left) => {
+        if (left) void goto(ROUTES.home);
+      });
       return;
     }
 

@@ -44,7 +44,6 @@
 
   onDestroy(() => {
     stopResize?.();
-    void workspace.flushSave();
   });
 </script>
 
@@ -84,7 +83,9 @@
           <span class="path">{workspace.currentPath}</span>
           <span class="status" class:error={workspace.saveState === "error"}>{status}</span>
         </header>
-        <MarkdownEditor content={workspace.content} onChange={(contents) => workspace.edit(contents)} />
+        {#key workspace.currentPath}
+          <MarkdownEditor content={workspace.content} onChange={(contents) => workspace.edit(contents)} />
+        {/key}
       {/if}
 
       {#if workspace.error || appConfig.error || terminal.error}

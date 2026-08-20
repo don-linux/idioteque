@@ -1,10 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { ask, open } from "@tauri-apps/plugin-dialog";
+import { SvelteMap } from "svelte/reactivity";
 import { appConfig } from "$lib/app-config.svelte";
 import { terminal } from "$lib/terminal.svelte";
-
-const AUTOSAVE_DELAY_MS = 500;
+import { unsavedExit } from "$lib/unsaved-exit.svelte";
 
 export type NodeKind = "dir" | "file";
 
@@ -46,8 +46,7 @@ class Workspace {
   saveState = $state<SaveState>("idle");
   error = $state<string | null>(null);
 
-  #timer: ReturnType<typeof setTimeout> | null = null;
-  #pending: PendingWrite | null = null;
+  #drafts = new SvelteMap<string, string>();
   #writing: Promise<void> = Promise.resolve();
   /// Guards against a slow read landing after the user picked another file.
   #loadToken = 0;
@@ -55,6 +54,10 @@ class Workspace {
 
   get hasMarkdown(): boolean {
     return this.tree.length > 0;
+  }
+
+  get hasUnsaved(): boolean {
+    return this.#drafts.size > 0;
   }
 
   async openFolder(): Promise<void> {
@@ -65,7 +68,8 @@ class Workspace {
   }
 
   async openRoot(path: string): Promise<void> {
-    await this.flushSave();
+    if (!(await this.#confirmDiscardUnsaved())) return;
+
     await this.#leaveSession();
 
     try {
@@ -87,14 +91,16 @@ class Workspace {
     await this.#startWatch(this.root);
   }
 
-  async closeWorkspace(): Promise<void> {
-    await this.flushSave();
+  async closeWorkspace(): Promise<boolean> {
+    if (!(await this.#confirmDiscardUnsaved())) return false;
+
     await this.#leaveSession();
 
     this.root = null;
     this.tree = [];
     this.#dropOpenFile();
     this.error = null;
+    return true;
   }
 
   async refreshTree(): Promise<void> {
@@ -113,13 +119,20 @@ class Workspace {
     const root = this.root;
     if (!root || path === this.currentPath) return;
 
-    await this.flushSave();
-
     const token = ++this.#loadToken;
     this.currentPath = path;
+    this.error = null;
+
+    const draft = this.#drafts.get(path);
+    if (draft !== undefined) {
+      this.content = draft;
+      this.dirty = true;
+      this.saveState = "idle";
+      return;
+    }
+
     this.dirty = false;
     this.saveState = "idle";
-    this.error = null;
 
     try {
       const contents = await invoke<string>("read_markdown", { root, path });
@@ -142,7 +155,7 @@ class Workspace {
     });
     if (!confirmed) return;
 
-    this.#cancelPending(path);
+    this.#dropDraft(path);
 
     try {
       await invoke("delete_markdown", { root, path });
@@ -169,6 +182,7 @@ class Workspace {
     if (path === null || this.currentPath !== path) return;
 
     if (!treeHasFile(this.tree, path)) {
+      this.#dropDraft(path);
       this.#dropOpenFile();
       return;
     }
@@ -182,6 +196,7 @@ class Workspace {
       this.content = contents;
     } catch (error) {
       if (this.currentPath !== path) return;
+      this.#dropDraft(path);
       this.#dropOpenFile();
       this.error = messageFrom(error);
     }
@@ -193,22 +208,23 @@ class Workspace {
 
     this.content = contents;
     this.dirty = true;
-    this.#pending = { path, contents };
-
-    if (this.#timer !== null) clearTimeout(this.#timer);
-    this.#timer = setTimeout(() => {
-      this.#timer = null;
-      void this.#drainPending();
-    }, AUTOSAVE_DELAY_MS);
+    this.#drafts.set(path, contents);
   }
 
-  async flushSave(): Promise<void> {
-    if (this.#timer !== null) {
-      clearTimeout(this.#timer);
-      this.#timer = null;
-    }
+  async save(): Promise<void> {
+    const path = this.currentPath;
+    if (!path || !this.dirty) return;
 
-    await this.#drainPending();
+    this.#writing = this.#writing.then(() =>
+      this.#write({ path, contents: this.content }),
+    );
+    await this.#writing;
+  }
+
+  discardUnsaved(): void {
+    this.#clearDrafts();
+    this.dirty = false;
+    this.saveState = "idle";
   }
 
   #dropOpenFile(): void {
@@ -219,15 +235,26 @@ class Workspace {
     this.#loadToken += 1;
   }
 
-  #cancelPending(path: string): void {
-    if (this.#pending?.path === path) {
-      this.#pending = null;
+  #dropDraft(path: string): void {
+    this.#drafts.delete(path);
+    if (this.currentPath === path) {
+      this.dirty = false;
     }
+  }
 
-    if (this.#timer !== null) {
-      clearTimeout(this.#timer);
-      this.#timer = null;
-    }
+  #clearDrafts(): void {
+    this.#drafts.clear();
+    this.dirty = false;
+  }
+
+  async #confirmDiscardUnsaved(): Promise<boolean> {
+    if (!this.hasUnsaved) return true;
+
+    const confirmed = await unsavedExit.request();
+    if (!confirmed) return false;
+
+    this.#clearDrafts();
+    return true;
   }
 
   async #leaveSession(): Promise<void> {
@@ -261,15 +288,6 @@ class Workspace {
     }
   }
 
-  #drainPending(): Promise<void> {
-    const pending = this.#pending;
-    if (!pending) return this.#writing;
-
-    this.#pending = null;
-    this.#writing = this.#writing.then(() => this.#write(pending));
-    return this.#writing;
-  }
-
   async #write(pending: PendingWrite): Promise<void> {
     const root = this.root;
     if (!root) return;
@@ -283,11 +301,17 @@ class Workspace {
         contents: pending.contents,
       });
 
-      // A newer edit arrived while this write was in flight; it owns the state.
-      if (this.#pending) return;
+      const draft = this.#drafts.get(pending.path);
+      if (draft !== undefined && draft !== pending.contents) {
+        return;
+      }
 
-      this.dirty = false;
-      this.saveState = "saved";
+      this.#drafts.delete(pending.path);
+
+      if (this.currentPath === pending.path) {
+        this.dirty = false;
+        this.saveState = "saved";
+      }
     } catch (error) {
       this.error = messageFrom(error);
       this.saveState = "error";

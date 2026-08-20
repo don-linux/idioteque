@@ -1,11 +1,35 @@
 <script lang="ts">
   import { onMount, type Snippet } from "svelte";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
+  import UnsavedExitModal from "$lib/components/UnsavedExitModal.svelte";
   import { appConfig } from "$lib/app-config.svelte";
+  import { unsavedExit } from "$lib/unsaved-exit.svelte";
+  import { workspace } from "$lib/workspace.svelte";
 
   let { children }: { children: Snippet } = $props();
 
   onMount(() => {
     void appConfig.load();
+
+    let unlisten: (() => void) | undefined;
+    try {
+      void getCurrentWindow()
+        .onCloseRequested(async (event) => {
+          if (!workspace.hasUnsaved) return;
+          event.preventDefault();
+          const confirmed = await unsavedExit.request();
+          if (!confirmed) return;
+          workspace.discardUnsaved();
+          await getCurrentWindow().destroy();
+        })
+        .then((fn) => {
+          unlisten = fn;
+        });
+    } catch {
+      // Browser preview without the Tauri runtime.
+    }
+
+    return () => unlisten?.();
   });
 </script>
 
@@ -14,6 +38,7 @@
     {@render children()}
   </div>
 </div>
+<UnsavedExitModal />
 
 <style>
   :global(:root) {

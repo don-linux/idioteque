@@ -4,6 +4,7 @@
   import { FitAddon } from "@xterm/addon-fit";
   import { WebglAddon } from "@xterm/addon-webgl";
   import { appConfig } from "$lib/app-config.svelte";
+  import { isSaveShortcut } from "$lib/save-shortcut";
   import { isTerminalDockShortcut } from "$lib/terminal-dock";
   import { attachTerminalRenderer } from "$lib/terminal-renderer";
   import { terminal } from "$lib/terminal.svelte";
@@ -43,7 +44,9 @@
     const fitAddon = new FitAddon();
 
     xterm.loadAddon(fitAddon);
-    xterm.attachCustomKeyEventHandler((event) => !isTerminalDockShortcut(event));
+    xterm.attachCustomKeyEventHandler(
+      (event) => !isTerminalDockShortcut(event) && !isSaveShortcut(event),
+    );
     xterm.open(host);
     const renderer = attachTerminalRenderer(xterm, () => new WebglAddon());
     view = xterm;
