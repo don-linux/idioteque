@@ -302,8 +302,13 @@
 
   .term-slot {
     display: flex;
+    box-sizing: border-box;
+    align-self: stretch;
+    width: 100%;
     min-width: 0;
+    height: 100%;
     min-height: 0;
+    overflow: hidden;
     background: var(--bg);
   }
 
@@ -335,6 +340,7 @@
   }
 
   .split {
+    box-sizing: border-box;
     flex-shrink: 0;
     padding: 0;
     border: 0;

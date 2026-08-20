@@ -102,25 +102,38 @@
 <style>
   .panel {
     display: flex;
+    box-sizing: border-box;
     flex: 1;
     flex-direction: column;
+    width: 100%;
     min-width: 0;
+    height: 100%;
     min-height: 0;
+    padding: 0.35rem 0.5rem;
+    overflow: hidden;
     background: var(--bg);
   }
 
   .host {
     flex: 1;
+    width: 100%;
     min-width: 0;
+    height: 100%;
     min-height: 0;
-    padding: 0.35rem 0.5rem;
+    overflow: hidden;
   }
 
   .host :global(.xterm) {
+    width: 100%;
     height: 100%;
   }
 
   .host :global(.xterm-viewport) {
+    background-color: var(--bg);
     overflow-y: auto;
+  }
+
+  .host :global(.composition-view) {
+    background-color: var(--bg);
   }
 </style>
