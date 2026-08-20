@@ -9,7 +9,7 @@
   import { attachTerminalRenderer } from "$lib/terminal-renderer";
   import { terminal } from "$lib/terminal.svelte";
   import { xtermFontFamily } from "$lib/terminal-font";
-  import { TERMINAL_XTERM_OPTIONS } from "$lib/terminal-theme";
+  import { TERMINAL_XTERM_OPTIONS, resolveTerminalTheme } from "$lib/terminal-theme";
   import "@xterm/xterm/css/xterm.css";
 
   let { cwd }: { cwd: string } = $props();
@@ -18,6 +18,7 @@
   let ready = $state(false);
   let view: Terminal | undefined;
   let fit: FitAddon | undefined;
+  let lastAppliedThemeId: string | undefined;
 
   function fitAndResize(): void {
     if (!view || !fit || !terminal.open || !host) return;
@@ -40,7 +41,9 @@
       ...TERMINAL_XTERM_OPTIONS,
       fontFamily: xtermFontFamily(appConfig.terminalFontFamily),
       fontSize: appConfig.terminalFontSize,
+      theme: { ...resolveTerminalTheme(appConfig.terminalTheme) },
     });
+    lastAppliedThemeId = appConfig.terminalTheme;
     const fitAddon = new FitAddon();
 
     xterm.loadAddon(fitAddon);
@@ -67,6 +70,7 @@
     return () => {
       view = undefined;
       fit = undefined;
+      lastAppliedThemeId = undefined;
       ready = false;
       observer.disconnect();
       input.dispose();
@@ -102,8 +106,14 @@
 
     const family = xtermFontFamily(appConfig.terminalFontFamily);
     const size = appConfig.terminalFontSize;
+    const themeId = appConfig.terminalTheme;
     const changed =
       view.options.fontFamily !== family || view.options.fontSize !== size;
+
+    if (themeId !== lastAppliedThemeId) {
+      view.options.theme = { ...resolveTerminalTheme(themeId) };
+      lastAppliedThemeId = themeId;
+    }
 
     if (!changed) return;
 
@@ -113,7 +123,7 @@
   });
 </script>
 
-<div class="panel">
+<div class="panel" style:--terminal-bg={resolveTerminalTheme(appConfig.terminalTheme).background}>
   <div class="host" bind:this={host}></div>
 </div>
 
@@ -129,7 +139,7 @@
     min-height: 0;
     padding: 0.35rem 0.5rem;
     overflow: hidden;
-    background: var(--bg);
+    background: var(--terminal-bg, var(--bg));
   }
 
   .host {
@@ -147,11 +157,11 @@
   }
 
   .host :global(.xterm-viewport) {
-    background-color: var(--bg);
+    background-color: var(--terminal-bg, var(--bg));
     overflow-y: auto;
   }
 
   .host :global(.composition-view) {
-    background-color: var(--bg);
+    background-color: var(--terminal-bg, var(--bg));
   }
 </style>
