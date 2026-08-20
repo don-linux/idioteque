@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, type Snippet } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import ToastHost from "$lib/components/ToastHost.svelte";
   import UnsavedExitModal from "$lib/components/UnsavedExitModal.svelte";
   import { appConfig } from "$lib/app-config.svelte";
   import { unsavedExit } from "$lib/unsaved-exit.svelte";
@@ -39,6 +40,7 @@
   </div>
 </div>
 <UnsavedExitModal />
+<ToastHost />
 
 <style>
   :global(:root) {
