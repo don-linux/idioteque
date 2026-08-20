@@ -1,19 +1,33 @@
 <script lang="ts">
-  import type { Snippet } from "svelte";
+  import { onMount, type Snippet } from "svelte";
   import { page } from "$app/state";
   import ArrowLeft from "@lucide/svelte/icons/arrow-left";
+  import Save from "@lucide/svelte/icons/save";
   import { settingsBackHref } from "$lib/app-routes";
+  import { handleSaveShortcut } from "$lib/save-shortcut";
+  import { settingsEditor } from "$lib/settings-editor.svelte";
   import { SETTINGS_SECTIONS, settingsSectionFromPath } from "$lib/settings-sections";
   import { workspace } from "$lib/workspace.svelte";
 
   let { children }: { children: Snippet } = $props();
   let current = $derived(settingsSectionFromPath(page.url.pathname));
   let backHref = $derived(settingsBackHref(workspace.root !== null));
+
+  onMount(() => {
+    settingsEditor.begin();
+    return () => settingsEditor.discard();
+  });
+
+  function onWindowKeydown(event: KeyboardEvent): void {
+    handleSaveShortcut(event, { save: () => void settingsEditor.save() });
+  }
 </script>
 
 <svelte:head>
   <title>configuración — idioteque</title>
 </svelte:head>
+
+<svelte:window onkeydown={onWindowKeydown} />
 
 <main class="settings">
   <header>
@@ -21,6 +35,17 @@
       <ArrowLeft size={18} strokeWidth={1.75} aria-hidden="true" />
     </a>
     <h1>Configuración</h1>
+    <button
+      type="button"
+      class="save"
+      aria-label="Guardar configuración (Ctrl+S)"
+      title="Guardar configuración (Ctrl+S)"
+      disabled={!settingsEditor.dirty || settingsEditor.saving}
+      onclick={() => void settingsEditor.save()}
+    >
+      <Save size={18} strokeWidth={1.75} aria-hidden="true" />
+      Guardar configuración
+    </button>
   </header>
 
   <div class="body">
@@ -84,6 +109,36 @@
   .back:hover {
     border-color: var(--accent);
     color: var(--accent);
+  }
+
+  .save {
+    display: inline-flex;
+    box-sizing: border-box;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    margin-left: auto;
+    height: 2.5rem;
+    padding: 0.55rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface-hover);
+    color: var(--text);
+    font: inherit;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .save:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .save:disabled {
+    color: var(--text-faint);
+    cursor: not-allowed;
   }
 
   .body {
