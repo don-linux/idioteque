@@ -2,10 +2,13 @@
   import { onMount } from "svelte";
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
+  import { WebglAddon } from "@xterm/addon-webgl";
   import { appConfig } from "$lib/app-config.svelte";
   import { isTerminalDockShortcut } from "$lib/terminal-dock";
+  import { attachTerminalRenderer } from "$lib/terminal-renderer";
   import { terminal } from "$lib/terminal.svelte";
   import { xtermFontFamily } from "$lib/terminal-font";
+  import { TERMINAL_XTERM_OPTIONS } from "$lib/terminal-theme";
   import "@xterm/xterm/css/xterm.css";
 
   let { cwd }: { cwd: string } = $props();
@@ -33,22 +36,16 @@
     if (!host) return;
 
     const xterm = new Terminal({
-      cursorBlink: true,
+      ...TERMINAL_XTERM_OPTIONS,
       fontFamily: xtermFontFamily(appConfig.terminalFontFamily),
       fontSize: appConfig.terminalFontSize,
-      theme: {
-        background: "#14161a",
-        foreground: "#e4e6ea",
-        cursor: "#7aa2f7",
-        cursorAccent: "#14161a",
-        selectionBackground: "#7aa2f722",
-      },
     });
     const fitAddon = new FitAddon();
 
     xterm.loadAddon(fitAddon);
     xterm.attachCustomKeyEventHandler((event) => !isTerminalDockShortcut(event));
     xterm.open(host);
+    const renderer = attachTerminalRenderer(xterm, () => new WebglAddon());
     view = xterm;
     fit = fitAddon;
     terminal.attachWriter((chunk) => xterm.write(chunk));
@@ -71,6 +68,7 @@
       observer.disconnect();
       input.dispose();
       terminal.detachWriter();
+      renderer.dispose();
       xterm.dispose();
     };
   });
