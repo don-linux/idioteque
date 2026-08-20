@@ -2,8 +2,10 @@
   import { onMount } from "svelte";
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
+  import { appConfig } from "$lib/app-config.svelte";
   import { isTerminalDockShortcut } from "$lib/terminal-dock";
   import { terminal } from "$lib/terminal.svelte";
+  import { xtermFontFamily } from "$lib/terminal-font";
   import "@xterm/xterm/css/xterm.css";
 
   let { cwd }: { cwd: string } = $props();
@@ -32,8 +34,8 @@
 
     const xterm = new Terminal({
       cursorBlink: true,
-      fontFamily: '"JetBrains Mono", "SF Mono", ui-monospace, monospace',
-      fontSize: 13,
+      fontFamily: xtermFontFamily(appConfig.terminalFontFamily),
+      fontSize: appConfig.terminalFontSize,
       theme: {
         background: "#14161a",
         foreground: "#e4e6ea",
@@ -92,6 +94,21 @@
     return () => {
       cancelAnimationFrame(frame);
     };
+  });
+
+  $effect(() => {
+    if (!ready || !view) return;
+
+    const family = xtermFontFamily(appConfig.terminalFontFamily);
+    const size = appConfig.terminalFontSize;
+    const changed =
+      view.options.fontFamily !== family || view.options.fontSize !== size;
+
+    if (!changed) return;
+
+    view.options.fontFamily = family;
+    view.options.fontSize = size;
+    fitAndResize();
   });
 </script>
 
