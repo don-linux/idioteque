@@ -64,9 +64,9 @@ Se pide con el icono del footer o con atajos: `Ctrl+J` la pone abajo, `Ctrl+Alt+
 
 Ocultarla no corta lo que esté corriendo. Volver a Inicio o cambiar de carpeta sí mata la sesión.
 
-Una sola terminal, sin pestañas. El tamaño y el lado del panel no se recuerdan al reiniciar. Fuente y tamaño de letra sí (en Configuración).
+Una sola terminal, sin pestañas. El tamaño y el lado del panel no se recuerdan al reiniciar. Fuente, tamaño de letra y tema de colores sí (en Configuración).
 
-Los 16 colores ANSI son Tokyo Night, fijos: el azul del prompt es el acento `#7aa2f7` y el amarillo de git es `#e0af68`. No se eligen en Configuración.
+El tema por defecto es Tokyo Night Night (el de Ghostty/WezTerm, extras de folke): fondo `#1a1b26`, texto `#c0caf5`. No es el chrome de la app. Se puede cambiar en Configuración.
 
 ## Footer del IDE
 
@@ -93,10 +93,10 @@ Es una página completa (`/configuracion`), no un panel encima del IDE. Flecha a
 
 A la izquierda, un menú con las secciones. A la derecha, el contenido de la que elegiste. Si no hay ninguna, el centro dice “Elige una opción para empezar a configurar”. Volver al engrane no recuerda la última sección.
 
-Cada sección es su propia página. Hoy solo está Terminal (`/configuracion/terminal`). Fuente del sistema (se puede filtrar escribiendo), tamaño de 10 a 24 píxeles con +/−, y una vista previa (`❯ git status`) para ver si una Nerd Font pinta los iconos.
+Cada sección es su propia página. Hoy solo está Terminal (`/configuracion/terminal`). Fuente del sistema (se puede filtrar escribiendo), tamaño de 10 a 24 píxeles con +/−, un selector de tema (Tokyo Night y otras paletas oficiales), y una vista previa (`❯ git status`) con la paleta ANSI para ver si una Nerd Font pinta los iconos.
 
 Si una sección crece, esa lista hace scroll. Las otras no aparecen mezcladas.
 
-Los cambios se quedan en un borrador. Hay que pulsar “Guardar configuración” o Ctrl+S. Entonces se escriben, sale un aviso abajo a la derecha y, al volver al IDE, la terminal ya usa esa fuente y ese tamaño. Si sales sin guardar, el borrador se descarta.
+Los cambios se quedan en un borrador. Hay que pulsar “Guardar configuración” o Ctrl+S. Entonces se escriben, sale un aviso abajo a la derecha y, al volver al IDE, la terminal ya usa esa fuente, ese tamaño y ese tema. Si sales sin guardar, el borrador se descarta.
 
-No hay, a propósito, fuente del editor ni de la interfaz, ni elección de shell, ni tema de colores.
+No hay, a propósito, fuente del editor ni de la interfaz, ni elección de shell, ni importar un archivo de tema.
