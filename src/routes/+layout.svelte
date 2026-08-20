@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount, type Snippet } from "svelte";
   import { page } from "$app/state";
-  import SquareTerminal from "@lucide/svelte/icons/square-terminal";
+  import FooterActions from "$lib/components/FooterActions.svelte";
   import { appConfig } from "$lib/app-config.svelte";
-  import { dockFromAlt, handleTerminalShortcut } from "$lib/terminal-dock";
+  import { handleTerminalShortcut } from "$lib/terminal-dock";
   import { terminal } from "$lib/terminal.svelte";
   import { workspace } from "$lib/workspace.svelte";
 
@@ -20,10 +20,6 @@
       toggle: (dock) => terminal.toggle(dock),
     });
   }
-
-  function onTerminalIconClick(event: MouseEvent): void {
-    terminal.toggle(dockFromAlt(event.altKey));
-  }
 </script>
 
 <svelte:window onkeydowncapture={onWindowKeydown} />
@@ -35,18 +31,7 @@
   {#if showFooter}
     <footer>
       <span class="brand">idioteque</span>
-      <div class="actions">
-        <button
-          type="button"
-          class={["action", { active: terminal.open }]}
-          aria-pressed={terminal.open}
-          aria-label="Terminal"
-          title="Terminal (Ctrl+J) · a la derecha (Ctrl+Alt+J)"
-          onclick={onTerminalIconClick}
-        >
-          <SquareTerminal size={16} strokeWidth={1.75} aria-hidden="true" />
-        </button>
-      </div>
+      <FooterActions />
     </footer>
   {/if}
 </div>
@@ -117,37 +102,5 @@
     font-weight: 600;
     letter-spacing: 0.14em;
     text-transform: lowercase;
-  }
-
-  .actions {
-    display: flex;
-    flex-shrink: 0;
-    align-items: center;
-    margin-left: auto;
-    gap: 0.15rem;
-  }
-
-  .action {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.65rem;
-    height: 1.65rem;
-    padding: 0;
-    border: 0;
-    border-radius: 4px;
-    background: transparent;
-    color: var(--text-muted);
-    cursor: pointer;
-  }
-
-  .action:hover {
-    background: var(--surface-hover);
-    color: var(--text);
-  }
-
-  .action.active {
-    background: var(--accent-soft);
-    color: var(--accent);
   }
 </style>

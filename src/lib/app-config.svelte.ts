@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
+  DEFAULT_FOOTER_ACTION_ORDER,
+  normalizeFooterOrder,
+  type FooterActionId,
+} from "$lib/footer-actions";
+import {
   clampFontSize,
   DEFAULT_TERMINAL_FONT_SIZE,
   type SystemFont,
@@ -16,10 +21,15 @@ export interface TerminalSettings {
   fontSize: number;
 }
 
+export interface FooterSettings {
+  actionOrder: FooterActionId[] | string[];
+}
+
 interface AppConfigDto {
   version: number;
   recents: RecentFolder[];
   terminal: TerminalSettings;
+  footer?: FooterSettings;
 }
 
 function messageFrom(error: unknown): string {
@@ -37,6 +47,7 @@ class AppConfig {
   recents = $state<RecentFolder[]>([]);
   terminalFontFamily = $state<string | null>(null);
   terminalFontSize = $state(DEFAULT_TERMINAL_FONT_SIZE);
+  footerOrder = $state<FooterActionId[]>([...DEFAULT_FOOTER_ACTION_ORDER]);
   fonts = $state.raw<SystemFont[]>([]);
   fontsLoaded = $state(false);
   loaded = $state(false);
@@ -48,6 +59,7 @@ class AppConfig {
     this.recents = config.recents;
     this.terminalFontFamily = normalizeFamily(config.terminal.fontFamily);
     this.terminalFontSize = clampFontSize(config.terminal.fontSize);
+    this.footerOrder = normalizeFooterOrder(config.footer?.actionOrder);
     this.error = null;
   }
 
@@ -63,6 +75,7 @@ class AppConfig {
       this.recents = [];
       this.terminalFontFamily = null;
       this.terminalFontSize = DEFAULT_TERMINAL_FONT_SIZE;
+      this.footerOrder = [...DEFAULT_FOOTER_ACTION_ORDER];
       this.error = messageFrom(error);
     } finally {
       if (gen === this.#gen) {
@@ -92,6 +105,24 @@ class AppConfig {
 
     try {
       const config = await invoke<AppConfigDto>("remove_recent_folder", { path });
+      if (gen !== this.#gen) return;
+      this.apply(config);
+    } catch (error) {
+      if (gen !== this.#gen) return;
+      this.error = messageFrom(error);
+    }
+  }
+
+  async saveFooterOrder(order: readonly string[]): Promise<void> {
+    const actionOrder = normalizeFooterOrder(order);
+    this.footerOrder = actionOrder;
+
+    const gen = ++this.#gen;
+
+    try {
+      const config = await invoke<AppConfigDto>("update_footer_settings", {
+        footer: { actionOrder },
+      });
       if (gen !== this.#gen) return;
       this.apply(config);
     } catch (error) {
