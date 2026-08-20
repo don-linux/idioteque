@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
+  import Settings from "@lucide/svelte/icons/settings";
   import FileTree from "$lib/components/FileTree.svelte";
   import MarkdownEditor from "$lib/components/MarkdownEditor.svelte";
   import RecentGrid from "$lib/components/RecentGrid.svelte";
@@ -56,9 +57,14 @@
         <h1>idioteque</h1>
         <p>Abre una carpeta para ver y editar sus archivos markdown.</p>
       </div>
-      <button type="button" class="primary" onclick={() => workspace.openFolder()}>
-        Abrir carpeta
-      </button>
+      <div class="header-actions">
+        <a href="/configuracion" class="icon" aria-label="Configuración" title="Configuración">
+          <Settings size={18} strokeWidth={1.75} aria-hidden="true" />
+        </a>
+        <button type="button" class="primary" onclick={() => workspace.openFolder()}>
+          Abrir carpeta
+        </button>
+      </div>
     </header>
 
     {#if appConfig.recents.length === 0 && appConfig.loaded}
@@ -157,6 +163,32 @@
     align-items: flex-end;
     justify-content: space-between;
     gap: 1.5rem;
+  }
+
+  .header-actions {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  a.icon {
+    display: inline-flex;
+    box-sizing: border-box;
+    align-items: center;
+    justify-content: center;
+    width: 2.35rem;
+    height: 2.35rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface-hover);
+    color: var(--text);
+    text-decoration: none;
+  }
+
+  a.icon:hover {
+    border-color: var(--accent);
+    color: var(--accent);
   }
 
   .home h1 {

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, type Snippet } from "svelte";
+  import { page } from "$app/state";
   import SquareTerminal from "@lucide/svelte/icons/square-terminal";
   import { appConfig } from "$lib/app-config.svelte";
   import { dockFromAlt, handleTerminalShortcut } from "$lib/terminal-dock";
@@ -7,6 +8,7 @@
   import { workspace } from "$lib/workspace.svelte";
 
   let { children }: { children: Snippet } = $props();
+  let showFooter = $derived(workspace.root !== null && page.url.pathname === "/");
 
   onMount(() => {
     void appConfig.load();
@@ -30,9 +32,9 @@
   <div class="page">
     {@render children()}
   </div>
-  <footer>
-    <span class="brand">idioteque</span>
-    {#if workspace.root !== null}
+  {#if showFooter}
+    <footer>
+      <span class="brand">idioteque</span>
       <div class="actions">
         <button
           type="button"
@@ -45,8 +47,8 @@
           <SquareTerminal size={16} strokeWidth={1.75} aria-hidden="true" />
         </button>
       </div>
-    {/if}
-  </footer>
+    </footer>
+  {/if}
 </div>
 
 <style>
