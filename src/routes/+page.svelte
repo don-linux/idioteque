@@ -16,14 +16,6 @@
     return "";
   });
 
-  function onKeydown(event: KeyboardEvent): void {
-    if (workspace.root === null) return;
-    if (event.code !== "KeyJ" || !event.ctrlKey || event.metaKey) return;
-
-    event.preventDefault();
-    terminal.toggle(event.altKey ? "right" : "bottom");
-  }
-
   let stopResize: (() => void) | null = null;
 
   function startResize(event: PointerEvent): void {
@@ -57,8 +49,6 @@
   });
 </script>
 
-<svelte:window onkeydown={onKeydown} />
-
 {#if workspace.root === null}
   <main class="home">
     <header>
@@ -91,6 +81,8 @@
     class:term-bottom={terminal.open && terminal.dock === "bottom"}
     class:term-right={terminal.open && terminal.dock === "right"}
     style:--term-size="{terminal.size}px"
+    style:--park-width="{terminal.parkWidth}px"
+    style:--park-height="{terminal.parkHeight}px"
   >
     <aside>
       <header>
@@ -132,8 +124,10 @@
       {/if}
     </section>
 
-    {#if terminal.open || terminal.alive}
-      <div class="term-slot" class:parked={!terminal.open}>
+    {#if terminal.started}
+      <div
+        class={["term-slot", { parked: !terminal.open }]}
+      >
         {#if terminal.open}
           <button
             type="button"
@@ -327,11 +321,17 @@
   }
 
   .term-slot.parked {
-    position: absolute;
-    width: 0;
-    height: 0;
+    position: fixed;
+    top: 0;
+    left: -12000px;
+    grid-column: 1;
+    grid-row: 1;
+    width: var(--park-width);
+    height: var(--park-height);
     overflow: hidden;
     visibility: hidden;
+    pointer-events: none;
+    z-index: -1;
   }
 
   .split {

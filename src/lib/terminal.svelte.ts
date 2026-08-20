@@ -1,6 +1,7 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { nextDockToggle, type TerminalDock } from "$lib/terminal-dock";
 
-export type TerminalDock = "bottom" | "right";
+export type { TerminalDock };
 
 const DEFAULT_BOTTOM = 280;
 const DEFAULT_RIGHT = 380;
@@ -15,9 +16,12 @@ function messageFrom(error: unknown): string {
 
 class TerminalPanelState {
   open = $state(false);
+  started = $state(false);
   dock = $state<TerminalDock>("bottom");
   bottomSize = $state(DEFAULT_BOTTOM);
   rightSize = $state(DEFAULT_RIGHT);
+  parkWidth = $state(640);
+  parkHeight = $state(DEFAULT_BOTTOM);
   alive = $state(false);
   error = $state<string | null>(null);
 
@@ -29,19 +33,19 @@ class TerminalPanelState {
   }
 
   toggle(dock: TerminalDock): void {
-    if (!this.open) {
-      this.dock = dock;
-      this.open = true;
+    const next = nextDockToggle(this.open, this.dock, dock);
+    this.open = next.open;
+    this.dock = next.dock;
+
+    if (next.open) {
+      this.started = true;
       this.error = null;
-      return;
     }
+  }
 
-    if (this.dock === dock) {
-      this.open = false;
-      return;
-    }
-
-    this.dock = dock;
+  rememberPark(width: number, height: number): void {
+    if (width >= 2) this.parkWidth = width;
+    if (height >= 2) this.parkHeight = height;
   }
 
   setSize(pixels: number, viewport: number): void {
@@ -119,7 +123,9 @@ class TerminalPanelState {
 
   async teardown(): Promise<void> {
     this.open = false;
+    this.started = false;
     this.alive = false;
+    this.dock = "bottom";
     this.error = null;
     this.#spawning = false;
 
