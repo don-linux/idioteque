@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Trash2 from "@lucide/svelte/icons/trash-2";
   import type { TreeNode } from "$lib/workspace.svelte";
   import FileTree from "./FileTree.svelte";
 
@@ -50,7 +51,7 @@
             aria-label="Borrar {node.name}"
             onclick={() => onDelete(node.path)}
           >
-            ×
+            <Trash2 size={14} strokeWidth={1.75} aria-hidden="true" />
           </button>
         </div>
       {/if}
@@ -123,16 +124,17 @@
   }
 
   .delete {
+    display: inline-flex;
     flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
     width: 1.4rem;
     height: 1.4rem;
     padding: 0;
     border: 0;
     border-radius: 4px;
     background: transparent;
-    color: var(--text-faint);
-    font-size: 1rem;
-    line-height: 1;
+    color: var(--danger);
     opacity: 0;
     cursor: pointer;
   }

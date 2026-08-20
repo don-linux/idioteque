@@ -3,6 +3,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { ask, open } from "@tauri-apps/plugin-dialog";
 import { SvelteMap } from "svelte/reactivity";
 import { appConfig } from "$lib/app-config.svelte";
+import { addTab, nextActiveAfterClose, removeTab } from "$lib/editor-tabs";
+import { editorSession } from "$lib/editor-session.svelte";
 import { terminal } from "$lib/terminal.svelte";
 import { unsavedExit } from "$lib/unsaved-exit.svelte";
 
@@ -40,6 +42,7 @@ function treeHasFile(nodes: TreeNode[], path: string): boolean {
 class Workspace {
   root = $state<string | null>(null);
   tree = $state<TreeNode[]>([]);
+  openTabs = $state<string[]>([]);
   currentPath = $state<string | null>(null);
   content = $state("");
   dirty = $state(false);
@@ -47,6 +50,7 @@ class Workspace {
   error = $state<string | null>(null);
 
   #drafts = new SvelteMap<string, string>();
+  #contentFor = $state<string | null>(null);
   #writing: Promise<void> = Promise.resolve();
   /// Guards against a slow read landing after the user picked another file.
   #loadToken = 0;
@@ -58,6 +62,14 @@ class Workspace {
 
   get hasUnsaved(): boolean {
     return this.#drafts.size > 0;
+  }
+
+  get contentReady(): boolean {
+    return this.currentPath !== null && this.#contentFor === this.currentPath;
+  }
+
+  hasDraft(path: string): boolean {
+    return this.#drafts.has(path);
   }
 
   async openFolder(): Promise<void> {
@@ -81,7 +93,7 @@ class Workspace {
     }
 
     this.root = path;
-    this.#dropOpenFile();
+    this.#resetOpenFiles();
 
     const recorded = await appConfig.record(path);
     if (recorded) {
@@ -98,7 +110,7 @@ class Workspace {
 
     this.root = null;
     this.tree = [];
-    this.#dropOpenFile();
+    this.#resetOpenFiles();
     this.error = null;
     return true;
   }
@@ -117,7 +129,10 @@ class Workspace {
 
   async openFile(path: string): Promise<void> {
     const root = this.root;
-    if (!root || path === this.currentPath) return;
+    if (!root) return;
+
+    this.openTabs = addTab(this.openTabs, path);
+    if (path === this.currentPath) return;
 
     const token = ++this.#loadToken;
     this.currentPath = path;
@@ -126,6 +141,7 @@ class Workspace {
     const draft = this.#drafts.get(path);
     if (draft !== undefined) {
       this.content = draft;
+      this.#contentFor = path;
       this.dirty = true;
       this.saveState = "idle";
       return;
@@ -133,16 +149,31 @@ class Workspace {
 
     this.dirty = false;
     this.saveState = "idle";
+    this.#contentFor = null;
 
     try {
       const contents = await invoke<string>("read_markdown", { root, path });
       if (token !== this.#loadToken) return;
       this.content = contents;
+      this.#contentFor = path;
     } catch (error) {
       if (token !== this.#loadToken) return;
       this.content = "";
+      this.#contentFor = path;
       this.error = messageFrom(error);
     }
+  }
+
+  async closeTab(path: string): Promise<void> {
+    if (!this.openTabs.includes(path)) return;
+
+    if (this.#drafts.has(path)) {
+      const confirmed = await unsavedExit.request("tab");
+      if (!confirmed) return;
+      this.#dropDraft(path);
+    }
+
+    this.#forgetTab(path);
   }
 
   async deleteFile(path: string): Promise<void> {
@@ -165,9 +196,7 @@ class Workspace {
       return;
     }
 
-    if (this.currentPath === path) {
-      this.#dropOpenFile();
-    }
+    this.#forgetTab(path);
 
     await this.refreshTree();
   }
@@ -178,6 +207,25 @@ class Workspace {
 
     const path = this.currentPath;
     await this.refreshTree();
+
+    const missing = this.openTabs.filter((tab) => !treeHasFile(this.tree, tab));
+    if (missing.length > 0) {
+      const remaining = this.openTabs.filter((tab) => treeHasFile(this.tree, tab));
+      for (const tab of missing) {
+        this.#dropDraft(tab);
+        editorSession.dropState(tab);
+      }
+      this.openTabs = remaining;
+
+      if (path !== null && missing.includes(path) && this.currentPath === path) {
+        if (remaining.length > 0) {
+          await this.openFile(remaining[0]);
+        } else {
+          this.#dropOpenFile();
+        }
+        return;
+      }
+    }
 
     if (path === null || this.currentPath !== path) return;
 
@@ -194,10 +242,11 @@ class Workspace {
       if (this.currentPath !== path || this.dirty) return;
       if (contents === this.content) return;
       this.content = contents;
+      this.#contentFor = path;
     } catch (error) {
       if (this.currentPath !== path) return;
       this.#dropDraft(path);
-      this.#dropOpenFile();
+      this.#forgetTab(path);
       this.error = messageFrom(error);
     }
   }
@@ -227,9 +276,31 @@ class Workspace {
     this.saveState = "idle";
   }
 
+  #forgetTab(path: string): void {
+    const next = nextActiveAfterClose(this.openTabs, path, this.currentPath);
+    this.openTabs = removeTab(this.openTabs, path);
+    editorSession.dropState(path);
+
+    if (this.currentPath !== path) return;
+
+    if (next) {
+      void this.openFile(next);
+      return;
+    }
+
+    this.#dropOpenFile();
+  }
+
+  #resetOpenFiles(): void {
+    this.openTabs = [];
+    editorSession.clearStates();
+    this.#dropOpenFile();
+  }
+
   #dropOpenFile(): void {
     this.currentPath = null;
     this.content = "";
+    this.#contentFor = null;
     this.dirty = false;
     this.saveState = "idle";
     this.#loadToken += 1;

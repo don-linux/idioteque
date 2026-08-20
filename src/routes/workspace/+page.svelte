@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
+  import EditorTabs from "$lib/components/EditorTabs.svelte";
   import FileTree from "$lib/components/FileTree.svelte";
   import MarkdownEditor from "$lib/components/MarkdownEditor.svelte";
   import TerminalPanel from "$lib/components/TerminalPanel.svelte";
@@ -80,12 +81,15 @@
         <p class="hint centered">Selecciona un archivo.</p>
       {:else}
         <header>
-          <span class="path">{workspace.currentPath}</span>
+          <EditorTabs />
           <span class="status" class:error={workspace.saveState === "error"}>{status}</span>
         </header>
-        {#key workspace.currentPath}
-          <MarkdownEditor content={workspace.content} onChange={(contents) => workspace.edit(contents)} />
-        {/key}
+        <MarkdownEditor
+          path={workspace.currentPath}
+          content={workspace.content}
+          contentReady={workspace.contentReady}
+          onChange={(contents) => workspace.edit(contents)}
+        />
       {/if}
 
       {#if workspace.error || appConfig.error || terminal.error}
@@ -180,24 +184,17 @@
 
   .editor-col header {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    align-items: stretch;
     gap: 1rem;
-    padding: 0.6rem 1.5rem;
+    min-height: 2.35rem;
     border-bottom: 1px solid var(--border);
   }
 
-  .path {
-    overflow: hidden;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
-
   .status {
+    display: flex;
     flex-shrink: 0;
+    align-items: center;
+    padding-right: 1.5rem;
     color: var(--text-faint);
     font-size: 0.72rem;
   }

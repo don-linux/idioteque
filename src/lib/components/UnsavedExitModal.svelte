@@ -32,12 +32,21 @@
       aria-describedby={descId}
     >
       <h2 id={titleId}>Cambios sin guardar</h2>
-      <p id={descId}>
-        Hay archivos con cambios sin guardar. Si sales, esos cambios no se pueden recuperar.
-      </p>
+      {#if unsavedExit.mode === "tab"}
+        <p id={descId}>
+          Este archivo tiene cambios sin guardar. Si lo cierras, esos cambios no se pueden
+          recuperar.
+        </p>
+      {:else}
+        <p id={descId}>
+          Hay archivos con cambios sin guardar. Si sales, esos cambios no se pueden recuperar.
+        </p>
+      {/if}
       <div class="actions">
         <button type="button" onclick={() => unsavedExit.cancel()}>Cancelar</button>
-        <button type="button" class="leave" onclick={() => unsavedExit.confirm()}>Salir</button>
+        <button type="button" class="leave" onclick={() => unsavedExit.confirm()}>
+          {unsavedExit.mode === "tab" ? "Cerrar" : "Salir"}
+        </button>
       </div>
     </div>
   </div>

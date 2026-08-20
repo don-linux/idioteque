@@ -1,9 +1,22 @@
 <script lang="ts">
   import Save from "@lucide/svelte/icons/save";
+  import Undo2 from "@lucide/svelte/icons/undo-2";
+  import { editorSession } from "$lib/editor-session.svelte";
   import { workspace } from "$lib/workspace.svelte";
 </script>
 
 <div class="transient">
+  {#if editorSession.canUndo}
+    <button
+      type="button"
+      class="action"
+      aria-label="Deshacer (Ctrl+Z)"
+      title="Deshacer (Ctrl+Z)"
+      onclick={() => editorSession.undo()}
+    >
+      <Undo2 size={16} strokeWidth={1.75} aria-hidden="true" />
+    </button>
+  {/if}
   {#if workspace.dirty}
     <button
       type="button"
