@@ -79,7 +79,11 @@ Un arrastre no dispara la acción del icono. Hay que soltar y hacer clic.
 
 Es una página completa (`/configuracion`), no un panel encima del IDE. Flecha atrás arriba a la izquierda y el título.
 
-Hoy solo hay una sección: Terminal. Fuente del sistema (se puede filtrar escribiendo), tamaño de 10 a 24 píxeles con +/−, y una vista previa (`❯ git status`) para ver si una Nerd Font pinta los iconos.
+A la izquierda, un menú con las secciones. A la derecha, el contenido de la que elegiste. Si no hay ninguna, el centro dice “Elige una opción para empezar a configurar”. Volver al engrane no recuerda la última sección.
+
+Cada sección es su propia página. Hoy solo está Terminal (`/configuracion/terminal`). Fuente del sistema (se puede filtrar escribiendo), tamaño de 10 a 24 píxeles con +/−, y una vista previa (`❯ git status`) para ver si una Nerd Font pinta los iconos.
+
+Si una sección crece, esa lista hace scroll. Las otras no aparecen mezcladas.
 
 Los cambios se guardan solos. Al volver al IDE, la terminal ya usa esa fuente y ese tamaño.
 
