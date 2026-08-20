@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import {
     DEFAULT_FONT_LABEL,
     filterFonts,
@@ -143,23 +144,28 @@
 <svelte:window onpointerdown={onWindowPointerDown} />
 
 <div class="combo" bind:this={root}>
-  <input
-    {id}
-    class="field"
-    role="combobox"
-    aria-autocomplete="list"
-    aria-expanded={open}
-    aria-controls={listId}
-    aria-activedescendant={activeId}
-    autocomplete="off"
-    spellcheck="false"
-    placeholder={fontLabel(value)}
-    {disabled}
-    value={display}
-    onfocus={openList}
-    oninput={onInput}
-    onkeydown={onKeydown}
-  />
+  <div class="field-wrap">
+    <input
+      {id}
+      class="field"
+      role="combobox"
+      aria-autocomplete="list"
+      aria-expanded={open}
+      aria-controls={listId}
+      aria-activedescendant={activeId}
+      autocomplete="off"
+      spellcheck="false"
+      placeholder={fontLabel(value)}
+      {disabled}
+      value={display}
+      onfocus={openList}
+      oninput={onInput}
+      onkeydown={onKeydown}
+    />
+    <span class={["chevron", { open }]} aria-hidden="true">
+      <ChevronDown size={16} strokeWidth={1.75} />
+    </span>
+  </div>
 
   {#if open}
     <ul class="list" id={listId} role="listbox" bind:this={list}>
@@ -195,16 +201,38 @@
     width: min(32rem, 100%);
   }
 
+  .field-wrap {
+    position: relative;
+  }
+
   .field {
     box-sizing: border-box;
     width: 100%;
-    padding: 0.5rem 0.7rem;
+    padding: 0.5rem 2.1rem 0.5rem 0.7rem;
     border: 1px solid var(--border);
     border-radius: 6px;
     background: var(--surface);
     color: var(--text);
     font: inherit;
     font-size: 0.9rem;
+  }
+
+  .chevron {
+    position: absolute;
+    top: 50%;
+    right: 0.55rem;
+    display: inline-flex;
+    color: var(--text-muted);
+    pointer-events: none;
+    transform: translateY(-50%);
+  }
+
+  .chevron.open {
+    transform: translateY(-50%) rotate(180deg);
+  }
+
+  .field-wrap:has(.field:disabled) .chevron {
+    color: var(--text-faint);
   }
 
   .field:focus {

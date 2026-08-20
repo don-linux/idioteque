@@ -1,0 +1,36 @@
+<script lang="ts">
+  import { fly } from "svelte/transition";
+  import { toasts } from "$lib/toast.svelte";
+</script>
+
+<div class="host" aria-live="polite">
+  {#each toasts.items as toast (toast.id)}
+    <div class="toast" transition:fly={{ y: 12, duration: 180 }}>
+      {toast.message}
+    </div>
+  {/each}
+</div>
+
+<style>
+  .host {
+    position: fixed;
+    right: 1.25rem;
+    bottom: 1.25rem;
+    z-index: 80;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    pointer-events: none;
+  }
+
+  .toast {
+    padding: 0.7rem 0.95rem;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.9rem;
+    box-shadow: 0 10px 28px #00000055;
+  }
+</style>

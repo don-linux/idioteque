@@ -89,7 +89,7 @@ Un arrastre no dispara la acción del icono. Hay que soltar y hacer clic.
 
 ## Configuración
 
-Es una página completa (`/configuracion`), no un panel encima del IDE. Flecha atrás arriba a la izquierda y el título. Si hay una carpeta abierta, esa flecha vuelve al IDE (`/workspace`) y no apaga la terminal. Si no hay carpeta, vuelve a la grilla.
+Es una página completa (`/configuracion`), no un panel encima del IDE. Flecha atrás arriba a la izquierda, el título, y a la derecha el botón “Guardar configuración” con el icono de disquete. Si hay una carpeta abierta, esa flecha vuelve al IDE (`/workspace`) y no apaga la terminal. Si no hay carpeta, vuelve a la grilla.
 
 A la izquierda, un menú con las secciones. A la derecha, el contenido de la que elegiste. Si no hay ninguna, el centro dice “Elige una opción para empezar a configurar”. Volver al engrane no recuerda la última sección.
 
@@ -97,6 +97,6 @@ Cada sección es su propia página. Hoy solo está Terminal (`/configuracion/ter
 
 Si una sección crece, esa lista hace scroll. Las otras no aparecen mezcladas.
 
-Los cambios se guardan solos. Al volver al IDE, la terminal ya usa esa fuente y ese tamaño.
+Los cambios se quedan en un borrador. Hay que pulsar “Guardar configuración” o Ctrl+S. Entonces se escriben, sale un aviso abajo a la derecha y, al volver al IDE, la terminal ya usa esa fuente y ese tamaño. Si sales sin guardar, el borrador se descarta.
 
 No hay, a propósito, fuente del editor ni de la interfaz, ni elección de shell, ni tema de colores.

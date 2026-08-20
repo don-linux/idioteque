@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import FontCombobox from "$lib/components/FontCombobox.svelte";
   import { appConfig } from "$lib/app-config.svelte";
+  import { settingsEditor } from "$lib/settings-editor.svelte";
   import {
     MAX_TERMINAL_FONT_SIZE,
     MIN_TERMINAL_FONT_SIZE,
@@ -10,37 +11,23 @@
     xtermFontFamily,
   } from "$lib/terminal-font";
 
-  let previewFamily = $derived(xtermFontFamily(appConfig.terminalFontFamily));
+  let previewFamily = $derived(xtermFontFamily(settingsEditor.fontFamily));
 
   onMount(() => {
     void appConfig.listSystemFonts();
   });
 
-  function saveFont(family: string | null): void {
-    void appConfig.saveTerminal({
-      fontFamily: family,
-      fontSize: appConfig.terminalFontSize,
-    });
-  }
-
-  function saveSize(size: number): void {
-    void appConfig.saveTerminal({
-      fontFamily: appConfig.terminalFontFamily,
-      fontSize: clampFontSize(size),
-    });
-  }
-
   function onSizeChange(event: Event): void {
     const next = clampFontSize(Number((event.currentTarget as HTMLInputElement).value));
     (event.currentTarget as HTMLInputElement).value = String(next);
-    saveSize(next);
+    settingsEditor.setSize(next);
   }
 </script>
 
 <section class="section" aria-labelledby="terminal-heading">
   <h2 id="terminal-heading">Terminal</h2>
   <p class="lead">
-    Fuente y tamaño del panel integrado. Se guardan solos y se aplican al volver.
+    Fuente y tamaño del panel integrado. Se aplican al guardar o con Ctrl+S.
   </p>
 
   <div class="field">
@@ -48,9 +35,9 @@
     <FontCombobox
       id="terminal-font"
       fonts={appConfig.fonts}
-      value={appConfig.terminalFontFamily}
+      value={settingsEditor.fontFamily}
       disabled={!appConfig.fontsLoaded}
-      onSelect={saveFont}
+      onSelect={(family) => settingsEditor.setFont(family)}
     />
     {#if !appConfig.fontsLoaded}
       <p class="hint">Leyendo las fuentes del sistema…</p>
@@ -63,8 +50,8 @@
       <button
         type="button"
         aria-label="Reducir tamaño"
-        disabled={appConfig.terminalFontSize <= MIN_TERMINAL_FONT_SIZE}
-        onclick={() => saveSize(appConfig.terminalFontSize - 1)}
+        disabled={settingsEditor.fontSize <= MIN_TERMINAL_FONT_SIZE}
+        onclick={() => settingsEditor.setSize(settingsEditor.fontSize - 1)}
       >
         −
       </button>
@@ -73,14 +60,14 @@
         type="number"
         min={MIN_TERMINAL_FONT_SIZE}
         max={MAX_TERMINAL_FONT_SIZE}
-        value={appConfig.terminalFontSize}
+        value={settingsEditor.fontSize}
         onchange={onSizeChange}
       />
       <button
         type="button"
         aria-label="Aumentar tamaño"
-        disabled={appConfig.terminalFontSize >= MAX_TERMINAL_FONT_SIZE}
-        onclick={() => saveSize(appConfig.terminalFontSize + 1)}
+        disabled={settingsEditor.fontSize >= MAX_TERMINAL_FONT_SIZE}
+        onclick={() => settingsEditor.setSize(settingsEditor.fontSize + 1)}
       >
         +
       </button>
@@ -91,7 +78,7 @@
   <p
     class="preview"
     style:font-family={previewFamily}
-    style:font-size={`${appConfig.terminalFontSize}px`}
+    style:font-size={`${settingsEditor.fontSize}px`}
   >
     {TERMINAL_FONT_PREVIEW}
   </p>
