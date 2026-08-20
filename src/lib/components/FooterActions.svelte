@@ -4,7 +4,9 @@
   import House from "@lucide/svelte/icons/house";
   import Settings from "@lucide/svelte/icons/settings";
   import SquareTerminal from "@lucide/svelte/icons/square-terminal";
+  import { goto } from "$app/navigation";
   import { appConfig } from "$lib/app-config.svelte";
+  import { ROUTES } from "$lib/app-routes";
   import { moveFooterAction, type FooterActionId } from "$lib/footer-actions";
   import { dockFromAlt } from "$lib/terminal-dock";
   import { terminal } from "$lib/terminal.svelte";
@@ -82,7 +84,7 @@
     }
 
     if (id === "home") {
-      void workspace.closeWorkspace();
+      void workspace.closeWorkspace().then(() => goto(ROUTES.home));
       return;
     }
 
@@ -106,7 +108,7 @@
     >
       {#if id === "settings"}
         <a
-          href="/configuracion"
+          href={ROUTES.settings}
           class="action"
           aria-label={labels.settings}
           title={titles.settings}

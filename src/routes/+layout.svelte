@@ -1,39 +1,18 @@
 <script lang="ts">
   import { onMount, type Snippet } from "svelte";
-  import { page } from "$app/state";
-  import FooterActions from "$lib/components/FooterActions.svelte";
   import { appConfig } from "$lib/app-config.svelte";
-  import { handleTerminalShortcut } from "$lib/terminal-dock";
-  import { terminal } from "$lib/terminal.svelte";
-  import { workspace } from "$lib/workspace.svelte";
 
   let { children }: { children: Snippet } = $props();
-  let showFooter = $derived(workspace.root !== null && page.url.pathname === "/");
 
   onMount(() => {
     void appConfig.load();
   });
-
-  function onWindowKeydown(event: KeyboardEvent): void {
-    handleTerminalShortcut(event, {
-      hasWorkspace: workspace.root !== null,
-      toggle: (dock) => terminal.toggle(dock),
-    });
-  }
 </script>
-
-<svelte:window onkeydowncapture={onWindowKeydown} />
 
 <div class="shell">
   <div class="page">
     {@render children()}
   </div>
-  {#if showFooter}
-    <footer>
-      <span class="brand">idioteque</span>
-      <FooterActions />
-    </footer>
-  {/if}
 </div>
 
 <style>
@@ -79,28 +58,5 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
-  }
-
-  footer {
-    position: sticky;
-    bottom: 0;
-    z-index: 10;
-    display: flex;
-    flex-shrink: 0;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    height: var(--footer-height);
-    padding: 0 0.5rem;
-    border-top: 1px solid var(--border);
-    background: var(--bg);
-    color: var(--text-faint);
-  }
-
-  .brand {
-    font-size: 0.78rem;
-    font-weight: 600;
-    letter-spacing: 0.14em;
-    text-transform: lowercase;
   }
 </style>

@@ -2,10 +2,13 @@
   import type { Snippet } from "svelte";
   import { page } from "$app/state";
   import ArrowLeft from "@lucide/svelte/icons/arrow-left";
+  import { settingsBackHref } from "$lib/app-routes";
   import { SETTINGS_SECTIONS, settingsSectionFromPath } from "$lib/settings-sections";
+  import { workspace } from "$lib/workspace.svelte";
 
   let { children }: { children: Snippet } = $props();
   let current = $derived(settingsSectionFromPath(page.url.pathname));
+  let backHref = $derived(settingsBackHref(workspace.root !== null));
 </script>
 
 <svelte:head>
@@ -14,7 +17,7 @@
 
 <main class="settings">
   <header>
-    <a href="/" class="back" aria-label="Volver">
+    <a href={backHref} class="back" aria-label="Volver">
       <ArrowLeft size={18} strokeWidth={1.75} aria-hidden="true" />
     </a>
     <h1>Configuración</h1>

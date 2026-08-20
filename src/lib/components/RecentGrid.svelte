@@ -63,7 +63,7 @@
 <style>
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+    grid-template-columns: repeat(auto-fill, 16rem);
     gap: 0.85rem;
     list-style: none;
     margin: 0;

@@ -20,19 +20,29 @@ Inter para la interfaz. JetBrains Mono para rutas, editor y terminal.
 
 Botones e iconos son chicos, sin relleno fuerte. El acento aparece al pasar el mouse o cuando algo está activo (por ejemplo, la terminal abierta).
 
+## Tres pantallas, tres rutas
+
+Home, el IDE y Configuración no comparten página ni layout. Cada una tiene la suya. El layout raíz solo deja los tokens y el cascarón; no mete el footer ni los atajos del IDE.
+
+- `/` — selección de carpetas
+- `/workspace` — el IDE
+- `/configuracion` — ajustes
+
+Si alguien entra a `/workspace` sin carpeta abierta, vuelve a `/`.
+
 ## Pantalla de inicio
 
-Es la selección de carpetas. No es el IDE.
+Es la selección de carpetas. No es el IDE. Vive en `/`.
 
 Arriba: el nombre de la app, una línea que explica que hay que abrir una carpeta, el engrane de Configuración y el botón “Abrir carpeta”.
 
-Abajo: una grilla con el historial. Cada caja muestra el nombre de la carpeta y la ruta padre. Si la carpeta ya no existe, se ve apagada y no abre. La X la quita de la lista; no desaparece sola.
+Abajo: una grilla con el historial. Las cajas miden 16rem y se acomodan en filas; no se estiran a todo el ancho. Cada una muestra el nombre de la carpeta y la ruta padre. Si la carpeta ya no existe, se ve apagada y no abre. La X la quita de la lista; no desaparece sola.
 
 Esta pantalla no tiene barra de acciones abajo. El engrane se queda en el header.
 
 ## Vista IDE
 
-Aparece al abrir una carpeta. Tres zonas: sidebar, editor y, si la pediste, terminal.
+Aparece al abrir una carpeta, en `/workspace`. Tres zonas: sidebar, editor y, si la pediste, terminal.
 
 ### Sidebar
 
@@ -77,7 +87,7 @@ Un arrastre no dispara la acción del icono. Hay que soltar y hacer clic.
 
 ## Configuración
 
-Es una página completa (`/configuracion`), no un panel encima del IDE. Flecha atrás arriba a la izquierda y el título.
+Es una página completa (`/configuracion`), no un panel encima del IDE. Flecha atrás arriba a la izquierda y el título. Si hay una carpeta abierta, esa flecha vuelve al IDE (`/workspace`) y no apaga la terminal. Si no hay carpeta, vuelve a la grilla.
 
 A la izquierda, un menú con las secciones. A la derecha, el contenido de la que elegiste. Si no hay ninguna, el centro dice “Elige una opción para empezar a configurar”. Volver al engrane no recuerda la última sección.
 
