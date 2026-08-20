@@ -4,6 +4,7 @@ import { attachTerminalRenderer, type WebglAddonLike } from "./terminal-renderer
 function fakeWebgl(overrides: Partial<WebglAddonLike> = {}): WebglAddonLike {
   return {
     dispose: vi.fn(),
+    activate: vi.fn(),
     onContextLoss: vi.fn(() => ({ dispose: vi.fn() })),
     ...overrides,
   };

@@ -2,6 +2,7 @@ export type TerminalRendererKind = "webgl" | "dom";
 
 export interface WebglAddonLike {
   dispose(): void;
+  activate(terminal: unknown): void;
   onContextLoss(listener: () => void): { dispose(): void };
 }
 
