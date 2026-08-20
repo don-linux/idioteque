@@ -7,6 +7,8 @@ use tauri::{AppHandle, Manager};
 
 const CONFIG_VERSION: u32 = 1;
 const MAX_RECENTS: usize = 24;
+const MIN_FONT_SIZE: u8 = 10;
+const MAX_FONT_SIZE: u8 = 24;
 const CONFIG_DIR_NAME: &str = ".idioteque";
 const CONFIG_FILE_NAME: &str = "config.json";
 const CONFIG_TMP_NAME: &str = ".config.json.idioteque.tmp";
@@ -19,10 +21,21 @@ struct StoredRecent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredTerminal {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    font_family: Option<String>,
+    #[serde(default = "default_font_size")]
+    font_size: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct StoredConfig {
     version: u32,
     #[serde(default)]
     recents: Vec<StoredRecent>,
+    #[serde(default)]
+    terminal: StoredTerminal,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -35,16 +48,77 @@ pub struct RecentFolder {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TerminalSettings {
+    pub font_family: Option<String>,
+    pub font_size: u8,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalSettingsUpdate {
+    pub font_family: Option<String>,
+    pub font_size: u8,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AppConfig {
     pub version: u32,
     pub recents: Vec<RecentFolder>,
+    pub terminal: TerminalSettings,
+}
+
+fn default_font_size() -> u8 {
+    13
+}
+
+fn default_terminal() -> StoredTerminal {
+    StoredTerminal {
+        font_family: None,
+        font_size: default_font_size(),
+    }
+}
+
+impl Default for StoredTerminal {
+    fn default() -> Self {
+        default_terminal()
+    }
 }
 
 fn default_config() -> StoredConfig {
     StoredConfig {
         version: CONFIG_VERSION,
         recents: Vec::new(),
+        terminal: default_terminal(),
     }
+}
+
+fn clamp_font_size(size: u8) -> u8 {
+    size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
+}
+
+fn normalize_font_family(family: Option<String>) -> Option<String> {
+    family.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn apply_terminal(
+    mut config: StoredConfig,
+    font_family: Option<String>,
+    font_size: u8,
+) -> StoredConfig {
+    config.version = CONFIG_VERSION;
+    config.terminal = StoredTerminal {
+        font_family: normalize_font_family(font_family),
+        font_size: clamp_font_size(font_size),
+    };
+    config
 }
 
 fn config_file_in(home: &Path) -> PathBuf {
@@ -95,7 +169,7 @@ fn save_to_path(path: &Path, config: &StoredConfig) -> Result<(), String> {
     })
 }
 
-fn record_recent(config: StoredConfig, path: String, opened_at: String) -> StoredConfig {
+fn record_recent(mut config: StoredConfig, path: String, opened_at: String) -> StoredConfig {
     let mut recents: Vec<StoredRecent> = config
         .recents
         .into_iter()
@@ -105,21 +179,19 @@ fn record_recent(config: StoredConfig, path: String, opened_at: String) -> Store
     recents.insert(0, StoredRecent { path, opened_at });
     recents.truncate(MAX_RECENTS);
 
-    StoredConfig {
-        version: CONFIG_VERSION,
-        recents,
-    }
+    config.version = CONFIG_VERSION;
+    config.recents = recents;
+    config
 }
 
-fn remove_recent(config: StoredConfig, path: &str) -> StoredConfig {
-    StoredConfig {
-        version: CONFIG_VERSION,
-        recents: config
-            .recents
-            .into_iter()
-            .filter(|recent| !same_recent_path(&recent.path, path))
-            .collect(),
-    }
+fn remove_recent(mut config: StoredConfig, path: &str) -> StoredConfig {
+    config.version = CONFIG_VERSION;
+    config.recents = config
+        .recents
+        .into_iter()
+        .filter(|recent| !same_recent_path(&recent.path, path))
+        .collect();
+    config
 }
 
 fn same_recent_path(stored: &str, requested: &str) -> bool {
@@ -176,6 +248,10 @@ fn annotate(config: StoredConfig) -> AppConfig {
                 opened_at: recent.opened_at,
             })
             .collect(),
+        terminal: TerminalSettings {
+            font_family: normalize_font_family(config.terminal.font_family),
+            font_size: clamp_font_size(config.terminal.font_size),
+        },
     }
 }
 
@@ -249,6 +325,16 @@ pub fn remove_recent_folder(app: AppHandle, path: String) -> Result<AppConfig, S
     mutate_config(&app, |config| remove_recent(config, &path))
 }
 
+#[tauri::command]
+pub fn update_terminal_settings(
+    app: AppHandle,
+    terminal: TerminalSettingsUpdate,
+) -> Result<AppConfig, String> {
+    mutate_config(&app, |config| {
+        apply_terminal(config, terminal.font_family, terminal.font_size)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,6 +373,20 @@ mod tests {
         StoredRecent {
             path: path.to_string(),
             opened_at: opened_at.to_string(),
+        }
+    }
+
+    fn config_with(recents: Vec<StoredRecent>) -> StoredConfig {
+        StoredConfig {
+            recents,
+            ..default_config()
+        }
+    }
+
+    fn nerd_terminal() -> StoredTerminal {
+        StoredTerminal {
+            font_family: Some("JetBrainsMono Nerd Font".into()),
+            font_size: 16,
         }
     }
 
@@ -330,6 +430,7 @@ mod tests {
         let parsed = parse_config(br#"{"version":1}"#);
         assert_eq!(parsed.version, 1);
         assert!(parsed.recents.is_empty());
+        assert_eq!(parsed.terminal, default_terminal());
     }
 
     #[test]
@@ -347,17 +448,32 @@ mod tests {
         assert_eq!(parsed.recents.len(), 1);
         assert_eq!(parsed.recents[0].path, "/tmp/docs");
         assert_eq!(parsed.recents[0].opened_at, "2026-08-18T20:25:00Z");
+        assert_eq!(parsed.terminal, default_terminal());
+    }
+
+    #[test]
+    fn parse_config_reads_terminal_settings() {
+        let parsed = parse_config(
+            br#"{
+              "version": 1,
+              "recents": [],
+              "terminal": { "fontFamily": "JetBrainsMono Nerd Font", "fontSize": 16 }
+            }"#,
+        );
+
+        assert_eq!(
+            parsed.terminal.font_family.as_deref(),
+            Some("JetBrainsMono Nerd Font")
+        );
+        assert_eq!(parsed.terminal.font_size, 16);
     }
 
     #[test]
     fn record_recent_dedupes_and_moves_to_front() {
-        let config = StoredConfig {
-            version: 1,
-            recents: vec![
-                recent("/a", "2026-01-01T00:00:00Z"),
-                recent("/b", "2026-01-02T00:00:00Z"),
-            ],
-        };
+        let config = config_with(vec![
+            recent("/a", "2026-01-01T00:00:00Z"),
+            recent("/b", "2026-01-02T00:00:00Z"),
+        ]);
 
         let next = record_recent(config, "/b".into(), "2026-01-03T00:00:00Z".into());
         assert_eq!(
@@ -374,10 +490,7 @@ mod tests {
         let recents = (0..MAX_RECENTS)
             .map(|index| recent(&format!("/{index}"), "2026-01-01T00:00:00Z"))
             .collect();
-        let config = StoredConfig {
-            version: 1,
-            recents,
-        };
+        let config = config_with(recents);
 
         let next = record_recent(config, "/new".into(), "2026-01-02T00:00:00Z".into());
         assert_eq!(MAX_RECENTS, 24);
@@ -391,10 +504,7 @@ mod tests {
         let recents = (0..24)
             .map(|index| recent(&format!("/{index}"), "2026-01-01T00:00:00Z"))
             .collect();
-        let config = StoredConfig {
-            version: 1,
-            recents,
-        };
+        let config = config_with(recents);
 
         let next = record_recent(config, "/5".into(), "2026-01-02T00:00:00Z".into());
         assert_eq!(next.recents.len(), 24);
@@ -412,10 +522,7 @@ mod tests {
 
     #[test]
     fn remove_recent_is_idempotent() {
-        let config = StoredConfig {
-            version: 1,
-            recents: vec![recent("/a", "2026-01-01T00:00:00Z")],
-        };
+        let config = config_with(vec![recent("/a", "2026-01-01T00:00:00Z")]);
 
         let next = remove_recent(config, "/a");
         assert!(next.recents.is_empty());
@@ -424,13 +531,10 @@ mod tests {
 
     #[test]
     fn remove_recent_keeps_other_entries() {
-        let config = StoredConfig {
-            version: 1,
-            recents: vec![
-                recent("/a", "2026-01-01T00:00:00Z"),
-                recent("/b", "2026-01-02T00:00:00Z"),
-            ],
-        };
+        let config = config_with(vec![
+            recent("/a", "2026-01-01T00:00:00Z"),
+            recent("/b", "2026-01-02T00:00:00Z"),
+        ]);
 
         assert_eq!(
             remove_recent(config, "/a").recents,
@@ -440,13 +544,10 @@ mod tests {
 
     #[test]
     fn remove_recent_trims_slash_on_missing_folder() {
-        let config = StoredConfig {
-            version: 1,
-            recents: vec![
-                recent("/gone", "2026-01-01T00:00:00Z"),
-                recent("/keep", "2026-01-02T00:00:00Z"),
-            ],
-        };
+        let config = config_with(vec![
+            recent("/gone", "2026-01-01T00:00:00Z"),
+            recent("/keep", "2026-01-02T00:00:00Z"),
+        ]);
 
         assert_eq!(
             remove_recent(config, "/gone/").recents,
@@ -461,13 +562,10 @@ mod tests {
         fs::create_dir_all(&dir).expect("docs");
         let canonical = resolve_folder(&dir.to_string_lossy()).expect("resolve");
 
-        let config = StoredConfig {
-            version: 1,
-            recents: vec![
-                recent(&canonical, "2026-01-01T00:00:00Z"),
-                recent("/keep", "2026-01-02T00:00:00Z"),
-            ],
-        };
+        let config = config_with(vec![
+            recent(&canonical, "2026-01-01T00:00:00Z"),
+            recent("/keep", "2026-01-02T00:00:00Z"),
+        ]);
 
         let with_slash = format!("{canonical}/");
         assert_eq!(
@@ -524,16 +622,13 @@ mod tests {
         let existing = home.root.join("alive");
         fs::create_dir_all(&existing).expect("create alive");
 
-        let config = StoredConfig {
-            version: 1,
-            recents: vec![
-                recent(&existing.to_string_lossy(), "2026-01-01T00:00:00Z"),
-                recent(
-                    "/definitely/missing/idioteque-folder",
-                    "2026-01-02T00:00:00Z",
-                ),
-            ],
-        };
+        let config = config_with(vec![
+            recent(&existing.to_string_lossy(), "2026-01-01T00:00:00Z"),
+            recent(
+                "/definitely/missing/idioteque-folder",
+                "2026-01-02T00:00:00Z",
+            ),
+        ]);
 
         let annotated = annotate(config);
         assert_eq!(annotated.recents.len(), 2);
@@ -547,10 +642,10 @@ mod tests {
         let file = home.root.join("note.md");
         fs::write(&file, "x").expect("write file");
 
-        let config = StoredConfig {
-            version: 1,
-            recents: vec![recent(&file.to_string_lossy(), "2026-01-01T00:00:00Z")],
-        };
+        let config = config_with(vec![recent(
+            &file.to_string_lossy(),
+            "2026-01-01T00:00:00Z",
+        )]);
 
         let annotated = annotate(config);
         assert_eq!(annotated.recents.len(), 1);
@@ -599,5 +694,66 @@ mod tests {
             r#"\\?\UNC\server\share"#
         );
         assert_eq!(strip_windows_extended_prefix("/home/x"), "/home/x");
+    }
+
+    #[test]
+    fn record_recent_preserves_terminal_settings() {
+        let mut config = config_with(vec![recent("/a", "2026-01-01T00:00:00Z")]);
+        config.terminal = nerd_terminal();
+
+        let next = record_recent(config, "/b".into(), "2026-01-02T00:00:00Z".into());
+        assert_eq!(next.terminal, nerd_terminal());
+        assert_eq!(next.recents[0].path, "/b");
+    }
+
+    #[test]
+    fn remove_recent_preserves_terminal_settings() {
+        let mut config = config_with(vec![
+            recent("/a", "2026-01-01T00:00:00Z"),
+            recent("/b", "2026-01-02T00:00:00Z"),
+        ]);
+        config.terminal = nerd_terminal();
+
+        let next = remove_recent(config, "/a");
+        assert_eq!(next.terminal, nerd_terminal());
+        assert_eq!(next.recents, vec![recent("/b", "2026-01-02T00:00:00Z")]);
+    }
+
+    #[test]
+    fn apply_terminal_clamps_size_and_trims_family() {
+        let next = apply_terminal(default_config(), Some("  Hack Nerd Font  ".into()), 3);
+        assert_eq!(next.terminal.font_family.as_deref(), Some("Hack Nerd Font"));
+        assert_eq!(next.terminal.font_size, MIN_FONT_SIZE);
+
+        let wide = apply_terminal(default_config(), Some("".into()), 99);
+        assert_eq!(wide.terminal.font_family, None);
+        assert_eq!(wide.terminal.font_size, MAX_FONT_SIZE);
+    }
+
+    #[test]
+    fn annotate_clamps_terminal_font_size() {
+        let mut config = default_config();
+        config.terminal.font_family = Some("  ".into());
+        config.terminal.font_size = 4;
+
+        let annotated = annotate(config);
+        assert_eq!(annotated.terminal.font_family, None);
+        assert_eq!(annotated.terminal.font_size, MIN_FONT_SIZE);
+    }
+
+    #[test]
+    fn save_and_load_roundtrip_terminal_settings() {
+        let home = Home::new();
+        let path = home.config_path();
+        let stored = apply_terminal(default_config(), Some("JetBrainsMono Nerd Font".into()), 16);
+        save_to_path(&path, &stored).expect("save");
+
+        let disk = fs::read_to_string(&path).expect("read disk");
+        assert!(disk.contains("JetBrainsMono Nerd Font"));
+        assert!(disk.contains("\"fontSize\": 16"));
+
+        let reread = load_from_path(&path);
+        assert_eq!(reread.terminal, stored.terminal);
+        assert!(!path.with_file_name(CONFIG_TMP_NAME).exists());
     }
 }

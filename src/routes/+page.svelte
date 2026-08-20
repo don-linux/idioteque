@@ -93,6 +93,9 @@
     <aside>
       <header>
         <span class="root" title={workspace.root}>{workspace.root}</span>
+        <a href="/configuracion" class="icon compact" aria-label="Configuración" title="Configuración">
+          <Settings size={16} strokeWidth={1.75} aria-hidden="true" />
+        </a>
         <button type="button" onclick={() => workspace.closeWorkspace()}>Inicio</button>
         <button type="button" onclick={() => workspace.openFolder()}>Cambiar</button>
       </header>
@@ -189,6 +192,12 @@
   a.icon:hover {
     border-color: var(--accent);
     color: var(--accent);
+  }
+
+  a.icon.compact {
+    flex-shrink: 0;
+    width: 1.85rem;
+    height: 1.85rem;
   }
 
   .home h1 {
