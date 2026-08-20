@@ -66,6 +66,8 @@ Ocultarla no corta lo que esté corriendo. Volver a Inicio o cambiar de carpeta 
 
 Una sola terminal, sin pestañas. El tamaño y el lado del panel no se recuerdan al reiniciar. Fuente y tamaño de letra sí (en Configuración).
 
+Los 16 colores ANSI son Tokyo Night, fijos: el azul del prompt es el acento `#7aa2f7` y el amarillo de git es `#e0af68`. No se eligen en Configuración.
+
 ## Footer del IDE
 
 Solo en la vista IDE. No aparece en la selección de carpetas ni en Configuración.
