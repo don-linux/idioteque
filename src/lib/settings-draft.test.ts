@@ -29,7 +29,7 @@ describe("isSettingsDirty", () => {
     expect(isSettingsDirty({ ...saved, fontFamily: null }, saved)).toBe(true);
     expect(isSettingsDirty({ ...saved, fontSize: 16 }, saved)).toBe(true);
     expect(isSettingsDirty({ ...saved, theme: "dracula" }, saved)).toBe(true);
-    expect(isSettingsDirty({ ...saved, uiTheme: "tokyo-dark" }, saved)).toBe(true);
+    expect(isSettingsDirty({ ...saved, uiTheme: "idioteque-night" }, saved)).toBe(true);
   });
 
   it("is clean again when the user reverts all fields", () => {

@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { comboItemLabel, filterComboItems, type ComboItem } from "./combobox";
 
 const items: ComboItem[] = [
-  { value: "idioteque-dark", label: "Idioteque-dark" },
-  { value: "tokyo-dark", label: "Tokyo-dark" },
+  { value: "idioteque-dark", label: "Idioteque Dark" },
+  { value: "idioteque-night", label: "Idioteque Night" },
   { value: null, label: "Predeterminada" },
 ];
 
@@ -13,8 +13,8 @@ describe("filterComboItems", () => {
   });
 
   it("matches a case-insensitive substring of the label", () => {
-    expect(filterComboItems(items, "tokyo")).toEqual([
-      { value: "tokyo-dark", label: "Tokyo-dark" },
+    expect(filterComboItems(items, "night")).toEqual([
+      { value: "idioteque-night", label: "Idioteque Night" },
     ]);
     expect(filterComboItems(items, "PREDE")).toEqual([
       { value: null, label: "Predeterminada" },
@@ -25,7 +25,7 @@ describe("filterComboItems", () => {
 
 describe("comboItemLabel", () => {
   it("uses the matching item label", () => {
-    expect(comboItemLabel(items, "tokyo-dark")).toBe("Tokyo-dark");
+    expect(comboItemLabel(items, "idioteque-night")).toBe("Idioteque Night");
     expect(comboItemLabel(items, null)).toBe("Predeterminada");
   });
 

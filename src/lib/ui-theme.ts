@@ -2,7 +2,7 @@ export const DEFAULT_UI_THEME_ID = "idioteque-dark" as const;
 
 export const UI_THEME_IDS = [
   "idioteque-dark",
-  "tokyo-dark",
+  "idioteque-night",
   "idioteque-light",
   "platzi",
   "tokyo-night",
@@ -91,8 +91,8 @@ const IDIOTEQUE_DARK: UiThemeTokens = darkTokens({
   "--syntax-invalid": "#e08b99",
 });
 
-/** Previous app chrome, kept as a product theme. */
-const TOKYO_DARK: UiThemeTokens = darkTokens({
+/** Previous app chrome. Original palette inspired by Tokyo Night, not a port. */
+const IDIOTEQUE_NIGHT: UiThemeTokens = darkTokens({
   "--bg": "#14161a",
   "--surface": "#191c21",
   "--surface-hover": "#22262d",
@@ -381,9 +381,9 @@ const SOLARIZED_DARK: UiThemeTokens = darkTokens({
 });
 
 export const UI_THEMES: readonly UiThemeDefinition[] = [
-  { id: "idioteque-dark", label: "Idioteque-dark", scheme: "dark", tokens: IDIOTEQUE_DARK },
-  { id: "tokyo-dark", label: "Tokyo-dark", scheme: "dark", tokens: TOKYO_DARK },
-  { id: "idioteque-light", label: "Idioteque-light", scheme: "light", tokens: IDIOTEQUE_LIGHT },
+  { id: "idioteque-dark", label: "Idioteque Dark", scheme: "dark", tokens: IDIOTEQUE_DARK },
+  { id: "idioteque-night", label: "Idioteque Night", scheme: "dark", tokens: IDIOTEQUE_NIGHT },
+  { id: "idioteque-light", label: "Idioteque Light", scheme: "light", tokens: IDIOTEQUE_LIGHT },
   { id: "platzi", label: "Platzi", scheme: "dark", tokens: PLATZI },
   { id: "tokyo-night", label: "Tokyo Night", scheme: "dark", tokens: TOKYO_NIGHT },
   { id: "catppuccin-mocha", label: "Catppuccin Mocha", scheme: "dark", tokens: CATPPUCCIN_MOCHA },
