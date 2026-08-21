@@ -16,6 +16,7 @@ pub fn run() {
             app_config::remove_recent_folder,
             app_config::update_terminal_settings,
             app_config::update_footer_settings,
+            app_config::update_appearance_settings,
             fonts::list_system_fonts,
             workspace::list_context_tree,
             workspace::read_markdown,

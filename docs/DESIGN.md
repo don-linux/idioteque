@@ -4,17 +4,23 @@ Bitácora de cómo se ve idioteque y por qué. No es el detalle de implementaci�
 
 ## Paleta y tipografía
 
-Tema oscuro fijo. Los colores viven como tokens en la app:
+Los colores viven como tokens. Se pueden cambiar en Configuración → Temas. El default es Idioteque-dark, la paleta original de la app.
 
-- Fondo: `#14161a`
-- Superficie (sidebar, cajas): `#191c21`
-- Hover: `#22262d`
-- Borde: `#2a2f37`
-- Texto: `#e4e6ea`
-- Texto secundario: `#9aa1ad`
-- Texto apagado: `#666d79`
-- Acento: `#7aa2f7` (también en un velo suave para estados activos)
-- Peligro: `#f7768e`
+**Idioteque-dark** (default):
+
+- Fondo: `#1c1e22`
+- Superficie (sidebar, cajas): `#24272d`
+- Hover: `#2c3038`
+- Borde: `#3a404a`
+- Texto: `#d2d5db`
+- Texto secundario: `#8f96a1`
+- Texto apagado: `#6a7080`
+- Acento: `#7b9ee8` (también en un velo suave para estados activos)
+- Peligro: `#e08b99`
+
+**Tokyo-dark** conserva el chrome anterior, inspirado en Tokyo Night: fondo `#14161a`, texto `#e4e6ea`, acento `#7aa2f7`, peligro `#f7768e`.
+
+**Idioteque-light** usa blancos rotos neutros (no `#fff`): fondo `#f2f3f5`, texto `#2c3038`, acento `#3d6ec9`.
 
 Inter para la interfaz. JetBrains Mono para rutas, editor y terminal.
 
@@ -93,10 +99,14 @@ Es una página completa (`/configuracion`), no un panel encima del IDE. Flecha a
 
 A la izquierda, un menú con las secciones. A la derecha, el contenido de la que elegiste. Si no hay ninguna, el centro dice “Elige una opción para empezar a configurar”. Volver al engrane no recuerda la última sección.
 
-Cada sección es su propia página. Hoy solo está Terminal (`/configuracion/terminal`). Fuente del sistema (se puede filtrar escribiendo), tamaño de 10 a 24 píxeles con +/−, un selector de tema (Tokyo Night y otras paletas oficiales), y una vista previa (`❯ git status`) con la paleta ANSI para ver si una Nerd Font pinta los iconos.
+Cada sección es su propia página. Hoy hay Terminal y Temas.
+
+Terminal (`/configuracion/terminal`): fuente del sistema (se puede filtrar escribiendo), tamaño de 10 a 24 píxeles con +/−, un selector de tema (Tokyo Night y otras paletas oficiales), y una vista previa (`❯ git status`) con la paleta ANSI para ver si una Nerd Font pinta los iconos.
+
+Temas (`/configuracion/temas`): selector de la paleta de la interfaz (Idioteque-dark, Tokyo-dark, Idioteque-light) y una vista previa del IDE con markdown de ejemplo. Al hacer clic se ve el cambio; hay que guardar para que quede.
 
 Si una sección crece, esa lista hace scroll. Las otras no aparecen mezcladas.
 
-Los cambios se quedan en un borrador. Hay que pulsar “Guardar configuración” o Ctrl+S. Entonces se escriben, sale un aviso abajo a la derecha y, al volver al IDE, la terminal ya usa esa fuente, ese tamaño y ese tema. Si sales sin guardar, el borrador se descarta.
+Los cambios se quedan en un borrador. Hay que pulsar “Guardar configuración” o Ctrl+S. Entonces se escriben, sale un aviso abajo a la derecha y, al volver al IDE, la terminal ya usa esa fuente, ese tamaño y ese tema, y la interfaz el color elegido. Si sales sin guardar, el borrador se descarta.
 
 No hay, a propósito, fuente del editor ni de la interfaz, ni elección de shell, ni importar un archivo de tema.

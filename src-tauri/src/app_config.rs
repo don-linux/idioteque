@@ -25,6 +25,8 @@ const KNOWN_THEMES: [&str; 8] = [
     "solarized-dark",
     "campbell",
 ];
+const DEFAULT_UI_THEME: &str = "idioteque-dark";
+const KNOWN_UI_THEMES: [&str; 3] = ["idioteque-dark", "tokyo-dark", "idioteque-light"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,6 +54,13 @@ struct StoredFooter {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredAppearance {
+    #[serde(default = "default_ui_theme")]
+    theme: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct StoredConfig {
     version: u32,
     #[serde(default)]
@@ -60,6 +69,8 @@ struct StoredConfig {
     terminal: StoredTerminal,
     #[serde(default)]
     footer: StoredFooter,
+    #[serde(default)]
+    appearance: StoredAppearance,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -100,11 +111,24 @@ pub struct FooterSettingsUpdate {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AppearanceSettings {
+    pub theme: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppearanceSettingsUpdate {
+    pub theme: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AppConfig {
     pub version: u32,
     pub recents: Vec<RecentFolder>,
     pub terminal: TerminalSettings,
     pub footer: FooterSettings,
+    pub appearance: AppearanceSettings,
 }
 
 fn default_font_size() -> u8 {
@@ -148,12 +172,29 @@ impl Default for StoredFooter {
     }
 }
 
+fn default_ui_theme() -> String {
+    DEFAULT_UI_THEME.to_string()
+}
+
+fn default_appearance() -> StoredAppearance {
+    StoredAppearance {
+        theme: default_ui_theme(),
+    }
+}
+
+impl Default for StoredAppearance {
+    fn default() -> Self {
+        default_appearance()
+    }
+}
+
 fn default_config() -> StoredConfig {
     StoredConfig {
         version: CONFIG_VERSION,
         recents: Vec::new(),
         terminal: default_terminal(),
         footer: default_footer(),
+        appearance: default_appearance(),
     }
 }
 
@@ -183,6 +224,27 @@ fn normalize_theme(theme: String) -> String {
     } else {
         default_theme()
     }
+}
+
+fn is_known_ui_theme(id: &str) -> bool {
+    KNOWN_UI_THEMES.contains(&id)
+}
+
+fn normalize_ui_theme(theme: String) -> String {
+    let trimmed = theme.trim();
+    if is_known_ui_theme(trimmed) {
+        trimmed.to_string()
+    } else {
+        default_ui_theme()
+    }
+}
+
+fn apply_appearance(mut config: StoredConfig, theme: String) -> StoredConfig {
+    config.version = CONFIG_VERSION;
+    config.appearance = StoredAppearance {
+        theme: normalize_ui_theme(theme),
+    };
+    config
 }
 
 fn apply_terminal(
@@ -368,6 +430,9 @@ fn annotate(config: StoredConfig) -> AppConfig {
         footer: FooterSettings {
             action_order: normalize_action_order(config.footer.action_order),
         },
+        appearance: AppearanceSettings {
+            theme: normalize_ui_theme(config.appearance.theme),
+        },
     }
 }
 
@@ -462,6 +527,14 @@ pub fn update_footer_settings(
     footer: FooterSettingsUpdate,
 ) -> Result<AppConfig, String> {
     mutate_config(&app, |config| apply_footer(config, footer.action_order))
+}
+
+#[tauri::command]
+pub fn update_appearance_settings(
+    app: AppHandle,
+    appearance: AppearanceSettingsUpdate,
+) -> Result<AppConfig, String> {
+    mutate_config(&app, |config| apply_appearance(config, appearance.theme))
 }
 
 #[cfg(test)]
@@ -562,6 +635,7 @@ mod tests {
         assert!(parsed.recents.is_empty());
         assert_eq!(parsed.terminal, default_terminal());
         assert_eq!(parsed.footer, default_footer());
+        assert_eq!(parsed.appearance, default_appearance());
     }
 
     #[test]
@@ -1078,6 +1152,101 @@ mod tests {
 
         let reread = load_from_path(&path);
         assert_eq!(reread.terminal, stored.terminal);
+        assert!(!path.with_file_name(CONFIG_TMP_NAME).exists());
+    }
+
+    fn custom_appearance() -> StoredAppearance {
+        StoredAppearance {
+            theme: "tokyo-dark".into(),
+        }
+    }
+
+    #[test]
+    fn parse_config_missing_appearance_uses_default() {
+        let parsed = parse_config(
+            br#"{
+              "version": 1,
+              "recents": [],
+              "terminal": { "fontSize": 13 }
+            }"#,
+        );
+        assert_eq!(parsed.appearance, default_appearance());
+        assert_eq!(parsed.appearance.theme, "idioteque-dark");
+    }
+
+    #[test]
+    fn parse_config_reads_appearance_theme() {
+        let parsed = parse_config(
+            br#"{
+              "version": 1,
+              "recents": [],
+              "appearance": { "theme": "idioteque-light" }
+            }"#,
+        );
+        assert_eq!(parsed.appearance.theme, "idioteque-light");
+    }
+
+    #[test]
+    fn annotate_unknown_ui_theme_falls_back_to_idioteque_dark() {
+        let mut config = default_config();
+        config.appearance.theme = "  not-a-theme  ".into();
+
+        let annotated = annotate(config);
+        assert_eq!(annotated.appearance.theme, "idioteque-dark");
+    }
+
+    #[test]
+    fn apply_appearance_normalizes_and_keeps_known_theme() {
+        let next = apply_appearance(default_config(), "  tokyo-dark  ".into());
+        assert_eq!(next.appearance.theme, "tokyo-dark");
+
+        let unknown = apply_appearance(default_config(), "ghost".into());
+        assert_eq!(unknown.appearance.theme, "idioteque-dark");
+    }
+
+    #[test]
+    fn apply_appearance_preserves_terminal() {
+        let mut config = default_config();
+        config.terminal = nerd_terminal();
+
+        let next = apply_appearance(config, "idioteque-light".into());
+        assert_eq!(next.terminal, nerd_terminal());
+        assert_eq!(next.appearance.theme, "idioteque-light");
+    }
+
+    #[test]
+    fn apply_terminal_preserves_appearance() {
+        let mut config = default_config();
+        config.appearance = custom_appearance();
+
+        let next = apply_terminal(config, Some("Hack".into()), 16, "tokyo-night".into());
+        assert_eq!(next.appearance, custom_appearance());
+        assert_eq!(next.terminal.font_family.as_deref(), Some("Hack"));
+    }
+
+    #[test]
+    fn record_recent_preserves_appearance() {
+        let mut config = config_with(vec![recent("/a", "2026-01-01T00:00:00Z")]);
+        config.appearance = custom_appearance();
+
+        let next = record_recent(config, "/b".into(), "2026-01-02T00:00:00Z".into());
+        assert_eq!(next.appearance, custom_appearance());
+        assert_eq!(next.recents[0].path, "/b");
+    }
+
+    #[test]
+    fn save_and_load_roundtrip_appearance_settings() {
+        let home = Home::new();
+        let path = home.config_path();
+        let stored = apply_appearance(default_config(), "idioteque-light".into());
+        save_to_path(&path, &stored).expect("save");
+
+        let disk = fs::read_to_string(&path).expect("read disk");
+        assert!(disk.contains("\"appearance\""));
+        assert!(disk.contains("idioteque-light"));
+
+        let reread = load_from_path(&path);
+        assert_eq!(reread.appearance, stored.appearance);
         assert!(!path.with_file_name(CONFIG_TMP_NAME).exists());
     }
 }

@@ -31,6 +31,6 @@
     background: var(--surface);
     color: var(--text);
     font-size: 0.9rem;
-    box-shadow: 0 10px 28px #00000055;
+    box-shadow: 0 10px 28px var(--shadow);
   }
 </style>

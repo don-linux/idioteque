@@ -14,6 +14,7 @@ import {
   resolveTerminalThemeId,
   type TerminalThemeId,
 } from "$lib/terminal-theme";
+import { DEFAULT_UI_THEME_ID, resolveUiThemeId, type UiThemeId } from "$lib/ui-theme";
 
 export interface RecentFolder {
   path: string;
@@ -31,11 +32,16 @@ export interface FooterSettings {
   actionOrder: FooterActionId[] | string[];
 }
 
+export interface AppearanceSettings {
+  theme: string;
+}
+
 interface AppConfigDto {
   version: number;
   recents: RecentFolder[];
   terminal: TerminalSettings;
   footer?: FooterSettings;
+  appearance?: AppearanceSettings;
 }
 
 function messageFrom(error: unknown): string {
@@ -54,6 +60,7 @@ class AppConfig {
   terminalFontFamily = $state<string | null>(null);
   terminalFontSize = $state(DEFAULT_TERMINAL_FONT_SIZE);
   terminalTheme = $state<TerminalThemeId>(DEFAULT_TERMINAL_THEME_ID);
+  uiTheme = $state<UiThemeId>(DEFAULT_UI_THEME_ID);
   footerOrder = $state<FooterActionId[]>([...DEFAULT_FOOTER_ACTION_ORDER]);
   fonts = $state.raw<SystemFont[]>([]);
   fontsLoaded = $state(false);
@@ -67,6 +74,7 @@ class AppConfig {
     this.terminalFontFamily = normalizeFamily(config.terminal.fontFamily);
     this.terminalFontSize = clampFontSize(config.terminal.fontSize);
     this.terminalTheme = resolveTerminalThemeId(config.terminal.theme);
+    this.uiTheme = resolveUiThemeId(config.appearance?.theme);
     this.footerOrder = normalizeFooterOrder(config.footer?.actionOrder);
     this.error = null;
   }
@@ -84,6 +92,7 @@ class AppConfig {
       this.terminalFontFamily = null;
       this.terminalFontSize = DEFAULT_TERMINAL_FONT_SIZE;
       this.terminalTheme = DEFAULT_TERMINAL_THEME_ID;
+      this.uiTheme = DEFAULT_UI_THEME_ID;
       this.footerOrder = [...DEFAULT_FOOTER_ACTION_ORDER];
       this.error = messageFrom(error);
     } finally {
@@ -157,6 +166,24 @@ class AppConfig {
     try {
       const config = await invoke<AppConfigDto>("update_terminal_settings", {
         terminal: { fontFamily, fontSize, theme },
+      });
+      if (gen !== this.#gen) return;
+      this.apply(config);
+    } catch (error) {
+      if (gen !== this.#gen) return;
+      this.error = messageFrom(error);
+    }
+  }
+
+  async saveAppearance(input: { theme: string }): Promise<void> {
+    const theme = resolveUiThemeId(input.theme);
+    this.uiTheme = theme;
+
+    const gen = ++this.#gen;
+
+    try {
+      const config = await invoke<AppConfigDto>("update_appearance_settings", {
+        appearance: { theme },
       });
       if (gen !== this.#gen) return;
       this.apply(config);
