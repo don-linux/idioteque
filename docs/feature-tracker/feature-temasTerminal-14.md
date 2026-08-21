@@ -29,8 +29,9 @@ Campbell.
 
 **3. Vista previa**
 
-En Configuración se ve la paleta ANSI y el texto de fuente con el tema
-elegido.
+En Configuración se ve la paleta ANSI y una terminal xterm de solo
+lectura con un prompt idle. Al elegir un tema se recrea la instancia;
+el tamaño de fuente se refleja en vivo. No acepta clics ni teclado.
 
 **4. Se recuerda al volver**
 
@@ -45,8 +46,8 @@ el padding.
 
 **6. Pruebas**
 
-Hay pruebas del catálogo y de la persistencia. El typecheck del frontend
-pasó.
+Hay pruebas del catálogo, de la persistencia y del prompt compacto de
+la vista previa. El typecheck del frontend pasó.
 
 ## NO se pudo implementar
 

@@ -4,7 +4,6 @@ export const DEFAULT_TERMINAL_FONT_SIZE = 13;
 export const MIN_TERMINAL_FONT_SIZE = 10;
 export const MAX_TERMINAL_FONT_SIZE = 24;
 export const DEFAULT_FONT_LABEL = "Predeterminada";
-export const TERMINAL_FONT_PREVIEW = "❯ git status   main";
 
 export interface SystemFont {
   family: string;
