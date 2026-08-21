@@ -22,6 +22,8 @@ Los colores viven como tokens. Se pueden cambiar en Configuración → Temas. El
 
 **Idioteque-light** usa blancos rotos neutros (no `#fff`): fondo `#f2f3f5`, texto `#2c3038`, acento `#3d6ec9`.
 
+También hay paletas oficiales importadas (HEX publicados, no aproximaciones): Platzi (Green Mode de `platzi/platzi-theme`), Tokyo Night, Catppuccin Mocha, Nord, Gruvbox Dark, Everforest Dark Medium, One Dark y Solarized Dark. La terminal sigue su catálogo aparte.
+
 Inter para la interfaz. JetBrains Mono para rutas, editor y terminal.
 
 Botones e iconos son chicos, sin relleno fuerte. El acento aparece al pasar el mouse o cuando algo está activo (por ejemplo, la terminal abierta).
@@ -103,7 +105,7 @@ Cada sección es su propia página. Hoy hay Terminal y Temas.
 
 Terminal (`/configuracion/terminal`): fuente del sistema (se puede filtrar escribiendo), tamaño de 10 a 24 píxeles con +/−, un selector de tema (Tokyo Night y otras paletas oficiales), y una vista previa (`❯ git status`) con la paleta ANSI para ver si una Nerd Font pinta los iconos.
 
-Temas (`/configuracion/temas`): selector de la paleta de la interfaz (Idioteque-dark, Tokyo-dark, Idioteque-light) y una vista previa del IDE con markdown de ejemplo. Al hacer clic se ve el cambio; hay que guardar para que quede.
+Temas (`/configuracion/temas`): selector de la paleta de la interfaz (Idioteque-dark, Tokyo-dark, Idioteque-light y las paletas oficiales) y una vista previa del IDE con markdown de ejemplo. Al hacer clic se ve el cambio; hay que guardar para que quede.
 
 Si una sección crece, esa lista hace scroll. Las otras no aparecen mezcladas.
 

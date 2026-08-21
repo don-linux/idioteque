@@ -13,6 +13,7 @@ describe("theme preview sample", () => {
     expect(THEME_PREVIEW_MARKDOWN).toContain("- ");
     expect(THEME_PREVIEW_MARKDOWN).toContain("[enlace]");
     expect(THEME_PREVIEW_MARKDOWN).toContain("`const hola");
+    expect(THEME_PREVIEW_MARKDOWN).toContain("<!-- comentario");
   });
 
   it("describes a small static workspace chrome", () => {
