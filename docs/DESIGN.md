@@ -4,9 +4,9 @@ Bitácora de cómo se ve idioteque y por qué. No es el detalle de implementaci�
 
 ## Paleta y tipografía
 
-Los colores viven como tokens. Se pueden cambiar en Configuración → Temas. El default es Idioteque-dark, la paleta original de la app.
+Los colores viven como tokens. Se pueden cambiar en Configuración → Temas. El default es Idioteque Dark, la paleta original de la app.
 
-**Idioteque-dark** (default):
+**Idioteque Dark** (default):
 
 - Fondo: `#1c1e22`
 - Superficie (sidebar, cajas): `#24272d`
@@ -18,9 +18,9 @@ Los colores viven como tokens. Se pueden cambiar en Configuración → Temas. El
 - Acento: `#7b9ee8` (también en un velo suave para estados activos)
 - Peligro: `#e08b99`
 
-**Tokyo-dark** conserva el chrome anterior, inspirado en Tokyo Night: fondo `#14161a`, texto `#e4e6ea`, acento `#7aa2f7`, peligro `#f7768e`.
+**Idioteque Night** conserva el chrome anterior. Es una paleta original inspirada en Tokyo Night, no un port: fondo `#14161a`, texto `#e4e6ea`, acento `#7aa2f7`, peligro `#f7768e`.
 
-**Idioteque-light** usa blancos rotos neutros (no `#fff`): fondo `#f2f3f5`, texto `#2c3038`, acento `#3d6ec9`.
+**Idioteque Light** usa blancos rotos neutros (no `#fff`): fondo `#f2f3f5`, texto `#2c3038`, acento `#3d6ec9`.
 
 También hay paletas oficiales importadas (HEX publicados, no aproximaciones): Platzi (Green Mode de `platzi/platzi-theme`), Tokyo Night, Catppuccin Mocha, Nord, Gruvbox Dark, Everforest Dark Medium, One Dark y Solarized Dark. La terminal sigue su catálogo aparte.
 
@@ -105,7 +105,7 @@ Cada sección es su propia página. Hoy hay Terminal y Temas.
 
 Terminal (`/configuracion/terminal`): fuente del sistema (dropdown; se filtra escribiendo en el panel abierto), tamaño de 10 a 24 píxeles con +/−, un selector de tema (Tokyo Night y otras paletas oficiales), y una vista previa (`❯ git status`) con la paleta ANSI para ver si una Nerd Font pinta los iconos.
 
-Temas (`/configuracion/temas`): dropdown de la paleta de la interfaz (Idioteque-dark, Tokyo-dark, Idioteque-light y las paletas oficiales); se filtra escribiendo en el panel abierto. Abajo hay una vista previa del IDE con markdown de ejemplo. Al elegir se ve el cambio; hay que guardar para que quede.
+Temas (`/configuracion/temas`): dropdown de la paleta de la interfaz (Idioteque Dark, Idioteque Night, Idioteque Light y las paletas oficiales); se filtra escribiendo en el panel abierto. Abajo hay una vista previa del IDE con markdown de ejemplo. Al elegir se ve el cambio; hay que guardar para que quede.
 
 Si una sección crece, esa lista hace scroll. Las otras no aparecen mezcladas.
 

@@ -28,7 +28,7 @@ const KNOWN_THEMES: [&str; 8] = [
 const DEFAULT_UI_THEME: &str = "idioteque-dark";
 const KNOWN_UI_THEMES: [&str; 11] = [
     "idioteque-dark",
-    "tokyo-dark",
+    "idioteque-night",
     "idioteque-light",
     "platzi",
     "tokyo-night",
@@ -1169,7 +1169,7 @@ mod tests {
 
     fn custom_appearance() -> StoredAppearance {
         StoredAppearance {
-            theme: "tokyo-dark".into(),
+            theme: "idioteque-night".into(),
         }
     }
 
@@ -1209,8 +1209,8 @@ mod tests {
 
     #[test]
     fn apply_appearance_normalizes_and_keeps_known_theme() {
-        let next = apply_appearance(default_config(), "  tokyo-dark  ".into());
-        assert_eq!(next.appearance.theme, "tokyo-dark");
+        let next = apply_appearance(default_config(), "  idioteque-night  ".into());
+        assert_eq!(next.appearance.theme, "idioteque-night");
 
         let platzi = apply_appearance(default_config(), "platzi".into());
         assert_eq!(platzi.appearance.theme, "platzi");

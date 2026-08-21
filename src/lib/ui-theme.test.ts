@@ -11,12 +11,12 @@ import {
 } from "./ui-theme";
 
 describe("UI_THEMES", () => {
-  it("lists Idioteque-dark first as the default", () => {
+  it("lists Idioteque Dark first as the default", () => {
     expect(UI_THEME_IDS[0]).toBe(DEFAULT_UI_THEME_ID);
     expect(DEFAULT_UI_THEME_ID).toBe("idioteque-dark");
     expect(UI_THEMES.map((theme) => theme.id)).toEqual([
       "idioteque-dark",
-      "tokyo-dark",
+      "idioteque-night",
       "idioteque-light",
       "platzi",
       "tokyo-night",
@@ -36,6 +36,22 @@ describe("UI_THEMES", () => {
     expect(new Set(labels).size).toBe(labels.length);
   });
 
+  it("uses Title Case labels without hyphens", () => {
+    expect(UI_THEMES.map((theme) => theme.label)).toEqual([
+      "Idioteque Dark",
+      "Idioteque Night",
+      "Idioteque Light",
+      "Platzi",
+      "Tokyo Night",
+      "Catppuccin Mocha",
+      "Nord",
+      "Gruvbox Dark",
+      "Everforest Dark",
+      "One Dark",
+      "Solarized Dark",
+    ]);
+  });
+
   it("defines every token on every theme", () => {
     for (const theme of UI_THEMES) {
       for (const name of UI_THEME_TOKEN_NAMES) {
@@ -44,15 +60,16 @@ describe("UI_THEMES", () => {
     }
   });
 
-  it("preserves the previous chrome as Tokyo-dark", () => {
-    const tokyo = resolveUiTheme("tokyo-dark");
-    expect(tokyo.tokens["--bg"]).toBe("#14161a");
-    expect(tokyo.tokens["--accent"]).toBe("#7aa2f7");
-    expect(tokyo.tokens["--danger"]).toBe("#f7768e");
-    expect(tokyo.scheme).toBe("dark");
+  it("preserves the previous chrome as Idioteque Night", () => {
+    const night = resolveUiTheme("idioteque-night");
+    expect(night.label).toBe("Idioteque Night");
+    expect(night.tokens["--bg"]).toBe("#14161a");
+    expect(night.tokens["--accent"]).toBe("#7aa2f7");
+    expect(night.tokens["--danger"]).toBe("#f7768e");
+    expect(night.scheme).toBe("dark");
   });
 
-  it("uses a lifted original palette for Idioteque-dark", () => {
+  it("uses a lifted original palette for Idioteque Dark", () => {
     const idioteque = resolveUiTheme("idioteque-dark");
     expect(idioteque.tokens["--bg"]).toBe("#1c1e22");
     expect(idioteque.tokens["--text"]).toBe("#d2d5db");
@@ -60,7 +77,7 @@ describe("UI_THEMES", () => {
     expect(idioteque.scheme).toBe("dark");
   });
 
-  it("uses soft neutrals for Idioteque-light", () => {
+  it("uses soft neutrals for Idioteque Light", () => {
     const light = resolveUiTheme("idioteque-light");
     expect(light.tokens["--bg"]).toBe("#f2f3f5");
     expect(light.tokens["--bg"].toLowerCase()).not.toBe("#ffffff");
@@ -99,24 +116,29 @@ describe("UI_THEMES", () => {
 
 describe("resolveUiThemeId", () => {
   it("accepts known ids", () => {
-    expect(isUiThemeId("tokyo-dark")).toBe(true);
-    expect(resolveUiThemeId("tokyo-dark")).toBe("tokyo-dark");
+    expect(isUiThemeId("idioteque-night")).toBe(true);
+    expect(resolveUiThemeId("idioteque-night")).toBe("idioteque-night");
     expect(resolveUiThemeId("  idioteque-light  ")).toBe("idioteque-light");
   });
 
-  it("falls back to Idioteque-dark", () => {
+  it("does not treat the old tokyo-dark id as a theme", () => {
+    expect(isUiThemeId("tokyo-dark")).toBe(false);
+    expect(resolveUiThemeId("tokyo-dark")).toBe("idioteque-dark");
+  });
+
+  it("falls back to Idioteque Dark", () => {
     expect(resolveUiThemeId(null)).toBe("idioteque-dark");
     expect(resolveUiThemeId(undefined)).toBe("idioteque-dark");
     expect(resolveUiThemeId("")).toBe("idioteque-dark");
     expect(resolveUiThemeId("not-a-theme")).toBe("idioteque-dark");
-    expect(uiThemeLabel("ghost")).toBe("Idioteque-dark");
+    expect(uiThemeLabel("ghost")).toBe("Idioteque Dark");
   });
 });
 
 describe("uiThemeLabel", () => {
   it("returns the catalog label for a known id", () => {
-    expect(uiThemeLabel("tokyo-dark")).toBe("Tokyo-dark");
-    expect(uiThemeLabel("idioteque-light")).toBe("Idioteque-light");
+    expect(uiThemeLabel("idioteque-night")).toBe("Idioteque Night");
+    expect(uiThemeLabel("idioteque-light")).toBe("Idioteque Light");
     expect(uiThemeLabel("platzi")).toBe("Platzi");
     expect(uiThemeLabel("tokyo-night")).toBe("Tokyo Night");
   });
