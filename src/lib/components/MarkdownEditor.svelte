@@ -4,6 +4,7 @@
   import { languages } from "@codemirror/language-data";
   import { EditorState } from "@codemirror/state";
   import { EditorView, basicSetup } from "codemirror";
+  import { editorHighlight } from "$lib/editor-theme";
   import { editorSession } from "$lib/editor-session.svelte";
   import { externalDocumentSpec } from "$lib/editor-sync";
 
@@ -29,6 +30,7 @@
     return [
       basicSetup,
       markdown({ codeLanguages: languages }),
+      editorHighlight(),
       EditorView.lineWrapping,
       EditorView.updateListener.of((update) => {
         editorSession.sync(update.state);
@@ -106,6 +108,8 @@
 
   .editor :global(.cm-editor) {
     height: 100%;
+    background: var(--bg);
+    color: var(--text);
   }
 
   .editor :global(.cm-editor.cm-focused) {
@@ -120,5 +124,31 @@
 
   .editor :global(.cm-content) {
     padding: 1.25rem 0;
+    caret-color: var(--accent);
+  }
+
+  .editor :global(.cm-gutters) {
+    background: var(--surface);
+    color: var(--text-faint);
+    border-right: 1px solid var(--border);
+  }
+
+  .editor :global(.cm-activeLine) {
+    background: var(--surface-hover);
+  }
+
+  .editor :global(.cm-activeLineGutter) {
+    background: var(--surface-hover);
+  }
+
+  .editor :global(.cm-cursor),
+  .editor :global(.cm-cursor-primary) {
+    border-left-color: var(--accent);
+  }
+
+  .editor :global(.cm-selectionBackground),
+  .editor :global(.cm-editor.cm-focused .cm-selectionBackground),
+  .editor :global(.cm-content ::selection) {
+    background: var(--accent-soft);
   }
 </style>
