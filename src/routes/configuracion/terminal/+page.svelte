@@ -1,14 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import FontCombobox from "$lib/components/FontCombobox.svelte";
+  import TerminalPreview from "$lib/components/TerminalPreview.svelte";
   import { appConfig } from "$lib/app-config.svelte";
   import { settingsEditor } from "$lib/settings-editor.svelte";
   import {
     MAX_TERMINAL_FONT_SIZE,
     MIN_TERMINAL_FONT_SIZE,
-    TERMINAL_FONT_PREVIEW,
     clampFontSize,
-    xtermFontFamily,
   } from "$lib/terminal-font";
   import {
     TERMINAL_ANSI_SLOTS,
@@ -16,7 +15,6 @@
     resolveTerminalTheme,
   } from "$lib/terminal-theme";
 
-  let previewFamily = $derived(xtermFontFamily(settingsEditor.fontFamily));
   let previewTheme = $derived(resolveTerminalTheme(settingsEditor.theme));
 
   onMount(() => {
@@ -98,19 +96,18 @@
     class="preview"
     style:background={previewTheme.background}
     style:color={previewTheme.foreground}
+    aria-label="Vista previa de la terminal"
   >
     <div class="swatches" aria-hidden="true">
       {#each TERMINAL_ANSI_SLOTS as slot (slot)}
         <span class="swatch" style:background={previewTheme[slot]}></span>
       {/each}
     </div>
-    <p
-      class="preview-sample"
-      style:background={previewTheme.background}
-      style:color={previewTheme.foreground}
-      style:font-family={previewFamily}
-      style:font-size={`${settingsEditor.fontSize}px`}
-    >{TERMINAL_FONT_PREVIEW}</p>
+    <TerminalPreview
+      themeId={settingsEditor.theme}
+      fontFamily={settingsEditor.fontFamily}
+      fontSize={settingsEditor.fontSize}
+    />
   </div>
 
   {#if appConfig.error}
@@ -243,11 +240,6 @@
     background: var(--bg);
     color: var(--text);
     line-height: 1.4;
-    white-space: pre;
-  }
-
-  .preview-sample {
-    margin: 0;
   }
 
   .swatches {
