@@ -65,6 +65,15 @@
     --syntax-comment: #6a7080;
     --syntax-link: #7b9ee8;
     --syntax-code: #c4a882;
+    --syntax-keyword: #7b9ee8;
+    --syntax-string: #c4a882;
+    --syntax-number: #e08b99;
+    --syntax-function: #8eb0ee;
+    --syntax-type: #c4a882;
+    --syntax-variable: #d2d5db;
+    --syntax-operator: #8f96a1;
+    --syntax-tag: #e08b99;
+    --syntax-invalid: #e08b99;
     --font-ui: Inter, system-ui, -apple-system, sans-serif;
     --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, monospace;
     --footer-height: 2.75rem;

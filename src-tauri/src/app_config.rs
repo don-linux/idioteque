@@ -26,7 +26,19 @@ const KNOWN_THEMES: [&str; 8] = [
     "campbell",
 ];
 const DEFAULT_UI_THEME: &str = "idioteque-dark";
-const KNOWN_UI_THEMES: [&str; 3] = ["idioteque-dark", "tokyo-dark", "idioteque-light"];
+const KNOWN_UI_THEMES: [&str; 11] = [
+    "idioteque-dark",
+    "tokyo-dark",
+    "idioteque-light",
+    "platzi",
+    "tokyo-night",
+    "catppuccin-mocha",
+    "nord",
+    "gruvbox-dark",
+    "everforest-dark",
+    "one-dark",
+    "solarized-dark",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1199,6 +1211,12 @@ mod tests {
     fn apply_appearance_normalizes_and_keeps_known_theme() {
         let next = apply_appearance(default_config(), "  tokyo-dark  ".into());
         assert_eq!(next.appearance.theme, "tokyo-dark");
+
+        let platzi = apply_appearance(default_config(), "platzi".into());
+        assert_eq!(platzi.appearance.theme, "platzi");
+
+        let tokyo_night = apply_appearance(default_config(), "tokyo-night".into());
+        assert_eq!(tokyo_night.appearance.theme, "tokyo-night");
 
         let unknown = apply_appearance(default_config(), "ghost".into());
         assert_eq!(unknown.appearance.theme, "idioteque-dark");

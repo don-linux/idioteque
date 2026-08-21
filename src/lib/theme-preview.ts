@@ -6,6 +6,8 @@ Texto de ejemplo para ver el contraste del editor.
 - Un [enlace](https://idioteque.app)
 
 \`const hola = "idioteque"\`
+
+<!-- comentario del editor -->
 `;
 
 export const THEME_PREVIEW_FILES = [

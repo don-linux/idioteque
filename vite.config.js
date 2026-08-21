@@ -15,6 +15,8 @@ export default defineConfig(async () => ({
       "codemirror",
       "@codemirror/lang-markdown",
       "@codemirror/language-data",
+      "@codemirror/language",
+      "@lezer/highlight",
       "@codemirror/state",
       "@codemirror/view",
     ],

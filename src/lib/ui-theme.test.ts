@@ -18,6 +18,14 @@ describe("UI_THEMES", () => {
       "idioteque-dark",
       "tokyo-dark",
       "idioteque-light",
+      "platzi",
+      "tokyo-night",
+      "catppuccin-mocha",
+      "nord",
+      "gruvbox-dark",
+      "everforest-dark",
+      "one-dark",
+      "solarized-dark",
     ]);
   });
 
@@ -59,6 +67,34 @@ describe("UI_THEMES", () => {
     expect(light.tokens["--accent"]).toBe("#3d6ec9");
     expect(light.scheme).toBe("light");
   });
+
+  it("imports Platzi Green Mode HEX from the official VS Code JSON", () => {
+    const platzi = resolveUiTheme("platzi");
+    expect(platzi.label).toBe("Platzi");
+    expect(platzi.tokens["--bg"]).toBe("#03091E");
+    expect(platzi.tokens["--surface"]).toBe("#090f24");
+    expect(platzi.tokens["--accent"]).toBe("#adeb42");
+    expect(platzi.tokens["--text"]).toBe("#eeffff");
+    expect(platzi.tokens["--syntax-keyword"]).toBe("#C792EA");
+    expect(platzi.tokens["--syntax-function"]).toBe("#82AAFF");
+    expect(platzi.tokens["--syntax-string"]).toBe("#C3E88D");
+    expect(platzi.tokens["--syntax-comment"]).toBe("#546E7A");
+    expect(platzi.scheme).toBe("dark");
+  });
+
+  it("keeps official HEX for imported editor palettes", () => {
+    expect(resolveUiTheme("tokyo-night").tokens["--bg"]).toBe("#1a1b26");
+    expect(resolveUiTheme("tokyo-night").tokens["--syntax-keyword"]).toBe("#bb9af7");
+    expect(resolveUiTheme("catppuccin-mocha").tokens["--bg"]).toBe("#1e1e2e");
+    expect(resolveUiTheme("catppuccin-mocha").tokens["--syntax-keyword"]).toBe("#cba6f7");
+    expect(resolveUiTheme("nord").tokens["--bg"]).toBe("#2e3440");
+    expect(resolveUiTheme("gruvbox-dark").tokens["--bg"]).toBe("#282828");
+    expect(resolveUiTheme("everforest-dark").tokens["--bg"]).toBe("#2D353B");
+    expect(resolveUiTheme("one-dark").tokens["--bg"]).toBe("#282c34");
+    expect(resolveUiTheme("one-dark").tokens["--syntax-keyword"]).toBe("#c678dd");
+    expect(resolveUiTheme("solarized-dark").tokens["--bg"]).toBe("#002b36");
+    expect(resolveUiTheme("solarized-dark").tokens["--text"]).toBe("#839496");
+  });
 });
 
 describe("resolveUiThemeId", () => {
@@ -81,5 +117,7 @@ describe("uiThemeLabel", () => {
   it("returns the catalog label for a known id", () => {
     expect(uiThemeLabel("tokyo-dark")).toBe("Tokyo-dark");
     expect(uiThemeLabel("idioteque-light")).toBe("Idioteque-light");
+    expect(uiThemeLabel("platzi")).toBe("Platzi");
+    expect(uiThemeLabel("tokyo-night")).toBe("Tokyo Night");
   });
 });
