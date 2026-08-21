@@ -103,9 +103,9 @@ A la izquierda, un menú con las secciones. A la derecha, el contenido de la que
 
 Cada sección es su propia página. Hoy hay Terminal y Temas.
 
-Terminal (`/configuracion/terminal`): fuente del sistema (se puede filtrar escribiendo), tamaño de 10 a 24 píxeles con +/−, un selector de tema (Tokyo Night y otras paletas oficiales), y una vista previa (`❯ git status`) con la paleta ANSI para ver si una Nerd Font pinta los iconos.
+Terminal (`/configuracion/terminal`): fuente del sistema (dropdown; se filtra escribiendo en el panel abierto), tamaño de 10 a 24 píxeles con +/−, un selector de tema (Tokyo Night y otras paletas oficiales), y una vista previa (`❯ git status`) con la paleta ANSI para ver si una Nerd Font pinta los iconos.
 
-Temas (`/configuracion/temas`): selector de la paleta de la interfaz (Idioteque-dark, Tokyo-dark, Idioteque-light y las paletas oficiales) y una vista previa del IDE con markdown de ejemplo. Al hacer clic se ve el cambio; hay que guardar para que quede.
+Temas (`/configuracion/temas`): dropdown de la paleta de la interfaz (Idioteque-dark, Tokyo-dark, Idioteque-light y las paletas oficiales); se filtra escribiendo en el panel abierto. Abajo hay una vista previa del IDE con markdown de ejemplo. Al elegir se ve el cambio; hay que guardar para que quede.
 
 Si una sección crece, esa lista hace scroll. Las otras no aparecen mezcladas.
 
