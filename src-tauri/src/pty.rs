@@ -46,6 +46,10 @@ fn resolve_cwd(cwd: &str, home: PathBuf) -> String {
     }
 }
 
+fn is_workspace_session(id: &str) -> bool {
+    id == "workspace" || id.starts_with("workspace-")
+}
+
 fn kill_session(sessions: &mut HashMap<String, Session>, id: &str) {
     if let Some(mut current) = sessions.remove(id) {
         let _ = current.killer.kill();
@@ -183,6 +187,22 @@ pub fn pty_kill(state: State<PtyState>, id: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+pub fn pty_kill_all(state: State<PtyState>) -> Result<(), String> {
+    let mut sessions = state.sessions.lock().map_err(|error| error.to_string())?;
+    let ids: Vec<String> = sessions
+        .keys()
+        .filter(|id| is_workspace_session(id))
+        .cloned()
+        .collect();
+
+    for id in ids {
+        kill_session(&mut sessions, &id);
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,5 +220,14 @@ mod tests {
         assert_eq!(resolve_cwd("", home.clone()), "/home/fernando");
         assert_eq!(resolve_cwd("  ", home.clone()), "/home/fernando");
         assert_eq!(resolve_cwd("/tmp/notes", home), "/tmp/notes");
+    }
+
+    #[test]
+    fn workspace_ids_do_not_match_preview() {
+        assert!(is_workspace_session("workspace"));
+        assert!(is_workspace_session("workspace-1"));
+        assert!(is_workspace_session("workspace-12"));
+        assert!(!is_workspace_session("preview"));
+        assert!(!is_workspace_session("other"));
     }
 }

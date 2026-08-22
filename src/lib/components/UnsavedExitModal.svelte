@@ -37,6 +37,11 @@
           Este archivo tiene cambios sin guardar. Si lo cierras, esos cambios no se pueden
           recuperar.
         </p>
+      {:else if unsavedExit.mode === "save"}
+        <p id={descId}>
+          Hay archivos con cambios sin guardar. Se van a guardar antes de pasar a las
+          terminales.
+        </p>
       {:else}
         <p id={descId}>
           Hay archivos con cambios sin guardar. Si sales, esos cambios no se pueden recuperar.
@@ -44,8 +49,16 @@
       {/if}
       <div class="actions">
         <button type="button" onclick={() => unsavedExit.cancel()}>Cancelar</button>
-        <button type="button" class="leave" onclick={() => unsavedExit.confirm()}>
-          {unsavedExit.mode === "tab" ? "Cerrar" : "Salir"}
+        <button
+          type="button"
+          class={unsavedExit.mode === "save" ? "continue" : "leave"}
+          onclick={() => unsavedExit.confirm()}
+        >
+          {unsavedExit.mode === "tab"
+            ? "Cerrar"
+            : unsavedExit.mode === "save"
+              ? "Guardar y continuar"
+              : "Salir"}
         </button>
       </div>
     </div>
@@ -127,5 +140,17 @@
     background: var(--surface-hover);
     border-color: var(--danger);
     color: var(--danger);
+  }
+
+  .actions button.continue {
+    border-color: var(--accent);
+    background: transparent;
+    color: var(--accent);
+  }
+
+  .actions button.continue:hover {
+    background: var(--surface-hover);
+    border-color: var(--accent);
+    color: var(--accent);
   }
 </style>

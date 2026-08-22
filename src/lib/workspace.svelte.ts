@@ -7,6 +7,7 @@ import { addTab, nextActiveAfterClose, removeTab } from "$lib/editor-tabs";
 import { editorSession } from "$lib/editor-session.svelte";
 import { terminal } from "$lib/terminal.svelte";
 import { unsavedExit } from "$lib/unsaved-exit.svelte";
+import { collectDraftWrites } from "$lib/workspace-save";
 
 export type NodeKind = "dir" | "file";
 
@@ -51,7 +52,7 @@ class Workspace {
 
   #drafts = new SvelteMap<string, string>();
   #contentFor = $state<string | null>(null);
-  #writing: Promise<void> = Promise.resolve();
+  #writing: Promise<boolean> = Promise.resolve(true);
   /// Guards against a slow read landing after the user picked another file.
   #loadToken = 0;
   #unlisten: UnlistenFn | null = null;
@@ -270,6 +271,18 @@ class Workspace {
     await this.#writing;
   }
 
+  async saveAll(): Promise<boolean> {
+    const writes = collectDraftWrites(this.#drafts);
+    if (writes.length === 0) return true;
+
+    for (const pending of writes) {
+      this.#writing = this.#writing.then(() => this.#write(pending));
+      if (!(await this.#writing)) return false;
+    }
+
+    return true;
+  }
+
   discardUnsaved(): void {
     this.#clearDrafts();
     this.dirty = false;
@@ -359,9 +372,9 @@ class Workspace {
     }
   }
 
-  async #write(pending: PendingWrite): Promise<void> {
+  async #write(pending: PendingWrite): Promise<boolean> {
     const root = this.root;
-    if (!root) return;
+    if (!root) return false;
 
     this.saveState = "saving";
 
@@ -374,7 +387,7 @@ class Workspace {
 
       const draft = this.#drafts.get(pending.path);
       if (draft !== undefined && draft !== pending.contents) {
-        return;
+        return true;
       }
 
       this.#drafts.delete(pending.path);
@@ -382,10 +395,15 @@ class Workspace {
       if (this.currentPath === pending.path) {
         this.dirty = false;
         this.saveState = "saved";
+      } else if (this.#drafts.size === 0) {
+        this.saveState = "saved";
       }
+
+      return true;
     } catch (error) {
       this.error = messageFrom(error);
       this.saveState = "error";
+      return false;
     }
   }
 }

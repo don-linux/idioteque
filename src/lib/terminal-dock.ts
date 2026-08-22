@@ -23,6 +23,22 @@ export function isTerminalDockShortcut(event: {
   return event.code === "KeyJ" && event.ctrlKey && !event.metaKey && !event.shiftKey;
 }
 
+export function isTerminalSurfaceShortcut(event: {
+  code: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+  altKey?: boolean;
+}): boolean {
+  return (
+    event.code === "KeyJ" &&
+    event.ctrlKey &&
+    event.shiftKey &&
+    !event.metaKey &&
+    !event.altKey
+  );
+}
+
 export interface TerminalShortcutEvent {
   code: string;
   ctrlKey: boolean;
@@ -36,7 +52,11 @@ export interface TerminalShortcutEvent {
 
 export function handleTerminalShortcut(
   event: TerminalShortcutEvent,
-  ctx: { hasWorkspace: boolean; toggle: (dock: TerminalDock) => void },
+  ctx: {
+    hasWorkspace: boolean;
+    surface?: "editor" | "terminals";
+    toggle: (dock: TerminalDock) => void;
+  },
 ): void {
   if (!isTerminalDockShortcut(event)) return;
   if (!ctx.hasWorkspace) return;
@@ -44,5 +64,19 @@ export function handleTerminalShortcut(
   event.preventDefault();
   event.stopPropagation();
   event.stopImmediatePropagation?.();
+  if (ctx.surface === "terminals") return;
   ctx.toggle(dockFromAlt(event.altKey));
+}
+
+export function handleTerminalSurfaceShortcut(
+  event: TerminalShortcutEvent,
+  ctx: { hasWorkspace: boolean; toggleSurface: () => void },
+): void {
+  if (!isTerminalSurfaceShortcut(event)) return;
+  if (!ctx.hasWorkspace) return;
+
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation?.();
+  ctx.toggleSurface();
 }

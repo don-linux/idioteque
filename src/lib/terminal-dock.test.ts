@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   dockFromAlt,
   handleTerminalShortcut,
+  handleTerminalSurfaceShortcut,
   isTerminalDockShortcut,
+  isTerminalSurfaceShortcut,
   nextDockToggle,
   type TerminalDock,
 } from "./terminal-dock";
@@ -44,6 +46,30 @@ describe("dockFromAlt / isTerminalDockShortcut", () => {
       false,
     );
     expect(isTerminalDockShortcut({ code: "KeyJ", ctrlKey: false, metaKey: false, shiftKey: false })).toBe(
+      false,
+    );
+  });
+
+  it("treats Ctrl+Shift+J as the surface shortcut, not the peek", () => {
+    expect(
+      isTerminalSurfaceShortcut({
+        code: "KeyJ",
+        ctrlKey: true,
+        metaKey: false,
+        shiftKey: true,
+        altKey: false,
+      }),
+    ).toBe(true);
+    expect(
+      isTerminalSurfaceShortcut({
+        code: "KeyJ",
+        ctrlKey: true,
+        metaKey: false,
+        shiftKey: true,
+        altKey: true,
+      }),
+    ).toBe(false);
+    expect(isTerminalDockShortcut({ code: "KeyJ", ctrlKey: true, metaKey: false, shiftKey: true })).toBe(
       false,
     );
   });
@@ -104,5 +130,37 @@ describe("handleTerminalShortcut", () => {
 
     expect(toggle).toHaveBeenCalledWith("right");
     expect(toggle).not.toHaveBeenCalledWith("bottom");
+  });
+
+  it("swallows Ctrl+J on the terminals surface without moving the dock", () => {
+    const event = key();
+    const toggle = vi.fn();
+
+    handleTerminalShortcut(event, { hasWorkspace: true, surface: "terminals", toggle });
+
+    expect(toggle).not.toHaveBeenCalled();
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("handleTerminalSurfaceShortcut", () => {
+  it("toggles the surface on Ctrl+Shift+J", () => {
+    const event = key({ shiftKey: true });
+    const toggleSurface = vi.fn();
+
+    handleTerminalSurfaceShortcut(event, { hasWorkspace: true, toggleSurface });
+
+    expect(toggleSurface).toHaveBeenCalledTimes(1);
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(event.stopPropagation).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores the peek chord", () => {
+    const event = key();
+    const toggleSurface = vi.fn();
+
+    handleTerminalSurfaceShortcut(event, { hasWorkspace: true, toggleSurface });
+
+    expect(toggleSurface).not.toHaveBeenCalled();
   });
 });
