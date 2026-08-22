@@ -115,9 +115,11 @@
 <style>
   .workspace {
     display: grid;
+    flex: 1;
     grid-template-columns: 16rem 1fr;
     grid-template-rows: 1fr;
-    height: 100%;
+    width: 100%;
+    height: auto;
     min-height: 0;
   }
 
@@ -132,8 +134,13 @@
   }
 
   .workspace.surface-terminals {
-    grid-template-columns: 1fr;
-    grid-template-rows: 1fr;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .workspace.surface-terminals aside,
+  .workspace.surface-terminals .editor-col {
+    display: none;
   }
 
   aside {
@@ -260,17 +267,13 @@
     border-left: 1px solid var(--border);
   }
 
-  .workspace.surface-terminals .term-slot,
-  .workspace.surface-terminals aside.parked,
-  .workspace.surface-terminals .editor-col.parked {
-    grid-column: 1;
-    grid-row: 1;
-  }
-
   .workspace.surface-terminals .term-slot {
+    flex: 1;
     flex-direction: column;
+    align-self: stretch;
     width: 100%;
-    height: 100%;
+    height: auto;
+    min-height: 0;
     border: 0;
   }
 

@@ -17,16 +17,30 @@
     hostHeight,
   ));
 
+  function measureHost(): void {
+    if (!host) return;
+    const box = host.getBoundingClientRect();
+    if (box.width >= 2) hostWidth = box.width;
+    if (box.height >= 2) hostHeight = box.height;
+  }
+
   onMount(() => {
-    const observer = new ResizeObserver((entries) => {
-      const box = entries[0]?.contentRect;
-      if (!box) return;
-      if (box.width >= 2) hostWidth = box.width;
-      if (box.height >= 2) hostHeight = box.height;
+    const observer = new ResizeObserver(() => {
+      measureHost();
     });
 
     if (host) observer.observe(host);
     return () => observer.disconnect();
+  });
+
+  $effect(() => {
+    terminal.surface;
+    const frame = requestAnimationFrame(() => {
+      measureHost();
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+    };
   });
 </script>
 
@@ -60,9 +74,10 @@
   .host {
     display: flex;
     flex: 1;
+    align-self: stretch;
     width: 100%;
     min-width: 0;
-    height: 100%;
+    height: auto;
     min-height: 0;
     overflow: hidden;
     background: var(--bg);

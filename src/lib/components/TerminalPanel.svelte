@@ -114,6 +114,8 @@
 
   $effect(() => {
     if (!ready || !visible) return;
+    terminal.surface;
+    terminal.open;
 
     const frame = requestAnimationFrame(() => {
       fitAndResize();
