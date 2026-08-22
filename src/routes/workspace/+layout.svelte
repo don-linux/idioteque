@@ -55,19 +55,24 @@
 </div>
 
 <style>
-  .ide {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-  }
+	.ide {
+		display: flex;
+		flex: 1;
+		flex-direction: column;
+		width: 100%;
+		height: 100%;
+		min-height: 0;
+	}
 
-  .body {
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-    min-height: 0;
-    overflow: hidden;
-  }
+	.body {
+		position: relative;
+		display: flex;
+		flex: 1;
+		flex-direction: column;
+		width: 100%;
+		min-height: 0;
+		overflow: hidden;
+	}
 
   footer {
     position: sticky;

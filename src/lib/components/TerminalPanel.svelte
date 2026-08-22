@@ -116,14 +116,19 @@
     if (!ready || !visible) return;
     terminal.surface;
     terminal.open;
+    terminal.sessions.length;
 
-    const frame = requestAnimationFrame(() => {
-      fitAndResize();
-      view?.refresh(0, Math.max(0, (view.rows ?? 1) - 1));
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => {
+        fitAndResize();
+        view?.refresh(0, Math.max(0, (view.rows ?? 1) - 1));
+      });
     });
 
     return () => {
-      cancelAnimationFrame(frame);
+      cancelAnimationFrame(first);
+      cancelAnimationFrame(second);
     };
   });
 

@@ -1,47 +1,21 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import TerminalPane from "$lib/components/TerminalPane.svelte";
   import { terminal } from "$lib/terminal.svelte";
   import { tilePlan } from "$lib/terminal-tile";
 
   let { cwd }: { cwd: string } = $props();
 
-  let host: HTMLDivElement | undefined;
-  let hostWidth = $state(1200);
-  let hostHeight = $state(800);
+  let hostWidth = $state(0);
+  let hostHeight = $state(0);
 
   let tiles = $derived(terminal.surface === "terminals");
-  let plan = $derived(tilePlan(
-    terminal.sessions.map((session) => session.id),
-    hostWidth,
-    hostHeight,
-  ));
-
-  function measureHost(): void {
-    if (!host) return;
-    const box = host.getBoundingClientRect();
-    if (box.width >= 2) hostWidth = box.width;
-    if (box.height >= 2) hostHeight = box.height;
-  }
-
-  onMount(() => {
-    const observer = new ResizeObserver(() => {
-      measureHost();
-    });
-
-    if (host) observer.observe(host);
-    return () => observer.disconnect();
-  });
-
-  $effect(() => {
-    terminal.surface;
-    const frame = requestAnimationFrame(() => {
-      measureHost();
-    });
-    return () => {
-      cancelAnimationFrame(frame);
-    };
-  });
+  let plan = $derived(
+    tilePlan(
+      terminal.sessions.map((session) => session.id),
+      hostWidth,
+      hostHeight,
+    ),
+  );
 </script>
 
 <div
@@ -49,16 +23,18 @@
   style:--tile-cols={plan.cols}
   style:--tile-rows={plan.rows}
   style:--tile-units={plan.units}
-  bind:this={host}
+  bind:clientWidth={hostWidth}
+  bind:clientHeight={hostHeight}
 >
   {#if tiles && terminal.sessions.length === 0}
     <p class="empty">Añade una terminal.</p>
   {:else}
     {#each terminal.sessions as session, index (session.id)}
+      {@const cell = plan.cells[index]}
       <div
         class={["cell", { hidden: !tiles && session.id !== terminal.activeId }]}
-        style:grid-column={plan.cells[index]?.column}
-        style:grid-row={plan.cells[index]?.row}
+        style:grid-column={cell?.column}
+        style:grid-row={cell?.row}
       >
         <TerminalPane
           sessionId={session.id}
@@ -72,18 +48,22 @@
 
 <style>
   .host {
-    display: flex;
-    flex: 1;
-    align-self: stretch;
+    box-sizing: border-box;
     width: 100%;
     min-width: 0;
-    height: auto;
+    height: 100%;
     min-height: 0;
     overflow: hidden;
     background: var(--bg);
   }
 
+  .host.peek {
+    display: flex;
+  }
+
   .host.tiles {
+    position: absolute;
+    inset: 0;
     display: grid;
     grid-template-columns: repeat(var(--tile-units), minmax(0, 1fr));
     grid-template-rows: repeat(var(--tile-rows), minmax(0, 1fr));
@@ -93,8 +73,9 @@
 
   .empty {
     display: grid;
-    flex: 1;
     place-content: center;
+    width: 100%;
+    height: 100%;
     margin: 0;
     color: var(--text-faint);
     font-size: 0.82rem;
@@ -111,6 +92,8 @@
 
   .host.peek .cell {
     flex: 1;
+    width: 100%;
+    height: 100%;
   }
 
   .host.tiles .cell {

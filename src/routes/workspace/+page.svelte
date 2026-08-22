@@ -113,15 +113,15 @@
 {/if}
 
 <style>
-  .workspace {
-    display: grid;
-    flex: 1;
-    grid-template-columns: 16rem 1fr;
-    grid-template-rows: 1fr;
-    width: 100%;
-    height: auto;
-    min-height: 0;
-  }
+	.workspace {
+		display: grid;
+		flex: 1;
+		grid-template-columns: 16rem 1fr;
+		grid-template-rows: 1fr;
+		width: 100%;
+		height: 100%;
+		min-height: 0;
+	}
 
   .workspace.term-bottom {
     grid-template-columns: 16rem 1fr;
@@ -133,10 +133,13 @@
     grid-template-rows: 1fr;
   }
 
-  .workspace.surface-terminals {
-    display: flex;
-    flex-direction: column;
-  }
+	.workspace.surface-terminals {
+		position: absolute;
+		inset: 0;
+		display: block;
+		width: 100%;
+		height: 100%;
+	}
 
   .workspace.surface-terminals aside,
   .workspace.surface-terminals .editor-col {
@@ -267,15 +270,15 @@
     border-left: 1px solid var(--border);
   }
 
-  .workspace.surface-terminals .term-slot {
-    flex: 1;
-    flex-direction: column;
-    align-self: stretch;
-    width: 100%;
-    height: auto;
-    min-height: 0;
-    border: 0;
-  }
+	.workspace.surface-terminals .term-slot {
+		position: absolute;
+		inset: 0;
+		display: block;
+		width: 100%;
+		height: 100%;
+		min-height: 0;
+		border: 0;
+	}
 
   .term-slot.parked,
   aside.parked,

@@ -74,4 +74,37 @@ describe("tilePlan", () => {
       ],
     });
   });
+
+  it("tiles 1..6 on a wide canvas and stretches leftover rows", () => {
+    const ids = ["a", "b", "c", "d", "e", "f"];
+    const expected = [
+      { cols: 1, rows: 1, units: 1 },
+      { cols: 2, rows: 1, units: 4 },
+      { cols: 2, rows: 2, units: 2 },
+      { cols: 2, rows: 2, units: 4 },
+      { cols: 3, rows: 2, units: 6 },
+      { cols: 3, rows: 2, units: 9 },
+    ];
+
+    for (let n = 1; n <= 6; n += 1) {
+      const plan = tilePlan(ids.slice(0, n), 1600, 900);
+      expect({ cols: plan.cols, rows: plan.rows, units: plan.units }).toEqual(expected[n - 1]);
+      expect(plan.rowsOfIds.at(-1)?.length).toBe(n - (plan.rows - 1) * plan.cols);
+    }
+  });
+
+  it("stacks first on a tall canvas and stretches a leftover row", () => {
+    const plan = tilePlan(["a", "b", "c"], 400, 900);
+    expect(plan).toMatchObject({
+      cols: 2,
+      rows: 2,
+      units: 2,
+      rowsOfIds: [["a", "b"], ["c"]],
+      cells: [
+        { column: "1 / span 1", row: "1" },
+        { column: "2 / span 1", row: "1" },
+        { column: "1 / span 2", row: "2" },
+      ],
+    });
+  });
 });
