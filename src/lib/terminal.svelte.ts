@@ -1,4 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { WORKSPACE_PTY_ID } from "$lib/pty";
 import { nextDockToggle, type TerminalDock } from "$lib/terminal-dock";
 
 export type { TerminalDock };
@@ -86,6 +87,7 @@ class TerminalPanelState {
 
     try {
       await invoke("pty_spawn", {
+        id: WORKSPACE_PTY_ID,
         cwd,
         cols,
         rows,
@@ -105,7 +107,7 @@ class TerminalPanelState {
     if (!this.alive) return;
 
     try {
-      await invoke("pty_write", { data });
+      await invoke("pty_write", { id: WORKSPACE_PTY_ID, data });
     } catch (error) {
       this.error = messageFrom(error);
     }
@@ -115,7 +117,7 @@ class TerminalPanelState {
     if (!this.alive) return;
 
     try {
-      await invoke("pty_resize", { cols, rows });
+      await invoke("pty_resize", { id: WORKSPACE_PTY_ID, cols, rows });
     } catch (error) {
       this.error = messageFrom(error);
     }
@@ -130,7 +132,7 @@ class TerminalPanelState {
     this.#spawning = false;
 
     try {
-      await invoke("pty_kill");
+      await invoke("pty_kill", { id: WORKSPACE_PTY_ID });
     } catch {
       // The session may already be gone.
     }

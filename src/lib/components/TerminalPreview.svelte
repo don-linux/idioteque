@@ -4,11 +4,12 @@
   import { FitAddon } from "@xterm/addon-fit";
   import { xtermFontFamily } from "$lib/terminal-font";
   import {
-    TERMINAL_PREVIEW_PROMPT,
     TERMINAL_PREVIEW_ROWS,
+    TERMINAL_PREVIEW_UNAVAILABLE,
     fitTerminalPreview,
     terminalPreviewHostHeight,
   } from "$lib/terminal-preview";
+  import { TerminalPreviewSession } from "$lib/terminal-preview-session";
   import { TERMINAL_XTERM_OPTIONS, resolveTerminalTheme } from "$lib/terminal-theme";
   import "@xterm/xterm/css/xterm.css";
 
@@ -27,6 +28,7 @@
   let hostHeight = $derived(terminalPreviewHostHeight(fontSize));
 
   function attachPreview(node: HTMLElement): () => void {
+    const session = new TerminalPreviewSession();
     const xterm = new Terminal({
       ...TERMINAL_XTERM_OPTIONS,
       disableStdin: true,
@@ -40,21 +42,36 @@
 
     xterm.loadAddon(fitAddon);
     xterm.open(node);
-    xterm.write(TERMINAL_PREVIEW_PROMPT);
+    session.attachWriter((chunk) => xterm.write(chunk));
+    fitTerminalPreview(xterm, fitAddon, node);
+
+    void session.spawn(xterm.cols, xterm.rows).then(() => {
+      if (session.error) {
+        xterm.write(TERMINAL_PREVIEW_UNAVAILABLE);
+        return;
+      }
+
+      void session.resize(xterm.cols, xterm.rows);
+    });
 
     const observer = new ResizeObserver(() => {
       fitTerminalPreview(xterm, fitAddon, node);
+      void session.resize(xterm.cols, xterm.rows);
     });
     observer.observe(node);
 
     $effect(() => {
       xterm.options.fontFamily = family;
       xterm.options.fontSize = fontSize;
+      xterm.options.theme = { ...theme };
       fitTerminalPreview(xterm, fitAddon, node);
+      void session.resize(xterm.cols, xterm.rows);
     });
 
     return () => {
       observer.disconnect();
+      session.detachWriter();
+      void session.kill();
       xterm.dispose();
     };
   }
@@ -66,9 +83,7 @@
   style:--preview-height="{hostHeight}px"
   aria-hidden="true"
 >
-  {#key themeId}
-    <div class="host" {@attach attachPreview}></div>
-  {/key}
+  <div class="host" {@attach attachPreview}></div>
 </div>
 
 <style>

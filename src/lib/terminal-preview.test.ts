@@ -1,38 +1,41 @@
 import { describe, expect, it } from "vitest";
 import {
-  TERMINAL_PREVIEW_CWD,
-  TERMINAL_PREVIEW_GLYPH,
   TERMINAL_PREVIEW_PADDING_Y,
-  TERMINAL_PREVIEW_PROMPT,
   TERMINAL_PREVIEW_ROWS,
+  TERMINAL_PREVIEW_UNAVAILABLE,
   fitTerminalPreview,
   terminalPreviewHostHeight,
 } from "./terminal-preview";
+import { PREVIEW_PTY_ID, WORKSPACE_PTY_ID } from "./pty";
 
-describe("terminal preview prompt", () => {
-  it("is an idle two-line prompt with ANSI path and glyph colors", () => {
-    expect(TERMINAL_PREVIEW_PROMPT).toContain(TERMINAL_PREVIEW_CWD);
-    expect(TERMINAL_PREVIEW_PROMPT).toContain(TERMINAL_PREVIEW_GLYPH);
-    expect(TERMINAL_PREVIEW_PROMPT).toContain("\x1b[34m");
-    expect(TERMINAL_PREVIEW_PROMPT).toContain("\x1b[32m");
-    expect(TERMINAL_PREVIEW_PROMPT).toContain("\x1b[0m");
-    expect(TERMINAL_PREVIEW_PROMPT).toContain("\r\n");
+describe("live preview sizing", () => {
+  it("uses enough rows for a real shell prompt", () => {
+    expect(TERMINAL_PREVIEW_ROWS).toBe(8);
   });
 
-  it("does not look like a command already typed", () => {
-    expect(TERMINAL_PREVIEW_PROMPT.toLowerCase()).not.toContain("git");
-    expect(TERMINAL_PREVIEW_PROMPT.toLowerCase()).not.toContain("status");
-  });
-});
-
-describe("terminalPreviewHostHeight", () => {
-  it("grows with font size and fits two rows", () => {
+  it("grows with font size and fits the preview rows", () => {
     const small = terminalPreviewHostHeight(10);
     const large = terminalPreviewHostHeight(24);
 
     expect(large).toBeGreaterThan(small);
     expect(small).toBeGreaterThanOrEqual(10 * TERMINAL_PREVIEW_ROWS + TERMINAL_PREVIEW_PADDING_Y);
     expect(large).toBeGreaterThanOrEqual(24 * TERMINAL_PREVIEW_ROWS + TERMINAL_PREVIEW_PADDING_Y);
+  });
+});
+
+describe("preview fallback", () => {
+  it("keeps a short message when the live shell cannot start", () => {
+    expect(TERMINAL_PREVIEW_UNAVAILABLE.length).toBeGreaterThan(0);
+    expect(TERMINAL_PREVIEW_UNAVAILABLE.toLowerCase()).not.toContain("notas");
+    expect(TERMINAL_PREVIEW_UNAVAILABLE).not.toContain("❯");
+  });
+});
+
+describe("pty session ids", () => {
+  it("keeps workspace and preview on separate sessions", () => {
+    expect(WORKSPACE_PTY_ID).toBe("workspace");
+    expect(PREVIEW_PTY_ID).toBe("preview");
+    expect(WORKSPACE_PTY_ID).not.toBe(PREVIEW_PTY_ID);
   });
 });
 
@@ -50,7 +53,7 @@ describe("fitTerminalPreview", () => {
     ).not.toThrow();
   });
 
-  it("fits and clamps rows to the compact preview size", () => {
+  it("fits and clamps rows to the preview size", () => {
     let fitted = false;
     let next = { cols: 80, rows: 24 };
 
@@ -69,10 +72,10 @@ describe("fitTerminalPreview", () => {
       {
         fit() {
           fitted = true;
-          next = { cols: 72, rows: 8 };
+          next = { cols: 72, rows: 24 };
         },
       },
-      { clientWidth: 480, clientHeight: 40 },
+      { clientWidth: 480, clientHeight: 160 },
     );
 
     expect(fitted).toBe(true);
