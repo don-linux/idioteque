@@ -3,17 +3,38 @@
   import FooterActions from "$lib/components/FooterActions.svelte";
   import FooterTransient from "$lib/components/FooterTransient.svelte";
   import { handleSaveShortcut } from "$lib/save-shortcut";
-  import { handleTerminalShortcut } from "$lib/terminal-dock";
+  import { handleTerminalShortcut, handleTerminalSurfaceShortcut } from "$lib/terminal-dock";
   import { terminal } from "$lib/terminal.svelte";
+  import { requestTerminalSurface } from "$lib/terminal-surface";
+  import { unsavedExit } from "$lib/unsaved-exit.svelte";
   import { workspace } from "$lib/workspace.svelte";
 
   let { children }: { children: Snippet } = $props();
 
+  async function toggleSurface(): Promise<void> {
+    await requestTerminalSurface({
+      surface: terminal.surface,
+      hasUnsaved: workspace.hasUnsaved,
+      confirmSave: () => unsavedExit.request("save"),
+      saveAll: () => workspace.saveAll(),
+      enter: () => terminal.enterTerminals(),
+      leave: () => terminal.leaveTerminals(),
+    });
+  }
+
   function onWindowKeydown(event: KeyboardEvent): void {
-    handleSaveShortcut(event, { save: () => void workspace.save() });
+    if (terminal.surface !== "terminals") {
+      handleSaveShortcut(event, { save: () => void workspace.save() });
+    }
+
     handleTerminalShortcut(event, {
       hasWorkspace: workspace.root !== null,
+      surface: terminal.surface,
       toggle: (dock) => terminal.toggle(dock),
+    });
+    handleTerminalSurfaceShortcut(event, {
+      hasWorkspace: workspace.root !== null,
+      toggleSurface: () => void toggleSurface(),
     });
   }
 </script>
