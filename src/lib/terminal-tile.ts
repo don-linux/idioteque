@@ -6,6 +6,8 @@ export interface TileDimensions {
 export interface TileCell {
   column: string;
   row: string;
+  width: string;
+  height: string;
 }
 
 export interface TilePlan<T> {
@@ -61,7 +63,13 @@ export function tileCells(n: number, cols: number, rows: number): TileCell[] {
     const leftover = row === rows - 1 && lastCount < cols;
     const span = leftover ? lastSpan : fullSpan;
     const start = col * span + 1;
-    return { column: `${start} / span ${span}`, row: `${row + 1}` };
+    const count = leftover ? lastCount : cols;
+    return {
+      column: `${start} / span ${span}`,
+      row: `${row + 1}`,
+      width: `calc(100% / ${count})`,
+      height: `calc(100% / ${rows})`,
+    };
   });
 }
 

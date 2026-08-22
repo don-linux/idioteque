@@ -20,9 +20,6 @@
 
 <div
   class={["host", { tiles, peek: !tiles }]}
-  style:--tile-cols={plan.cols}
-  style:--tile-rows={plan.rows}
-  style:--tile-units={plan.units}
   bind:clientWidth={hostWidth}
   bind:clientHeight={hostHeight}
 >
@@ -33,8 +30,8 @@
       {@const cell = plan.cells[index]}
       <div
         class={["cell", { hidden: !tiles && session.id !== terminal.activeId }]}
-        style:grid-column={cell?.column}
-        style:grid-row={cell?.row}
+        style:width={tiles ? cell?.width : undefined}
+        style:height={tiles ? cell?.height : undefined}
       >
         <TerminalPane
           sessionId={session.id}
@@ -64,10 +61,9 @@
   .host.tiles {
     position: absolute;
     inset: 0;
-    display: grid;
-    grid-template-columns: repeat(var(--tile-units), minmax(0, 1fr));
-    grid-template-rows: repeat(var(--tile-rows), minmax(0, 1fr));
-    gap: 1px;
+    display: flex;
+    flex-wrap: wrap;
+    align-content: flex-start;
     background: var(--border);
   }
 
@@ -97,8 +93,10 @@
   }
 
   .host.tiles .cell {
-    width: 100%;
-    height: 100%;
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    outline: 1px solid var(--border);
+    outline-offset: -1px;
   }
 
   .host.peek .cell.hidden {
