@@ -42,13 +42,11 @@
 
 <style>
   .pane {
-    position: relative;
+    position: absolute;
+    inset: 0;
     display: flex;
-    flex: 1;
     flex-direction: column;
-    width: 100%;
     min-width: 0;
-    height: 100%;
     min-height: 0;
     overflow: hidden;
     background: var(--bg);

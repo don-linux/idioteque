@@ -82,7 +82,7 @@
   }
 
   .cell {
-    display: flex;
+    position: relative;
     box-sizing: border-box;
     min-width: 0;
     min-height: 0;
@@ -97,8 +97,8 @@
   }
 
   .host.tiles .cell {
-    width: auto;
-    height: auto;
+    width: 100%;
+    height: 100%;
   }
 
   .host.peek .cell.hidden {

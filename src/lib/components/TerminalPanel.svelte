@@ -20,6 +20,8 @@
 
   let host: HTMLDivElement | undefined;
   let ready = $state(false);
+  let hostWidth = $state(0);
+  let hostHeight = $state(0);
   let view: Terminal | undefined;
   let fit: FitAddon | undefined;
   let lastAppliedThemeId: string | undefined;
@@ -117,6 +119,8 @@
     terminal.surface;
     terminal.open;
     terminal.sessions.length;
+    hostWidth;
+    hostHeight;
 
     let second = 0;
     const first = requestAnimationFrame(() => {
@@ -154,7 +158,12 @@
 </script>
 
 <div class="panel" style:--terminal-bg={resolveTerminalTheme(appConfig.terminalTheme).background}>
-  <div class="host" bind:this={host}></div>
+  <div
+    class="host"
+    bind:this={host}
+    bind:clientWidth={hostWidth}
+    bind:clientHeight={hostHeight}
+  ></div>
 </div>
 
 <style>
@@ -176,7 +185,6 @@
     flex: 1;
     width: 100%;
     min-width: 0;
-    height: 100%;
     min-height: 0;
     overflow: hidden;
   }
