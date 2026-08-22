@@ -7,7 +7,15 @@
     sessionId,
     cwd,
     visible,
-  }: { sessionId: string; cwd: string; visible: boolean } = $props();
+    boxWidth = 0,
+    boxHeight = 0,
+  }: {
+    sessionId: string;
+    cwd: string;
+    visible: boolean;
+    boxWidth?: number;
+    boxHeight?: number;
+  } = $props();
 
   let focused = $derived(terminal.activeId === sessionId);
 
@@ -37,7 +45,7 @@
   >
     <X size={12} strokeWidth={2} aria-hidden="true" />
   </button>
-  <TerminalPanel {sessionId} {cwd} {visible} />
+  <TerminalPanel {sessionId} {cwd} {visible} {boxWidth} {boxHeight} />
 </div>
 
 <style>

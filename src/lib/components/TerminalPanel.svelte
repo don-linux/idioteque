@@ -2,11 +2,9 @@
   import { onMount } from "svelte";
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
-  import { WebglAddon } from "@xterm/addon-webgl";
   import { appConfig } from "$lib/app-config.svelte";
   import { isSaveShortcut } from "$lib/save-shortcut";
   import { isTerminalDockShortcut, isTerminalSurfaceShortcut } from "$lib/terminal-dock";
-  import { attachTerminalRenderer } from "$lib/terminal-renderer";
   import { terminal } from "$lib/terminal.svelte";
   import { xtermFontFamily } from "$lib/terminal-font";
   import { TERMINAL_XTERM_OPTIONS, resolveTerminalTheme } from "$lib/terminal-theme";
@@ -16,7 +14,15 @@
     cwd,
     sessionId,
     visible = true,
-  }: { cwd: string; sessionId: string; visible?: boolean } = $props();
+    boxWidth = 0,
+    boxHeight = 0,
+  }: {
+    cwd: string;
+    sessionId: string;
+    visible?: boolean;
+    boxWidth?: number;
+    boxHeight?: number;
+  } = $props();
 
   let host: HTMLDivElement | undefined;
   let ready = $state(false);
@@ -63,7 +69,6 @@
       return true;
     });
     xterm.open(host);
-    const renderer = attachTerminalRenderer(xterm, () => new WebglAddon());
     view = xterm;
     fit = fitAddon;
     terminal.attachWriter(sessionId, (chunk) => xterm.write(chunk));
@@ -87,7 +92,6 @@
       observer.disconnect();
       input.dispose();
       terminal.detachWriter(sessionId);
-      renderer.dispose();
       xterm.dispose();
     };
   });
@@ -121,6 +125,8 @@
     terminal.sessions.length;
     hostWidth;
     hostHeight;
+    boxWidth;
+    boxHeight;
 
     let second = 0;
     const first = requestAnimationFrame(() => {
@@ -157,7 +163,12 @@
   });
 </script>
 
-<div class="panel" style:--terminal-bg={resolveTerminalTheme(appConfig.terminalTheme).background}>
+<div
+  class="panel"
+  style:--terminal-bg={resolveTerminalTheme(appConfig.terminalTheme).background}
+  style:width={boxWidth >= 2 ? `${boxWidth}px` : undefined}
+  style:height={boxHeight >= 2 ? `${boxHeight}px` : undefined}
+>
   <div
     class="host"
     bind:this={host}

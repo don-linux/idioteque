@@ -135,10 +135,13 @@
 
 	.workspace.surface-terminals {
 		position: absolute;
-		inset: 0;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		left: 0;
 		display: block;
-		width: 100%;
-		height: 100%;
+		width: auto;
+		height: auto;
 	}
 
   .workspace.surface-terminals aside,
@@ -272,10 +275,13 @@
 
 	.workspace.surface-terminals .term-slot {
 		position: absolute;
-		inset: 0;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		left: 0;
 		display: block;
-		width: 100%;
-		height: 100%;
+		width: auto;
+		height: auto;
 		min-height: 0;
 		border: 0;
 	}

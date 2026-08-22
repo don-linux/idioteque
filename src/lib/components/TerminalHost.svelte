@@ -30,13 +30,15 @@
       {@const cell = plan.cells[index]}
       <div
         class={["cell", { hidden: !tiles && session.id !== terminal.activeId }]}
-        style:width={tiles ? cell?.width : undefined}
-        style:height={tiles ? cell?.height : undefined}
+        style:width={tiles && cell ? `${cell.widthPx}px` : undefined}
+        style:height={tiles && cell ? `${cell.heightPx}px` : undefined}
       >
         <TerminalPane
           sessionId={session.id}
           {cwd}
           visible={terminal.isVisible(session.id)}
+          boxWidth={tiles ? (cell?.widthPx ?? 0) : 0}
+          boxHeight={tiles ? (cell?.heightPx ?? 0) : 0}
         />
       </div>
     {/each}
@@ -60,10 +62,15 @@
 
   .host.tiles {
     position: absolute;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     display: flex;
     flex-wrap: wrap;
     align-content: flex-start;
+    width: auto;
+    height: auto;
     background: var(--border);
   }
 

@@ -57,7 +57,7 @@
 <style>
 	.ide {
 		display: flex;
-		flex: 1;
+		flex: 1 1 0;
 		flex-direction: column;
 		width: 100%;
 		height: 100%;
@@ -67,7 +67,7 @@
 	.body {
 		position: relative;
 		display: flex;
-		flex: 1;
+		flex: 1 1 0;
 		flex-direction: column;
 		width: 100%;
 		min-height: 0;

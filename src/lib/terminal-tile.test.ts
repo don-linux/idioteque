@@ -43,19 +43,19 @@ describe("tileRows", () => {
 describe("tileCells", () => {
   it("stretches a leftover pane across the last row", () => {
     expect(tileCells(3, 2, 2)).toEqual([
-      { column: "1 / span 1", row: "1", width: "calc(100% / 2)", height: "calc(100% / 2)" },
-      { column: "2 / span 1", row: "1", width: "calc(100% / 2)", height: "calc(100% / 2)" },
-      { column: "1 / span 2", row: "2", width: "calc(100% / 1)", height: "calc(100% / 2)" },
+      { column: "1 / span 1", row: "1", width: "calc(100% / 2)", height: "calc(100% / 2)", widthPx: 0, heightPx: 0 },
+      { column: "2 / span 1", row: "1", width: "calc(100% / 2)", height: "calc(100% / 2)", widthPx: 0, heightPx: 0 },
+      { column: "1 / span 2", row: "2", width: "calc(100% / 1)", height: "calc(100% / 2)", widthPx: 0, heightPx: 0 },
     ]);
   });
 
   it("splits a leftover row evenly when it is not full", () => {
     expect(tileCells(5, 3, 2)).toEqual([
-      { column: "1 / span 2", row: "1", width: "calc(100% / 3)", height: "calc(100% / 2)" },
-      { column: "3 / span 2", row: "1", width: "calc(100% / 3)", height: "calc(100% / 2)" },
-      { column: "5 / span 2", row: "1", width: "calc(100% / 3)", height: "calc(100% / 2)" },
-      { column: "1 / span 3", row: "2", width: "calc(100% / 2)", height: "calc(100% / 2)" },
-      { column: "4 / span 3", row: "2", width: "calc(100% / 2)", height: "calc(100% / 2)" },
+      { column: "1 / span 2", row: "1", width: "calc(100% / 3)", height: "calc(100% / 2)", widthPx: 0, heightPx: 0 },
+      { column: "3 / span 2", row: "1", width: "calc(100% / 3)", height: "calc(100% / 2)", widthPx: 0, heightPx: 0 },
+      { column: "5 / span 2", row: "1", width: "calc(100% / 3)", height: "calc(100% / 2)", widthPx: 0, heightPx: 0 },
+      { column: "1 / span 3", row: "2", width: "calc(100% / 2)", height: "calc(100% / 2)", widthPx: 0, heightPx: 0 },
+      { column: "4 / span 3", row: "2", width: "calc(100% / 2)", height: "calc(100% / 2)", widthPx: 0, heightPx: 0 },
     ]);
   });
 });
@@ -68,9 +68,9 @@ describe("tilePlan", () => {
       units: 2,
       rowsOfIds: [["a", "b"], ["c"]],
       cells: [
-        { column: "1 / span 1", row: "1", width: "calc(100% / 2)", height: "calc(100% / 2)" },
-        { column: "2 / span 1", row: "1", width: "calc(100% / 2)", height: "calc(100% / 2)" },
-        { column: "1 / span 2", row: "2", width: "calc(100% / 1)", height: "calc(100% / 2)" },
+        { column: "1 / span 1", row: "1", width: "calc(100% / 2)", height: "calc(100% / 2)", widthPx: 600, heightPx: 400 },
+        { column: "2 / span 1", row: "1", width: "calc(100% / 2)", height: "calc(100% / 2)", widthPx: 600, heightPx: 400 },
+        { column: "1 / span 2", row: "2", width: "calc(100% / 1)", height: "calc(100% / 2)", widthPx: 1200, heightPx: 400 },
       ],
     });
   });
@@ -101,9 +101,9 @@ describe("tilePlan", () => {
       units: 2,
       rowsOfIds: [["a", "b"], ["c"]],
       cells: [
-        { column: "1 / span 1", row: "1", width: "calc(100% / 2)", height: "calc(100% / 2)" },
-        { column: "2 / span 1", row: "1", width: "calc(100% / 2)", height: "calc(100% / 2)" },
-        { column: "1 / span 2", row: "2", width: "calc(100% / 1)", height: "calc(100% / 2)" },
+        { column: "1 / span 1", row: "1", width: "calc(100% / 2)", height: "calc(100% / 2)", widthPx: 200, heightPx: 450 },
+        { column: "2 / span 1", row: "1", width: "calc(100% / 2)", height: "calc(100% / 2)", widthPx: 200, heightPx: 450 },
+        { column: "1 / span 2", row: "2", width: "calc(100% / 1)", height: "calc(100% / 2)", widthPx: 400, heightPx: 450 },
       ],
     });
   });

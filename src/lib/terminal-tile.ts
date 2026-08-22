@@ -8,6 +8,8 @@ export interface TileCell {
   row: string;
   width: string;
   height: string;
+  widthPx: number;
+  heightPx: number;
 }
 
 export interface TilePlan<T> {
@@ -49,7 +51,13 @@ export function tileRows<T>(ids: readonly T[], cols: number): T[][] {
   return rows;
 }
 
-export function tileCells(n: number, cols: number, rows: number): TileCell[] {
+export function tileCells(
+  n: number,
+  cols: number,
+  rows: number,
+  width = 0,
+  height = 0,
+): TileCell[] {
   if (n <= 0 || cols <= 0 || rows <= 0) return [];
 
   const lastCount = n - (rows - 1) * cols;
@@ -69,6 +77,8 @@ export function tileCells(n: number, cols: number, rows: number): TileCell[] {
       row: `${row + 1}`,
       width: `calc(100% / ${count})`,
       height: `calc(100% / ${rows})`,
+      widthPx: width / count,
+      heightPx: height / rows,
     };
   });
 }
@@ -86,6 +96,6 @@ export function tilePlan<T>(ids: readonly T[], width: number, height: number): T
     rows,
     units: tileUnits(ids.length, cols, rows),
     rowsOfIds: tileRows(ids, cols),
-    cells: tileCells(ids.length, cols, rows),
+    cells: tileCells(ids.length, cols, rows, width, height),
   };
 }
