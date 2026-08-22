@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { tileDimensions, tilePlan, tileRows } from "./terminal-tile";
+import { tileCells, tileDimensions, tilePlan, tileRows } from "./terminal-tile";
 
 describe("tileDimensions", () => {
   it("is empty when there are no panes", () => {
@@ -40,12 +40,38 @@ describe("tileRows", () => {
   });
 });
 
+describe("tileCells", () => {
+  it("stretches a leftover pane across the last row", () => {
+    expect(tileCells(3, 2, 2)).toEqual([
+      { column: "1 / span 1", row: "1" },
+      { column: "2 / span 1", row: "1" },
+      { column: "1 / span 2", row: "2" },
+    ]);
+  });
+
+  it("splits a leftover row evenly when it is not full", () => {
+    expect(tileCells(5, 3, 2)).toEqual([
+      { column: "1 / span 2", row: "1" },
+      { column: "3 / span 2", row: "1" },
+      { column: "5 / span 2", row: "1" },
+      { column: "1 / span 3", row: "2" },
+      { column: "4 / span 3", row: "2" },
+    ]);
+  });
+});
+
 describe("tilePlan", () => {
-  it("pairs dimensions with row groups", () => {
+  it("pairs dimensions with row groups and grid spans", () => {
     expect(tilePlan(["a", "b", "c"], 1200, 800)).toEqual({
       cols: 2,
       rows: 2,
+      units: 2,
       rowsOfIds: [["a", "b"], ["c"]],
+      cells: [
+        { column: "1 / span 1", row: "1" },
+        { column: "2 / span 1", row: "1" },
+        { column: "1 / span 2", row: "2" },
+      ],
     });
   });
 });

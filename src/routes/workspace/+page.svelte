@@ -260,10 +260,17 @@
     border-left: 1px solid var(--border);
   }
 
-  .workspace.surface-terminals .term-slot {
-    flex-direction: column;
+  .workspace.surface-terminals .term-slot,
+  .workspace.surface-terminals aside.parked,
+  .workspace.surface-terminals .editor-col.parked {
     grid-column: 1;
     grid-row: 1;
+  }
+
+  .workspace.surface-terminals .term-slot {
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
     border: 0;
   }
 
@@ -274,7 +281,6 @@
     top: 0;
     left: -12000px;
     overflow: hidden;
-    visibility: hidden;
     pointer-events: none;
     z-index: -1;
   }

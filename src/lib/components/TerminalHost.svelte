@@ -34,14 +34,17 @@
   class={["host", { tiles, peek: !tiles }]}
   style:--tile-cols={plan.cols}
   style:--tile-rows={plan.rows}
+  style:--tile-units={plan.units}
   bind:this={host}
 >
   {#if tiles && terminal.sessions.length === 0}
     <p class="empty">Añade una terminal.</p>
   {:else}
-    {#each terminal.sessions as session (session.id)}
+    {#each terminal.sessions as session, index (session.id)}
       <div
         class={["cell", { hidden: !tiles && session.id !== terminal.activeId }]}
+        style:grid-column={plan.cells[index]?.column}
+        style:grid-row={plan.cells[index]?.row}
       >
         <TerminalPane
           sessionId={session.id}
@@ -66,8 +69,9 @@
   }
 
   .host.tiles {
-    flex-wrap: wrap;
-    align-content: stretch;
+    display: grid;
+    grid-template-columns: repeat(var(--tile-units), minmax(0, 1fr));
+    grid-template-rows: repeat(var(--tile-rows), minmax(0, 1fr));
     gap: 1px;
     background: var(--border);
   }
@@ -95,11 +99,8 @@
   }
 
   .host.tiles .cell {
-    flex-grow: 1;
-    flex-shrink: 1;
-    flex-basis: calc((100% - (var(--tile-cols) - 1) * 1px) / var(--tile-cols));
-    width: calc((100% - (var(--tile-cols) - 1) * 1px) / var(--tile-cols));
-    height: calc((100% - (var(--tile-rows) - 1) * 1px) / var(--tile-rows));
+    width: auto;
+    height: auto;
   }
 
   .host.peek .cell.hidden {
@@ -110,7 +111,6 @@
     width: var(--park-width);
     height: var(--park-height);
     overflow: hidden;
-    visibility: hidden;
     pointer-events: none;
     z-index: -1;
   }

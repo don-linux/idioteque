@@ -114,7 +114,15 @@
 
   $effect(() => {
     if (!ready || !visible) return;
-    fitAndResize();
+
+    const frame = requestAnimationFrame(() => {
+      fitAndResize();
+      view?.refresh(0, Math.max(0, (view.rows ?? 1) - 1));
+    });
+
+    return () => {
+      cancelAnimationFrame(frame);
+    };
   });
 
   $effect(() => {

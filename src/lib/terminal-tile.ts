@@ -3,10 +3,17 @@ export interface TileDimensions {
   rows: number;
 }
 
+export interface TileCell {
+  column: string;
+  row: string;
+}
+
 export interface TilePlan<T> {
   cols: number;
   rows: number;
+  units: number;
   rowsOfIds: T[][];
+  cells: TileCell[];
 }
 
 export function tileDimensions(n: number, width: number, height: number): TileDimensions {
@@ -40,7 +47,37 @@ export function tileRows<T>(ids: readonly T[], cols: number): T[][] {
   return rows;
 }
 
+export function tileCells(n: number, cols: number, rows: number): TileCell[] {
+  if (n <= 0 || cols <= 0 || rows <= 0) return [];
+
+  const lastCount = n - (rows - 1) * cols;
+  const units = cols * Math.max(lastCount, 1);
+  const fullSpan = units / cols;
+  const lastSpan = units / Math.max(lastCount, 1);
+
+  return Array.from({ length: n }, (_, index) => {
+    const row = Math.floor(index / cols);
+    const col = index % cols;
+    const leftover = row === rows - 1 && lastCount < cols;
+    const span = leftover ? lastSpan : fullSpan;
+    const start = col * span + 1;
+    return { column: `${start} / span ${span}`, row: `${row + 1}` };
+  });
+}
+
+export function tileUnits(n: number, cols: number, rows: number): number {
+  if (n <= 0 || cols <= 0) return 0;
+  const lastCount = n - (rows - 1) * cols;
+  return cols * Math.max(lastCount, 1);
+}
+
 export function tilePlan<T>(ids: readonly T[], width: number, height: number): TilePlan<T> {
   const { cols, rows } = tileDimensions(ids.length, width, height);
-  return { cols, rows, rowsOfIds: tileRows(ids, cols) };
+  return {
+    cols,
+    rows,
+    units: tileUnits(ids.length, cols, rows),
+    rowsOfIds: tileRows(ids, cols),
+    cells: tileCells(ids.length, cols, rows),
+  };
 }
