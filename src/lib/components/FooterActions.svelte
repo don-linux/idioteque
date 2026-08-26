@@ -29,7 +29,7 @@
     home: "Inicio",
     folder: "Cambiar carpeta",
     settings: "Configuración",
-    terminal: "Terminal (Ctrl+J) · a la derecha (Ctrl+Alt+J)",
+    terminal: "Terminal (Ctrl+J) · a la derecha (Ctrl+Alt+J) · pantalla (Ctrl+Shift+J)",
   };
 
   function startDrag(id: FooterActionId, event: PointerEvent): void {
@@ -126,8 +126,13 @@
       {:else}
         <button
           type="button"
-          class={["action", { active: id === "terminal" && terminal.open }]}
-          aria-pressed={id === "terminal" ? terminal.open : undefined}
+          class={[
+            "action",
+            { active: id === "terminal" && (terminal.open || terminal.surface === "terminals") },
+          ]}
+          aria-pressed={id === "terminal"
+            ? terminal.open || terminal.surface === "terminals"
+            : undefined}
           aria-label={labels[id]}
           title={titles[id]}
           onpointerdown={(event) => startDrag(id, event)}

@@ -1,32 +1,47 @@
 <script lang="ts">
   import Save from "@lucide/svelte/icons/save";
+  import SquarePlus from "@lucide/svelte/icons/square-plus";
   import Undo2 from "@lucide/svelte/icons/undo-2";
   import { editorSession } from "$lib/editor-session.svelte";
+  import { terminal } from "$lib/terminal.svelte";
   import { workspace } from "$lib/workspace.svelte";
 </script>
 
 <div class="transient">
-  {#if editorSession.canUndo}
+  {#if terminal.surface === "terminals"}
     <button
       type="button"
       class="action"
-      aria-label="Deshacer (Ctrl+Z)"
-      title="Deshacer (Ctrl+Z)"
-      onclick={() => editorSession.undo()}
+      aria-label="Nueva terminal"
+      title={terminal.canAdd ? "Nueva terminal" : "Máximo 6 terminales"}
+      disabled={!terminal.canAdd}
+      onclick={() => terminal.addSession()}
     >
-      <Undo2 size={16} strokeWidth={1.75} aria-hidden="true" />
+      <SquarePlus size={16} strokeWidth={1.75} aria-hidden="true" />
     </button>
-  {/if}
-  {#if workspace.dirty}
-    <button
-      type="button"
-      class="action"
-      aria-label="Guardar (Ctrl+S)"
-      title="Guardar (Ctrl+S)"
-      onclick={() => void workspace.save()}
-    >
-      <Save size={16} strokeWidth={1.75} aria-hidden="true" />
-    </button>
+  {:else}
+    {#if editorSession.canUndo}
+      <button
+        type="button"
+        class="action"
+        aria-label="Deshacer (Ctrl+Z)"
+        title="Deshacer (Ctrl+Z)"
+        onclick={() => editorSession.undo()}
+      >
+        <Undo2 size={16} strokeWidth={1.75} aria-hidden="true" />
+      </button>
+    {/if}
+    {#if workspace.dirty}
+      <button
+        type="button"
+        class="action"
+        aria-label="Guardar (Ctrl+S)"
+        title="Guardar (Ctrl+S)"
+        onclick={() => void workspace.save()}
+      >
+        <Save size={16} strokeWidth={1.75} aria-hidden="true" />
+      </button>
+    {/if}
   {/if}
 </div>
 
@@ -53,8 +68,13 @@
     cursor: pointer;
   }
 
-  .action:hover {
+  .action:hover:not(:disabled) {
     background: var(--surface-hover);
     color: var(--text);
+  }
+
+  .action:disabled {
+    opacity: 0.35;
+    cursor: default;
   }
 </style>

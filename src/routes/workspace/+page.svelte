@@ -3,7 +3,7 @@
   import EditorTabs from "$lib/components/EditorTabs.svelte";
   import FileTree from "$lib/components/FileTree.svelte";
   import MarkdownEditor from "$lib/components/MarkdownEditor.svelte";
-  import TerminalPanel from "$lib/components/TerminalPanel.svelte";
+  import TerminalHost from "$lib/components/TerminalHost.svelte";
   import { appConfig } from "$lib/app-config.svelte";
   import { terminal } from "$lib/terminal.svelte";
   import { workspace } from "$lib/workspace.svelte";
@@ -17,6 +17,8 @@
   });
 
   let stopResize: (() => void) | null = null;
+  let terminals = $derived(terminal.surface === "terminals");
+  let peeking = $derived(terminal.peeking);
 
   function startResize(event: PointerEvent): void {
     event.preventDefault();
@@ -51,13 +53,14 @@
 {#if workspace.root !== null}
   <div
     class="workspace"
-    class:term-bottom={terminal.open && terminal.dock === "bottom"}
-    class:term-right={terminal.open && terminal.dock === "right"}
+    class:term-bottom={peeking && terminal.dock === "bottom"}
+    class:term-right={peeking && terminal.dock === "right"}
+    class:surface-terminals={terminals}
     style:--term-size="{terminal.size}px"
     style:--park-width="{terminal.parkWidth}px"
     style:--park-height="{terminal.parkHeight}px"
   >
-    <aside>
+    <aside class:parked={terminals}>
       <header>
         <span class="root" title={workspace.root}>{workspace.root}</span>
       </header>
@@ -76,7 +79,7 @@
       {/if}
     </aside>
 
-    <section class="editor-col">
+    <section class="editor-col" class:parked={terminals}>
       {#if workspace.currentPath === null}
         <p class="hint centered">Selecciona un archivo.</p>
       {:else}
@@ -98,25 +101,27 @@
     </section>
 
     {#if terminal.started}
-      <div class={["term-slot", { parked: !terminal.open }]}>
-        {#if terminal.open}
+      <div class={["term-slot", { parked: !peeking && !terminals, tiles: terminals }]}>
+        {#if peeking}
           <button type="button" class="split" aria-label="Redimensionar terminal" onpointerdown={startResize}
           ></button>
         {/if}
-        <TerminalPanel cwd={workspace.root} />
+        <TerminalHost cwd={workspace.root} />
       </div>
     {/if}
   </div>
 {/if}
 
 <style>
-  .workspace {
-    display: grid;
-    grid-template-columns: 16rem 1fr;
-    grid-template-rows: 1fr;
-    height: 100%;
-    min-height: 0;
-  }
+	.workspace {
+		display: grid;
+		flex: 1;
+		grid-template-columns: 16rem 1fr;
+		grid-template-rows: 1fr;
+		width: 100%;
+		height: 100%;
+		min-height: 0;
+	}
 
   .workspace.term-bottom {
     grid-template-columns: 16rem 1fr;
@@ -126,6 +131,22 @@
   .workspace.term-right {
     grid-template-columns: 16rem 1fr var(--term-size);
     grid-template-rows: 1fr;
+  }
+
+	.workspace.surface-terminals {
+		position: absolute;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		left: 0;
+		display: block;
+		width: auto;
+		height: auto;
+	}
+
+  .workspace.surface-terminals aside,
+  .workspace.surface-terminals .editor-col {
+    display: none;
   }
 
   aside {
@@ -252,18 +273,45 @@
     border-left: 1px solid var(--border);
   }
 
-  .term-slot.parked {
+	.workspace.surface-terminals .term-slot {
+		position: absolute;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		left: 0;
+		display: block;
+		width: auto;
+		height: auto;
+		min-height: 0;
+		border: 0;
+	}
+
+  .term-slot.parked,
+  aside.parked,
+  .editor-col.parked {
     position: fixed;
     top: 0;
     left: -12000px;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: -1;
+  }
+
+  .term-slot.parked {
     grid-column: 1;
     grid-row: 1;
     width: var(--park-width);
     height: var(--park-height);
-    overflow: hidden;
-    visibility: hidden;
-    pointer-events: none;
-    z-index: -1;
+  }
+
+  aside.parked {
+    width: 16rem;
+    height: 80vh;
+  }
+
+  .editor-col.parked {
+    width: min(80vw, 1200px);
+    height: 80vh;
   }
 
   .split {

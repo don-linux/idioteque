@@ -6,7 +6,7 @@ import {
   fitTerminalPreview,
   terminalPreviewHostHeight,
 } from "./terminal-preview";
-import { PREVIEW_PTY_ID, WORKSPACE_PTY_ID } from "./pty";
+import { PREVIEW_PTY_ID, WORKSPACE_PTY_ID, isWorkspacePtyId, workspacePtyId } from "./pty";
 
 describe("live preview sizing", () => {
   it("uses enough rows for a real shell prompt", () => {
@@ -36,6 +36,9 @@ describe("pty session ids", () => {
     expect(WORKSPACE_PTY_ID).toBe("workspace");
     expect(PREVIEW_PTY_ID).toBe("preview");
     expect(WORKSPACE_PTY_ID).not.toBe(PREVIEW_PTY_ID);
+    expect(workspacePtyId(1)).toBe("workspace-1");
+    expect(isWorkspacePtyId("workspace-2")).toBe(true);
+    expect(isWorkspacePtyId(PREVIEW_PTY_ID)).toBe(false);
   });
 });
 

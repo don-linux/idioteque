@@ -1,8 +1,18 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
-import { WORKSPACE_PTY_ID } from "$lib/pty";
+import { nextActiveAfterClose } from "$lib/editor-tabs";
+import { MAX_TERMINAL_SESSIONS, workspacePtyId } from "$lib/pty";
 import { nextDockToggle, type TerminalDock } from "$lib/terminal-dock";
 
 export type { TerminalDock };
+export { MAX_TERMINAL_SESSIONS };
+
+export type WorkspaceSurface = "editor" | "terminals";
+
+export interface TerminalSession {
+  id: string;
+  alive: boolean;
+  error: string | null;
+}
 
 const DEFAULT_BOTTOM = 280;
 const DEFAULT_RIGHT = 380;
@@ -16,6 +26,7 @@ function messageFrom(error: unknown): string {
 }
 
 class TerminalPanelState {
+  surface = $state<WorkspaceSurface>("editor");
   open = $state(false);
   started = $state(false);
   dock = $state<TerminalDock>("bottom");
@@ -23,24 +34,49 @@ class TerminalPanelState {
   rightSize = $state(DEFAULT_RIGHT);
   parkWidth = $state(640);
   parkHeight = $state(DEFAULT_BOTTOM);
-  alive = $state(false);
-  error = $state<string | null>(null);
+  sessions = $state<TerminalSession[]>([]);
+  activeId = $state<string | null>(null);
 
-  #spawning = false;
-  #onData: ((chunk: string) => void) | null = null;
+  #nextSerial = 1;
+  #spawning = new Set<string>();
+  #writers = new Map<string, (chunk: string) => void>();
 
   get size(): number {
     return this.dock === "bottom" ? this.bottomSize : this.rightSize;
   }
 
+  get canAdd(): boolean {
+    return this.sessions.length < MAX_TERMINAL_SESSIONS;
+  }
+
+  get error(): string | null {
+    return this.sessions.find((session) => session.error)?.error ?? null;
+  }
+
+  get peeking(): boolean {
+    return this.surface === "editor" && this.open;
+  }
+
+  session(id: string): TerminalSession | undefined {
+    return this.sessions.find((session) => session.id === id);
+  }
+
+  isVisible(id: string): boolean {
+    if (this.surface === "terminals") return true;
+    if (!this.open) return false;
+    return this.activeId === id;
+  }
+
   toggle(dock: TerminalDock): void {
+    if (this.surface === "terminals") return;
+
     const next = nextDockToggle(this.open, this.dock, dock);
     this.open = next.open;
     this.dock = next.dock;
 
     if (next.open) {
       this.started = true;
-      this.error = null;
+      this.ensureSession();
     }
   }
 
@@ -61,81 +97,154 @@ class TerminalPanelState {
     }
   }
 
-  attachWriter(write: (chunk: string) => void): void {
-    this.#onData = write;
+  ensureSession(): string | null {
+    if (this.activeId && this.session(this.activeId)) return this.activeId;
+    if (this.sessions.length > 0) {
+      this.activeId = this.sessions[0].id;
+      return this.activeId;
+    }
+    return this.addSession();
   }
 
-  detachWriter(): void {
-    this.#onData = null;
+  addSession(): string | null {
+    if (!this.canAdd) return null;
+
+    const id = workspacePtyId(this.#nextSerial);
+    this.#nextSerial += 1;
+    this.sessions = [...this.sessions, { id, alive: false, error: null }];
+    this.activeId = id;
+    this.started = true;
+    return id;
   }
 
-  async spawn(cwd: string, cols: number, rows: number): Promise<void> {
-    if (this.alive || this.#spawning) return;
+  focus(id: string): void {
+    if (this.session(id)) this.activeId = id;
+  }
 
-    this.#spawning = true;
-    this.error = null;
+  enterTerminals(): void {
+    this.surface = "terminals";
+    this.started = true;
+    this.ensureSession();
+  }
+
+  leaveTerminals(): void {
+    this.surface = "editor";
+    this.open = false;
+  }
+
+  attachWriter(id: string, write: (chunk: string) => void): void {
+    this.#writers.set(id, write);
+  }
+
+  detachWriter(id: string): void {
+    this.#writers.delete(id);
+  }
+
+  async spawn(id: string, cwd: string, cols: number, rows: number): Promise<void> {
+    const session = this.session(id);
+    if (!session || session.alive || this.#spawning.has(id)) return;
+
+    this.#spawning.add(id);
+    this.#patch(id, { error: null });
 
     const onData = new Channel<string>();
     onData.onmessage = (chunk) => {
-      this.#onData?.(chunk);
+      this.#writers.get(id)?.(chunk);
     };
 
     const onExit = new Channel<number>();
     onExit.onmessage = () => {
-      this.alive = false;
+      this.#patch(id, { alive: false });
     };
 
     try {
       await invoke("pty_spawn", {
-        id: WORKSPACE_PTY_ID,
+        id,
         cwd,
         cols,
         rows,
         onData,
         onExit,
       });
-      this.alive = true;
+      this.#patch(id, { alive: true });
     } catch (error) {
-      this.alive = false;
-      this.error = messageFrom(error);
+      this.#patch(id, { alive: false, error: messageFrom(error) });
     } finally {
-      this.#spawning = false;
+      this.#spawning.delete(id);
     }
   }
 
-  async write(data: string): Promise<void> {
-    if (!this.alive) return;
+  async write(id: string, data: string): Promise<void> {
+    if (!this.session(id)?.alive) return;
 
     try {
-      await invoke("pty_write", { id: WORKSPACE_PTY_ID, data });
+      await invoke("pty_write", { id, data });
     } catch (error) {
-      this.error = messageFrom(error);
+      this.#patch(id, { error: messageFrom(error) });
     }
   }
 
-  async resize(cols: number, rows: number): Promise<void> {
-    if (!this.alive) return;
+  async resize(id: string, cols: number, rows: number): Promise<void> {
+    if (!this.session(id)?.alive) return;
 
     try {
-      await invoke("pty_resize", { id: WORKSPACE_PTY_ID, cols, rows });
+      await invoke("pty_resize", { id, cols, rows });
     } catch (error) {
-      this.error = messageFrom(error);
+      this.#patch(id, { error: messageFrom(error) });
+    }
+  }
+
+  async closeSession(id: string): Promise<void> {
+    if (!this.session(id)) return;
+
+    const next = nextActiveAfterClose(
+      this.sessions.map((session) => session.id),
+      id,
+      this.activeId,
+    );
+
+    this.#spawning.delete(id);
+    this.#writers.delete(id);
+    this.sessions = this.sessions.filter((session) => session.id !== id);
+    this.activeId = next;
+
+    try {
+      await invoke("pty_kill", { id });
+    } catch {
+      // The session may already be gone.
+    }
+
+    if (this.sessions.length > 0) return;
+
+    this.activeId = null;
+    if (this.surface === "editor") {
+      this.open = false;
+      this.started = false;
     }
   }
 
   async teardown(): Promise<void> {
+    this.surface = "editor";
     this.open = false;
     this.started = false;
-    this.alive = false;
+    this.sessions = [];
+    this.activeId = null;
     this.dock = "bottom";
-    this.error = null;
-    this.#spawning = false;
+    this.#nextSerial = 1;
+    this.#spawning.clear();
+    this.#writers.clear();
 
     try {
-      await invoke("pty_kill", { id: WORKSPACE_PTY_ID });
+      await invoke("pty_kill_all");
     } catch {
-      // The session may already be gone.
+      // Sessions may already be gone.
     }
+  }
+
+  #patch(id: string, patch: Partial<TerminalSession>): void {
+    this.sessions = this.sessions.map((session) =>
+      session.id === id ? { ...session, ...patch } : session,
+    );
   }
 }
 

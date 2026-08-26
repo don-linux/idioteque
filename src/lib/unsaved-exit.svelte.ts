@@ -1,4 +1,4 @@
-export type UnsavedExitMode = "leave" | "tab";
+export type UnsavedExitMode = "leave" | "tab" | "save";
 
 class UnsavedExit {
   open = $state(false);
