@@ -1,4 +1,4 @@
-export const FOOTER_ACTION_IDS = ["home", "folder", "settings", "terminal"] as const;
+export const FOOTER_ACTION_IDS = ["home", "folder", "settings", "terminal", "git"] as const;
 
 export type FooterActionId = (typeof FOOTER_ACTION_IDS)[number];
 
