@@ -90,6 +90,8 @@ Orden por defecto:
 2. Carpeta — Cambiar. Abre el selector nativo para otra carpeta.
 3. Engrane — Configuración. Va a la página de ajustes. El workspace no se cierra, así la terminal no se apaga.
 4. Terminal — Muestra u oculta el panel. Queda marcado si está visible.
+5. Git — Icono de vida. Al pasar el mouse dice si no hay repo o el nombre
+   de la carpeta y la rama. El clic no hace nada. No es un panel.
 
 El usuario puede arrastrar los iconos para cambiar el orden. Ese orden se guarda y vuelve a salir igual al abrir la app. Si más adelante se suman iconos nuevos, aparecen al final sin desarmar el orden que ya eligió.
 
@@ -127,4 +129,6 @@ leemos es porcelain v2; VS Code todavía usa v1.
 Si la carpeta no es un repo, o no hay Git, el snapshot viene vacío.
 No es un error. El panel podrá esconderse.
 
-Aún no hay panel. Esto es solo el canal.
+Aún no hay panel. El footer tiene un icono de Git solo para ver si el
+canal responde: hover con el nombre del repo y la rama, o “sin
+repositorio”. El clic no abre nada.

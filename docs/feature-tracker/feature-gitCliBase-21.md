@@ -29,7 +29,7 @@ Si no hay repo, el repositorio viene vacío. No explota.
 **3. El frontend ya tiene el contrato**
 
 `src/lib/git.ts` tipa el snapshot y sabe leer las columnas staged /
-unstaged. Todavía no hay UI.
+unstaged. El footer tiene un icono de vida (hover); no hay panel.
 
 ## NO se pudo implementar
 
@@ -39,6 +39,6 @@ Nada de lo previsto se quedó fuera.
 
 - Panel de cambios, stage, commit, push
 - Decoraciones en el árbol
-- Rama en el footer
+- Indicador permanente de rama (el footer solo muestra un tooltip al hover)
 - Credenciales / askpass
 - Vigilar `.git` para refrescar solo
