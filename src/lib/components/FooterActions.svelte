@@ -8,7 +8,7 @@
   import { goto } from "$app/navigation";
   import { appConfig } from "$lib/app-config.svelte";
   import { ROUTES } from "$lib/app-routes";
-  import { moveFooterAction, type FooterActionId } from "$lib/footer-actions";
+  import { moveFooterAction, runFooterAction, type FooterActionId } from "$lib/footer-actions";
   import { gitStatus } from "$lib/git";
   import {
     gitFooterStateFromError,
@@ -119,25 +119,19 @@
       return;
     }
 
-    if (id === "home") {
-      void workspace.closeWorkspace().then((left) => {
-        if (left) void goto(ROUTES.home);
-      });
-      return;
-    }
-
-    if (id === "folder") {
-      void workspace.openFolder();
-      return;
-    }
-
-    if (id === "git") {
-      return;
-    }
-
-    if (id === "terminal") {
-      terminal.toggle(dockFromAlt(event.altKey));
-    }
+    runFooterAction(id, {
+      home: () => {
+        void workspace.closeWorkspace().then((left) => {
+          if (left) void goto(ROUTES.home);
+        });
+      },
+      folder: () => {
+        void workspace.openFolder();
+      },
+      terminal: () => {
+        terminal.toggle(dockFromAlt(event.altKey));
+      },
+    });
   }
 </script>
 
