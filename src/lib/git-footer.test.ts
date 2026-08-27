@@ -60,6 +60,16 @@ describe("gitFooterStateFromSnapshot", () => {
     expect(gitFooterTitle(state)).not.toBe("Sin repositorio Git");
   });
 
+  it("does not show a stale repository when the binary is missing", () => {
+    const state = gitFooterStateFromSnapshot(
+      snapshot({ available: false, repository: repo({ branch: "main" }) }),
+    );
+    expect(state).toEqual({ kind: "unavailable" });
+    expect(gitFooterTitle(state)).toBe("Git no está disponible");
+    expect(gitFooterTitle(state)).not.toBe("idioteque · main");
+    expect(gitFooterTitle(state)).not.toContain("idioteque");
+  });
+
   it("treats an available probe without a repository as empty", () => {
     const state = gitFooterStateFromSnapshot(snapshot({ available: true }));
     expect(state).toEqual({ kind: "empty" });
@@ -144,6 +154,21 @@ describe("gitFooterTitle", () => {
     expect(gitFooterTitle(state)).toBe("Git no responde");
     expect(gitFooterTitle(state)).not.toBe("Sin repositorio Git");
     expect(gitFooterTitle(state)).not.toBe("Git no está disponible");
+  });
+
+  it("does not promote a root-only toplevel into a repo title", () => {
+    const slash = gitFooterStateFromSnapshot(
+      snapshot({ repository: repo({ toplevel: "/", branch: "main" }) }),
+    );
+    const empty = gitFooterStateFromSnapshot(
+      snapshot({ repository: repo({ toplevel: "", branch: "main" }) }),
+    );
+    expect(slash).toEqual({ kind: "empty" });
+    expect(empty).toEqual({ kind: "empty" });
+    expect(gitFooterTitle(slash)).toBe("Sin repositorio Git");
+    expect(gitFooterTitle(empty)).toBe("Sin repositorio Git");
+    expect(gitFooterTitle(slash)).not.toContain("/");
+    expect(gitFooterTitle(slash)).not.toMatch(/·/);
   });
 
   it("never puts a full toplevel path in the title", () => {

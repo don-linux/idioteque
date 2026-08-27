@@ -115,7 +115,8 @@ fn find_git() -> Result<PathBuf, String> {
     }
 
     let name = git_executable_name();
-    let path_var = env::var_os("PATH").ok_or_else(|| "No se encontró Git en el PATH".to_string())?;
+    let path_var =
+        env::var_os("PATH").ok_or_else(|| "No se encontró Git en el PATH".to_string())?;
 
     for directory in env::split_paths(&path_var) {
         let candidate = directory.join(name);
@@ -303,5 +304,25 @@ mod tests {
         let _restore = EnvRestore::set("IDIOTEQUE_GIT", "/no/such/idioteque-git");
         let error = Git::discover().expect_err("missing binary");
         assert!(error.contains("IDIOTEQUE_GIT"));
+    }
+
+    #[test]
+    fn explicit_git_directory_is_not_an_executable() {
+        let _lock = lock_discover();
+        let dir = env::temp_dir().join(format!(
+            "idioteque-git-dir-not-binary-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let _restore = EnvRestore::set("IDIOTEQUE_GIT", dir.to_str().expect("utf8 temp dir"));
+        let error = Git::discover().expect_err("directory is not git");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            error.contains("IDIOTEQUE_GIT"),
+            "directory pin must fail before spawn: {error}"
+        );
     }
 }

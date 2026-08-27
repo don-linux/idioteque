@@ -115,7 +115,10 @@ impl GitRepository {
 }
 
 fn discover_repo(git: &Git, root: &Path) -> Result<Option<(String, String)>, String> {
-    let output = git.run(root, &["rev-parse", "--show-toplevel", "--absolute-git-dir"])?;
+    let output = git.run(
+        root,
+        &["rev-parse", "--show-toplevel", "--absolute-git-dir"],
+    )?;
 
     if !output.success {
         if is_not_a_repository(&output.stderr) {
@@ -150,7 +153,7 @@ fn require_directory(root: &str) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git::exec::{lock_discover, EnvRestore, Git};
+    use crate::git::exec::{lock_discover, version_at_least, EnvRestore, Git, MIN_GIT_VERSION};
     use crate::git::porcelain::GitFileKind;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -256,10 +259,19 @@ mod tests {
     #[test]
     fn probe_reports_the_system_binary() {
         let _lock = lock_discover();
+        let git = Git::discover().expect("git on PATH");
         let probe = probe();
         assert!(probe.available);
-        assert!(probe.path.is_some());
-        assert!(probe.version.is_some());
+        assert_eq!(
+            probe.path.as_deref(),
+            Some(git.path.to_string_lossy().as_ref())
+        );
+        assert_eq!(probe.version.as_deref(), Some(git.version.as_str()));
+        assert!(Path::new(probe.path.as_deref().expect("path")).is_file());
+        assert!(version_at_least(
+            probe.version.as_deref().expect("version"),
+            MIN_GIT_VERSION
+        ));
     }
 
     #[test]
@@ -313,7 +325,9 @@ mod tests {
         );
         assert_eq!(
             Path::new(&repo.git_dir),
-            fs::canonicalize(fixture.path(".git")).expect("git dir").as_path()
+            fs::canonicalize(fixture.path(".git"))
+                .expect("git dir")
+                .as_path()
         );
     }
 
@@ -366,6 +380,10 @@ mod tests {
             .expect("rename");
         assert_eq!(renamed.path, "renamed.md");
         assert_eq!(renamed.original_path.as_deref(), Some("a.md"));
+        assert!(
+            repo.dirty,
+            "a single renamed file is still a dirty worktree"
+        );
     }
 
     #[test]
@@ -434,5 +452,14 @@ mod tests {
         );
         assert_eq!(repo.branch.as_deref(), Some("linked"));
         assert!(!repo.dirty);
+        assert!(
+            Path::new(&repo.git_dir).is_dir(),
+            "git_dir must be the resolved directory, not the .git pointer file"
+        );
+        assert_ne!(
+            Path::new(&repo.git_dir),
+            git_file.as_path(),
+            "must not report the worktree .git file as git_dir"
+        );
     }
 }

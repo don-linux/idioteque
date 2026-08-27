@@ -266,6 +266,8 @@ mod tests {
         assert_eq!(parsed.files[0].kind, GitFileKind::Ordinary);
         assert_eq!(parsed.files[1].path, "b.md");
         assert_eq!(parsed.files[1].kind, GitFileKind::Untracked);
+        assert_eq!(parsed.files[1].staged, ".");
+        assert_eq!(parsed.files[1].unstaged, "?");
     }
 
     #[test]
@@ -310,9 +312,8 @@ mod tests {
 
     #[test]
     fn parse_unmerged_conflict() {
-        let stdout = nul_join(&[
-            "u UU N... 100644 100644 100644 100644 aaa bbb ccc docs/conflict.md",
-        ]);
+        let stdout =
+            nul_join(&["u UU N... 100644 100644 100644 100644 aaa bbb ccc docs/conflict.md"]);
         let parsed = parse_status_v2(&stdout).expect("parse");
         assert_eq!(parsed.files[0].kind, GitFileKind::Unmerged);
         assert_eq!(parsed.files[0].path, "docs/conflict.md");
@@ -348,24 +349,18 @@ mod tests {
 
     #[test]
     fn parse_rejects_xy_that_is_not_two_columns() {
-        let short = parse_status_v2(
-            b"1 M N... 100644 100644 100644 abc def a.md\0",
-        )
-        .expect_err("one-char XY");
+        let short = parse_status_v2(b"1 M N... 100644 100644 100644 abc def a.md\0")
+            .expect_err("one-char XY");
         assert!(short.contains("XY porcelain inválido"));
 
-        let long = parse_status_v2(
-            b"1 MMM N... 100644 100644 100644 abc def a.md\0",
-        )
-        .expect_err("three-char XY");
+        let long = parse_status_v2(b"1 MMM N... 100644 100644 100644 abc def a.md\0")
+            .expect_err("three-char XY");
         assert!(long.contains("XY porcelain inválido"));
     }
 
     #[test]
     fn parse_rename_without_source_record_does_not_panic() {
-        let stdout = nul_join(&[
-            "2 R. N... 100644 100644 100644 abc def R100 renamed.md",
-        ]);
+        let stdout = nul_join(&["2 R. N... 100644 100644 100644 abc def R100 renamed.md"]);
         let parsed = parse_status_v2(&stdout).expect("rename without source");
         assert_eq!(parsed.files.len(), 1);
         assert_eq!(parsed.files[0].kind, GitFileKind::Renamed);
@@ -380,9 +375,12 @@ mod tests {
         assert_eq!(parsed.files.len(), 2);
         assert_eq!(parsed.files[0].kind, GitFileKind::Ignored);
         assert_eq!(parsed.files[0].path, "build/out");
+        assert_eq!(parsed.files[0].staged, ".");
         assert_eq!(parsed.files[0].unstaged, "!");
         assert_eq!(parsed.files[1].kind, GitFileKind::Untracked);
         assert_eq!(parsed.files[1].path, "keep.md");
+        assert_eq!(parsed.files[1].staged, ".");
+        assert_eq!(parsed.files[1].unstaged, "?");
     }
 
     #[test]
@@ -400,6 +398,41 @@ mod tests {
         ]);
         let parsed = parse_status_v2(&stdout).expect("parse");
         assert_eq!(parsed.files[0].path, "new file.md");
-        assert_eq!(parsed.files[0].original_path.as_deref(), Some("old file.md"));
+        assert_eq!(
+            parsed.files[0].original_path.as_deref(),
+            Some("old file.md")
+        );
+    }
+
+    #[test]
+    fn parse_incomplete_rename_record_is_an_error() {
+        let error = parse_status_v2(b"2 R. N... 100644\0").expect_err("incomplete rename");
+        assert!(error.contains("incompleto"));
+    }
+
+    #[test]
+    fn parse_rejects_xy_on_unmerged_and_rename() {
+        let unmerged =
+            parse_status_v2(b"u U N... 100644 100644 100644 100644 aaa bbb ccc docs/conflict.md\0")
+                .expect_err("one-char XY unmerged");
+        assert!(unmerged.contains("XY porcelain inválido"));
+
+        let renamed = parse_status_v2(b"2 RRR N... 100644 100644 100644 abc def R100 renamed.md\0")
+            .expect_err("three-char XY rename");
+        assert!(renamed.contains("XY porcelain inválido"));
+    }
+
+    #[test]
+    fn later_detached_header_clears_a_previous_branch() {
+        let parsed = parse("# branch.head main\0# branch.head (detached)\0");
+        assert!(parsed.detached);
+        assert_eq!(parsed.branch, None);
+    }
+
+    #[test]
+    fn later_initial_header_clears_a_previous_oid() {
+        let parsed = parse("# branch.oid abcdef\0# branch.oid (initial)\0");
+        assert!(parsed.initial);
+        assert_eq!(parsed.oid, None);
     }
 }
