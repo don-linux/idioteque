@@ -150,12 +150,13 @@ fn require_directory(root: &str) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git::exec::Git;
+    use crate::git::exec::{lock_discover, EnvRestore, Git};
     use crate::git::porcelain::GitFileKind;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::MutexGuard;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     static FIXTURE_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -163,10 +164,12 @@ mod tests {
     struct Fixture {
         root: PathBuf,
         git: Git,
+        _lock: MutexGuard<'static, ()>,
     }
 
     impl Fixture {
         fn new() -> Self {
+            let lock = lock_discover();
             let git = Git::discover().expect("git on PATH");
             let seq = FIXTURE_SEQ.fetch_add(1, Ordering::Relaxed);
             let nanos = SystemTime::now()
@@ -175,7 +178,11 @@ mod tests {
                 .as_nanos();
             let root = std::env::temp_dir().join(format!("idioteque-git-{nanos}-{seq}"));
             fs::create_dir_all(&root).expect("create fixture root");
-            Self { root, git }
+            Self {
+                root,
+                git,
+                _lock: lock,
+            }
         }
 
         fn path(&self, relative: &str) -> PathBuf {
@@ -248,10 +255,30 @@ mod tests {
 
     #[test]
     fn probe_reports_the_system_binary() {
+        let _lock = lock_discover();
         let probe = probe();
         assert!(probe.available);
         assert!(probe.path.is_some());
         assert!(probe.version.is_some());
+    }
+
+    #[test]
+    fn missing_explicit_git_makes_probe_unavailable() {
+        let _lock = lock_discover();
+        let _restore = EnvRestore::set("IDIOTEQUE_GIT", "/no/such/idioteque-git");
+        let probe = probe();
+        assert!(!probe.available);
+        assert_eq!(probe.path, None);
+        assert_eq!(probe.version, None);
+    }
+
+    #[test]
+    fn snapshot_without_git_binary_has_no_repository() {
+        let fixture = Fixture::new();
+        let _restore = EnvRestore::set("IDIOTEQUE_GIT", "/no/such/idioteque-git");
+        let snap = fixture.snap();
+        assert!(!snap.probe.available);
+        assert_eq!(snap.repository, None);
     }
 
     #[test]
@@ -356,6 +383,56 @@ mod tests {
             fs::canonicalize(&fixture.root).expect("root").as_path()
         );
         assert_eq!(repo.branch.as_deref(), Some("main"));
+        assert!(!repo.dirty);
+    }
+
+    #[test]
+    fn snapshot_rejects_empty_and_missing_paths() {
+        let error = snapshot("").unwrap_err();
+        assert!(error.contains("no es una carpeta"));
+
+        let missing = std::env::temp_dir().join("idioteque-git-missing-root-does-not-exist");
+        let error = snapshot(missing.to_str().expect("utf8")).unwrap_err();
+        assert!(error.contains("no es una carpeta"));
+    }
+
+    #[test]
+    fn detached_head_has_no_branch() {
+        let fixture = Fixture::new();
+        fixture.init();
+        fixture.write("a.md", "hello\n");
+        fixture.git(&["add", "a.md"]);
+        fixture.git(&["commit", "-m", "init"]);
+        fixture.git(&["checkout", "--detach", "HEAD"]);
+
+        let repo = fixture.snap().repository.expect("repo");
+        assert!(repo.detached);
+        assert_eq!(repo.branch, None);
+        assert!(repo.oid.is_some());
+        assert!(!repo.initial);
+    }
+
+    #[test]
+    fn worktree_with_git_file_is_still_a_repo() {
+        let fixture = Fixture::new();
+        fixture.init();
+        fixture.write("a.md", "hello\n");
+        fixture.git(&["add", "a.md"]);
+        fixture.git(&["commit", "-m", "init"]);
+        fixture.git(&["worktree", "add", "linked"]);
+
+        let git_file = fixture.path("linked/.git");
+        assert!(git_file.is_file(), "worktree uses a .git file");
+
+        let linked = snapshot(fixture.path("linked").to_str().expect("utf8")).expect("worktree");
+        let repo = linked.repository.expect("repo");
+        assert_eq!(
+            Path::new(&repo.toplevel),
+            fs::canonicalize(fixture.path("linked"))
+                .expect("linked")
+                .as_path()
+        );
+        assert_eq!(repo.branch.as_deref(), Some("linked"));
         assert!(!repo.dirty);
     }
 }

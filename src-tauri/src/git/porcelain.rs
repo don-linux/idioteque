@@ -319,4 +319,87 @@ mod tests {
         assert_eq!(parsed.files[0].staged, "U");
         assert_eq!(parsed.files[0].unstaged, "U");
     }
+
+    #[test]
+    fn parse_empty_stdout_is_a_clean_status() {
+        let parsed = parse_status_v2(b"").expect("empty");
+        assert_eq!(parsed, ParsedStatus::default());
+    }
+
+    #[test]
+    fn parse_headers_only_has_no_files() {
+        let parsed = parse("# branch.oid abc\0# branch.head main\0");
+        assert_eq!(parsed.branch.as_deref(), Some("main"));
+        assert_eq!(parsed.oid.as_deref(), Some("abc"));
+        assert!(parsed.files.is_empty());
+    }
+
+    #[test]
+    fn parse_incomplete_ordinary_record_is_an_error() {
+        let error = parse_status_v2(b"1 .M N... 100644\0").expect_err("incomplete");
+        assert!(error.contains("incompleto"));
+    }
+
+    #[test]
+    fn parse_incomplete_unmerged_record_is_an_error() {
+        let error = parse_status_v2(b"u UU N... 100644 100644\0").expect_err("incomplete");
+        assert!(error.contains("conflicto"));
+    }
+
+    #[test]
+    fn parse_rejects_xy_that_is_not_two_columns() {
+        let short = parse_status_v2(
+            b"1 M N... 100644 100644 100644 abc def a.md\0",
+        )
+        .expect_err("one-char XY");
+        assert!(short.contains("XY porcelain inválido"));
+
+        let long = parse_status_v2(
+            b"1 MMM N... 100644 100644 100644 abc def a.md\0",
+        )
+        .expect_err("three-char XY");
+        assert!(long.contains("XY porcelain inválido"));
+    }
+
+    #[test]
+    fn parse_rename_without_source_record_does_not_panic() {
+        let stdout = nul_join(&[
+            "2 R. N... 100644 100644 100644 abc def R100 renamed.md",
+        ]);
+        let parsed = parse_status_v2(&stdout).expect("rename without source");
+        assert_eq!(parsed.files.len(), 1);
+        assert_eq!(parsed.files[0].kind, GitFileKind::Renamed);
+        assert_eq!(parsed.files[0].path, "renamed.md");
+        assert_eq!(parsed.files[0].original_path, None);
+    }
+
+    #[test]
+    fn parse_ignored_and_unknown_records() {
+        let stdout = nul_join(&["! build/out", "x mystery", "? keep.md"]);
+        let parsed = parse_status_v2(&stdout).expect("parse");
+        assert_eq!(parsed.files.len(), 2);
+        assert_eq!(parsed.files[0].kind, GitFileKind::Ignored);
+        assert_eq!(parsed.files[0].path, "build/out");
+        assert_eq!(parsed.files[0].unstaged, "!");
+        assert_eq!(parsed.files[1].kind, GitFileKind::Untracked);
+        assert_eq!(parsed.files[1].path, "keep.md");
+    }
+
+    #[test]
+    fn malformed_ahead_behind_does_not_clobber_a_valid_one() {
+        let parsed = parse("# branch.ab +3 -1\0# branch.ab garbage\0# branch.ab no-plus 1\0");
+        assert_eq!(parsed.ahead, 3);
+        assert_eq!(parsed.behind, 1);
+    }
+
+    #[test]
+    fn parse_rename_path_with_spaces() {
+        let stdout = nul_join(&[
+            "2 R. N... 100644 100644 100644 abc def R100 new file.md",
+            "old file.md",
+        ]);
+        let parsed = parse_status_v2(&stdout).expect("parse");
+        assert_eq!(parsed.files[0].path, "new file.md");
+        assert_eq!(parsed.files[0].original_path.as_deref(), Some("old file.md"));
+    }
 }

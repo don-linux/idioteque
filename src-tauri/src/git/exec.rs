@@ -204,6 +204,36 @@ pub(crate) fn is_not_a_repository(stderr: &str) -> bool {
 }
 
 #[cfg(test)]
+pub(crate) static DISCOVER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+pub(crate) fn lock_discover() -> std::sync::MutexGuard<'static, ()> {
+    DISCOVER_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(test)]
+pub(crate) struct EnvRestore {
+    key: &'static str,
+}
+
+#[cfg(test)]
+impl EnvRestore {
+    pub(crate) fn set(key: &'static str, value: &str) -> Self {
+        env::set_var(key, value);
+        Self { key }
+    }
+}
+
+#[cfg(test)]
+impl Drop for EnvRestore {
+    fn drop(&mut self) {
+        env::remove_var(self.key);
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -221,18 +251,57 @@ mod tests {
     }
 
     #[test]
+    fn parse_version_keeps_apple_git_suffix() {
+        assert_eq!(
+            parse_version("git version 2.39.5 (Apple Git-154)\n"),
+            Some("2.39.5 (Apple Git-154)".to_string())
+        );
+        assert!(version_at_least("2.39.5 (Apple Git-154)", MIN_GIT_VERSION));
+        assert!(!version_at_least("2.14.3 (Apple Git-1)", MIN_GIT_VERSION));
+    }
+
+    #[test]
+    fn parse_version_rejects_empty_and_headerless() {
+        assert_eq!(parse_version(""), None);
+        assert_eq!(parse_version("git version "), None);
+        assert_eq!(parse_version("git version\n"), None);
+        assert_eq!(parse_version("version 2.43.0"), None);
+    }
+
+    #[test]
     fn version_floor_matches_zed_optional_locks() {
         assert!(version_at_least("2.15.0", MIN_GIT_VERSION));
         assert!(version_at_least("2.43.0", MIN_GIT_VERSION));
         assert!(version_at_least("2.15.0.windows.1", MIN_GIT_VERSION));
+        assert!(version_at_least("2.15", MIN_GIT_VERSION));
+        assert!(version_at_least("2.15.0.0", MIN_GIT_VERSION));
         assert!(!version_at_least("2.14.3", MIN_GIT_VERSION));
         assert!(!version_at_least("1.9.1", MIN_GIT_VERSION));
+        assert!(!version_at_least("2", MIN_GIT_VERSION));
+    }
+
+    #[test]
+    fn is_not_a_repository_reads_english_stderr() {
+        assert!(is_not_a_repository(
+            "fatal: not a git repository (or any of the parent directories): .git"
+        ));
+        assert!(!is_not_a_repository("fatal: bad revision"));
+        assert!(!is_not_a_repository(""));
     }
 
     #[test]
     fn discover_finds_system_git() {
+        let _lock = lock_discover();
         let git = Git::discover().expect("git on PATH");
         assert!(git.path.is_file());
         assert!(version_at_least(&git.version, MIN_GIT_VERSION));
+    }
+
+    #[test]
+    fn missing_explicit_git_is_an_error() {
+        let _lock = lock_discover();
+        let _restore = EnvRestore::set("IDIOTEQUE_GIT", "/no/such/idioteque-git");
+        let error = Git::discover().expect_err("missing binary");
+        assert!(error.contains("IDIOTEQUE_GIT"));
     }
 }
