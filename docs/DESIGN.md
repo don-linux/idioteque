@@ -112,3 +112,19 @@ Si una sección crece, esa lista hace scroll. Las otras no aparecen mezcladas.
 Los cambios se quedan en un borrador. Hay que pulsar “Guardar configuración” o Ctrl+S. Entonces se escriben, sale un aviso abajo a la derecha y, al volver al IDE, la terminal ya usa esa fuente, ese tamaño y ese tema, y la interfaz el color elegido. Si sales sin guardar, el borrador se descarta.
 
 No hay, a propósito, fuente del editor ni de la interfaz, ni elección de shell, ni importar un archivo de tema.
+
+## Git
+
+Git no vive en el frontend ni en una librería embebida. Rust lanza el
+`git` del sistema, parsea porcelain, y Svelte solo pinta el resultado.
+
+El módulo es nuestro (`src-tauri/src/git`). No es un port de VS Code ni
+de Zed. De Zed copiamos cómo se lanza el binario (sin shell, sin pager,
+sin locks opcionales, sin prompts). De VS Code, la idea: la UI es un
+modelo (rama, staged, dirty), no un eco de comandos. El formato que
+leemos es porcelain v2; VS Code todavía usa v1.
+
+Si la carpeta no es un repo, o no hay Git, el snapshot viene vacío.
+No es un error. El panel podrá esconderse.
+
+Aún no hay panel. Esto es solo el canal.
