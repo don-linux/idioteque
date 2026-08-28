@@ -13,7 +13,7 @@ const MAX_FONT_SIZE: u8 = 24;
 const CONFIG_DIR_NAME: &str = ".idioteque";
 const CONFIG_FILE_NAME: &str = "config.json";
 const CONFIG_TMP_NAME: &str = ".config.json.idioteque.tmp";
-const DEFAULT_ACTION_ORDER: [&str; 4] = ["home", "folder", "settings", "terminal"];
+const DEFAULT_ACTION_ORDER: [&str; 5] = ["home", "folder", "settings", "terminal", "git"];
 const DEFAULT_THEME: &str = "tokyo-night";
 const KNOWN_THEMES: [&str; 8] = [
     "tokyo-night",
@@ -1056,7 +1056,8 @@ mod tests {
                 "home".to_string(),
                 "terminal".to_string(),
                 "folder".to_string(),
-                "settings".to_string()
+                "settings".to_string(),
+                "git".to_string()
             ]
         );
     }
@@ -1078,7 +1079,31 @@ mod tests {
                 "terminal".to_string(),
                 "home".to_string(),
                 "folder".to_string(),
-                "settings".to_string()
+                "settings".to_string(),
+                "git".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn old_four_icon_order_appends_git() {
+        let next = apply_footer(
+            default_config(),
+            vec![
+                "home".into(),
+                "folder".into(),
+                "settings".into(),
+                "terminal".into(),
+            ],
+        );
+        assert_eq!(
+            next.footer.action_order,
+            vec![
+                "home".to_string(),
+                "folder".to_string(),
+                "settings".to_string(),
+                "terminal".to_string(),
+                "git".to_string()
             ]
         );
     }

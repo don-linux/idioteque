@@ -1,13 +1,21 @@
 <script lang="ts">
   import { flip } from "svelte/animate";
   import Folder from "@lucide/svelte/icons/folder";
+  import GitBranch from "@lucide/svelte/icons/git-branch";
   import House from "@lucide/svelte/icons/house";
   import Settings from "@lucide/svelte/icons/settings";
   import SquareTerminal from "@lucide/svelte/icons/square-terminal";
   import { goto } from "$app/navigation";
   import { appConfig } from "$lib/app-config.svelte";
   import { ROUTES } from "$lib/app-routes";
-  import { moveFooterAction, type FooterActionId } from "$lib/footer-actions";
+  import { moveFooterAction, runFooterAction, type FooterActionId } from "$lib/footer-actions";
+  import { gitStatus } from "$lib/git";
+  import {
+    gitFooterStateFromError,
+    gitFooterStateFromSnapshot,
+    gitFooterTitle,
+    type GitFooterState,
+  } from "$lib/git-footer";
   import { dockFromAlt } from "$lib/terminal-dock";
   import { terminal } from "$lib/terminal.svelte";
   import { workspace } from "$lib/workspace.svelte";
@@ -23,6 +31,7 @@
     folder: "Cambiar",
     settings: "Configuración",
     terminal: "Terminal",
+    git: "Git",
   };
 
   const titles: Record<FooterActionId, string> = {
@@ -30,7 +39,34 @@
     folder: "Cambiar carpeta",
     settings: "Configuración",
     terminal: "Terminal (Ctrl+J) · a la derecha (Ctrl+Alt+J) · pantalla (Ctrl+Shift+J)",
+    git: "Git",
   };
+
+  let gitState = $state.raw<GitFooterState>({ kind: "loading" });
+  let gitGen = 0;
+
+  async function refreshGit(root: string | null): Promise<void> {
+    if (!root) {
+      gitState = { kind: "empty" };
+      return;
+    }
+    const gen = ++gitGen;
+    try {
+      const snap = await gitStatus(root);
+      if (gen !== gitGen) return;
+      gitState = gitFooterStateFromSnapshot(snap);
+    } catch {
+      if (gen !== gitGen) return;
+      gitState = gitFooterStateFromError();
+    }
+  }
+
+  $effect(() => {
+    const root = workspace.root;
+    void refreshGit(root);
+  });
+
+  let gitTitle = $derived(gitFooterTitle(gitState));
 
   function startDrag(id: FooterActionId, event: PointerEvent): void {
     if (event.button !== 0) return;
@@ -83,21 +119,19 @@
       return;
     }
 
-    if (id === "home") {
-      void workspace.closeWorkspace().then((left) => {
-        if (left) void goto(ROUTES.home);
-      });
-      return;
-    }
-
-    if (id === "folder") {
-      void workspace.openFolder();
-      return;
-    }
-
-    if (id === "terminal") {
-      terminal.toggle(dockFromAlt(event.altKey));
-    }
+    runFooterAction(id, {
+      home: () => {
+        void workspace.closeWorkspace().then((left) => {
+          if (left) void goto(ROUTES.home);
+        });
+      },
+      folder: () => {
+        void workspace.openFolder();
+      },
+      terminal: () => {
+        terminal.toggle(dockFromAlt(event.altKey));
+      },
+    });
   }
 </script>
 
@@ -134,7 +168,10 @@
             ? terminal.open || terminal.surface === "terminals"
             : undefined}
           aria-label={labels[id]}
-          title={titles[id]}
+          title={id === "git" ? gitTitle : titles[id]}
+          onpointerenter={() => {
+            if (id === "git") void refreshGit(workspace.root);
+          }}
           onpointerdown={(event) => startDrag(id, event)}
           onpointermove={onPointerMove}
           onpointerup={endDrag}
@@ -145,6 +182,8 @@
             <House size={16} strokeWidth={1.75} aria-hidden="true" />
           {:else if id === "folder"}
             <Folder size={16} strokeWidth={1.75} aria-hidden="true" />
+          {:else if id === "git"}
+            <GitBranch size={16} strokeWidth={1.75} aria-hidden="true" />
           {:else}
             <SquareTerminal size={16} strokeWidth={1.75} aria-hidden="true" />
           {/if}

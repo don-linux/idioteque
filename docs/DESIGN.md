@@ -90,6 +90,8 @@ Orden por defecto:
 2. Carpeta — Cambiar. Abre el selector nativo para otra carpeta.
 3. Engrane — Configuración. Va a la página de ajustes. El workspace no se cierra, así la terminal no se apaga.
 4. Terminal — Muestra u oculta el panel. Queda marcado si está visible.
+5. Git — Icono de vida. Al pasar el mouse dice si no hay repo o el nombre
+   de la carpeta y la rama. El clic no hace nada. No es un panel.
 
 El usuario puede arrastrar los iconos para cambiar el orden. Ese orden se guarda y vuelve a salir igual al abrir la app. Si más adelante se suman iconos nuevos, aparecen al final sin desarmar el orden que ya eligió.
 
@@ -112,3 +114,21 @@ Si una sección crece, esa lista hace scroll. Las otras no aparecen mezcladas.
 Los cambios se quedan en un borrador. Hay que pulsar “Guardar configuración” o Ctrl+S. Entonces se escriben, sale un aviso abajo a la derecha y, al volver al IDE, la terminal ya usa esa fuente, ese tamaño y ese tema, y la interfaz el color elegido. Si sales sin guardar, el borrador se descarta.
 
 No hay, a propósito, fuente del editor ni de la interfaz, ni elección de shell, ni importar un archivo de tema.
+
+## Git
+
+Git no vive en el frontend ni en una librería embebida. Rust lanza el
+`git` del sistema, parsea porcelain, y Svelte solo pinta el resultado.
+
+El módulo es nuestro (`src-tauri/src/git`). No es un port de VS Code ni
+de Zed. De Zed copiamos cómo se lanza el binario (sin shell, sin pager,
+sin locks opcionales, sin prompts). De VS Code, la idea: la UI es un
+modelo (rama, staged, dirty), no un eco de comandos. El formato que
+leemos es porcelain v2; VS Code todavía usa v1.
+
+Si la carpeta no es un repo, o no hay Git, el snapshot viene vacío.
+No es un error. El panel podrá esconderse.
+
+Aún no hay panel. El footer tiene un icono de Git solo para ver si el
+canal responde: hover con el nombre del repo y la rama, o “sin
+repositorio”. El clic no abre nada.

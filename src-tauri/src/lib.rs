@@ -1,5 +1,6 @@
 mod app_config;
 mod fonts;
+mod git;
 mod pty;
 mod workspace;
 
@@ -24,6 +25,8 @@ pub fn run() {
             workspace::delete_markdown,
             workspace::watch_workspace,
             workspace::unwatch_workspace,
+            git::git_probe,
+            git::git_status,
             pty::pty_spawn,
             pty::pty_write,
             pty::pty_resize,
