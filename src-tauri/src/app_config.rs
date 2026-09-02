@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -13,7 +12,6 @@ const MAX_FONT_SIZE: u8 = 24;
 const CONFIG_DIR_NAME: &str = ".idioteque";
 const CONFIG_FILE_NAME: &str = "config.json";
 const CONFIG_TMP_NAME: &str = ".config.json.idioteque.tmp";
-const DEFAULT_ACTION_ORDER: [&str; 5] = ["home", "folder", "settings", "terminal", "git"];
 const DEFAULT_THEME: &str = "tokyo-night";
 const KNOWN_THEMES: [&str; 8] = [
     "tokyo-night",
@@ -60,13 +58,6 @@ struct StoredTerminal {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct StoredFooter {
-    #[serde(default = "default_action_order")]
-    action_order: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct StoredAppearance {
     #[serde(default = "default_ui_theme")]
     theme: String,
@@ -79,8 +70,6 @@ struct StoredConfig {
     recents: Vec<StoredRecent>,
     #[serde(default)]
     terminal: StoredTerminal,
-    #[serde(default)]
-    footer: StoredFooter,
     #[serde(default)]
     appearance: StoredAppearance,
 }
@@ -111,18 +100,6 @@ pub struct TerminalSettingsUpdate {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FooterSettings {
-    pub action_order: Vec<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FooterSettingsUpdate {
-    pub action_order: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct AppearanceSettings {
     pub theme: String,
 }
@@ -139,7 +116,6 @@ pub struct AppConfig {
     pub version: u32,
     pub recents: Vec<RecentFolder>,
     pub terminal: TerminalSettings,
-    pub footer: FooterSettings,
     pub appearance: AppearanceSettings,
 }
 
@@ -165,25 +141,6 @@ impl Default for StoredTerminal {
     }
 }
 
-fn default_action_order() -> Vec<String> {
-    DEFAULT_ACTION_ORDER
-        .iter()
-        .map(|id| (*id).to_string())
-        .collect()
-}
-
-fn default_footer() -> StoredFooter {
-    StoredFooter {
-        action_order: default_action_order(),
-    }
-}
-
-impl Default for StoredFooter {
-    fn default() -> Self {
-        default_footer()
-    }
-}
-
 fn default_ui_theme() -> String {
     DEFAULT_UI_THEME.to_string()
 }
@@ -205,7 +162,6 @@ fn default_config() -> StoredConfig {
         version: CONFIG_VERSION,
         recents: Vec::new(),
         terminal: default_terminal(),
-        footer: default_footer(),
         appearance: default_appearance(),
     }
 }
@@ -270,39 +226,6 @@ fn apply_terminal(
         font_family: normalize_font_family(font_family),
         font_size: clamp_font_size(font_size),
         theme: normalize_theme(theme),
-    };
-    config
-}
-
-fn is_known_action(id: &str) -> bool {
-    DEFAULT_ACTION_ORDER.contains(&id)
-}
-
-fn normalize_action_order(saved: Vec<String>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut ordered = Vec::new();
-
-    for id in saved {
-        if !is_known_action(&id) || !seen.insert(id.clone()) {
-            continue;
-        }
-        ordered.push(id);
-    }
-
-    for id in DEFAULT_ACTION_ORDER {
-        if seen.contains(id) {
-            continue;
-        }
-        ordered.push(id.to_string());
-    }
-
-    ordered
-}
-
-fn apply_footer(mut config: StoredConfig, action_order: Vec<String>) -> StoredConfig {
-    config.version = CONFIG_VERSION;
-    config.footer = StoredFooter {
-        action_order: normalize_action_order(action_order),
     };
     config
 }
@@ -439,9 +362,6 @@ fn annotate(config: StoredConfig) -> AppConfig {
             font_size: clamp_font_size(config.terminal.font_size),
             theme: normalize_theme(config.terminal.theme),
         },
-        footer: FooterSettings {
-            action_order: normalize_action_order(config.footer.action_order),
-        },
         appearance: AppearanceSettings {
             theme: normalize_ui_theme(config.appearance.theme),
         },
@@ -531,14 +451,6 @@ pub fn update_terminal_settings(
             terminal.theme,
         )
     })
-}
-
-#[tauri::command]
-pub fn update_footer_settings(
-    app: AppHandle,
-    footer: FooterSettingsUpdate,
-) -> Result<AppConfig, String> {
-    mutate_config(&app, |config| apply_footer(config, footer.action_order))
 }
 
 #[tauri::command]
@@ -646,7 +558,6 @@ mod tests {
         assert_eq!(parsed.version, 1);
         assert!(parsed.recents.is_empty());
         assert_eq!(parsed.terminal, default_terminal());
-        assert_eq!(parsed.footer, default_footer());
         assert_eq!(parsed.appearance, default_appearance());
     }
 
@@ -1004,31 +915,8 @@ mod tests {
         assert_eq!(annotated.terminal.font_size, MIN_FONT_SIZE);
     }
 
-    fn custom_footer() -> StoredFooter {
-        StoredFooter {
-            action_order: vec![
-                "terminal".into(),
-                "home".into(),
-                "settings".into(),
-                "folder".into(),
-            ],
-        }
-    }
-
     #[test]
-    fn parse_config_missing_footer_uses_default() {
-        let parsed = parse_config(
-            br#"{
-              "version": 1,
-              "recents": [],
-              "terminal": { "fontSize": 13 }
-            }"#,
-        );
-        assert_eq!(parsed.footer, default_footer());
-    }
-
-    #[test]
-    fn parse_config_reads_footer_order() {
+    fn parse_config_ignores_leftover_footer_key() {
         let parsed = parse_config(
             br#"{
               "version": 1,
@@ -1036,138 +924,7 @@ mod tests {
               "footer": { "actionOrder": ["terminal", "home", "settings", "folder"] }
             }"#,
         );
-        assert_eq!(parsed.footer, custom_footer());
-    }
-
-    #[test]
-    fn annotate_normalizes_invalid_footer_order() {
-        let mut config = default_config();
-        config.footer.action_order = vec![
-            "ghost".into(),
-            "home".into(),
-            "home".into(),
-            "terminal".into(),
-        ];
-
-        let annotated = annotate(config);
-        assert_eq!(
-            annotated.footer.action_order,
-            vec![
-                "home".to_string(),
-                "terminal".to_string(),
-                "folder".to_string(),
-                "settings".to_string(),
-                "git".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn apply_footer_normalizes_and_keeps_known_order() {
-        let next = apply_footer(
-            default_config(),
-            vec![
-                "terminal".into(),
-                "ghost".into(),
-                "home".into(),
-                "home".into(),
-            ],
-        );
-        assert_eq!(
-            next.footer.action_order,
-            vec![
-                "terminal".to_string(),
-                "home".to_string(),
-                "folder".to_string(),
-                "settings".to_string(),
-                "git".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn old_four_icon_order_appends_git() {
-        let next = apply_footer(
-            default_config(),
-            vec![
-                "home".into(),
-                "folder".into(),
-                "settings".into(),
-                "terminal".into(),
-            ],
-        );
-        assert_eq!(
-            next.footer.action_order,
-            vec![
-                "home".to_string(),
-                "folder".to_string(),
-                "settings".to_string(),
-                "terminal".to_string(),
-                "git".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn apply_terminal_preserves_footer() {
-        let mut config = default_config();
-        config.footer = custom_footer();
-
-        let next = apply_terminal(config, Some("Hack".into()), 16, "tokyo-night".into());
-        assert_eq!(next.footer, custom_footer());
-        assert_eq!(next.terminal.font_family.as_deref(), Some("Hack"));
-    }
-
-    #[test]
-    fn record_recent_preserves_footer() {
-        let mut config = config_with(vec![recent("/a", "2026-01-01T00:00:00Z")]);
-        config.footer = custom_footer();
-
-        let next = record_recent(config, "/b".into(), "2026-01-02T00:00:00Z".into());
-        assert_eq!(next.footer, custom_footer());
-        assert_eq!(next.recents[0].path, "/b");
-    }
-
-    #[test]
-    fn apply_footer_preserves_terminal() {
-        let mut config = default_config();
-        config.terminal = nerd_terminal();
-
-        let next = apply_footer(
-            config,
-            vec![
-                "settings".into(),
-                "terminal".into(),
-                "home".into(),
-                "folder".into(),
-            ],
-        );
-        assert_eq!(next.terminal, nerd_terminal());
-        assert_eq!(next.footer.action_order[0], "settings");
-    }
-
-    #[test]
-    fn save_and_load_roundtrip_footer_settings() {
-        let home = Home::new();
-        let path = home.config_path();
-        let stored = apply_footer(
-            default_config(),
-            vec![
-                "terminal".into(),
-                "home".into(),
-                "settings".into(),
-                "folder".into(),
-            ],
-        );
-        save_to_path(&path, &stored).expect("save");
-
-        let disk = fs::read_to_string(&path).expect("read disk");
-        assert!(disk.contains("\"actionOrder\""));
-        assert!(disk.contains("terminal"));
-
-        let reread = load_from_path(&path);
-        assert_eq!(reread.footer, stored.footer);
-        assert!(!path.with_file_name(CONFIG_TMP_NAME).exists());
+        assert_eq!(parsed, default_config());
     }
 
     #[test]

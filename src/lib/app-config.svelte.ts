@@ -1,10 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
-  DEFAULT_FOOTER_ACTION_ORDER,
-  normalizeFooterOrder,
-  type FooterActionId,
-} from "$lib/footer-actions";
-import {
   clampFontSize,
   DEFAULT_TERMINAL_FONT_SIZE,
   type SystemFont,
@@ -28,10 +23,6 @@ export interface TerminalSettings {
   theme: string;
 }
 
-export interface FooterSettings {
-  actionOrder: FooterActionId[] | string[];
-}
-
 export interface AppearanceSettings {
   theme: string;
 }
@@ -40,7 +31,6 @@ interface AppConfigDto {
   version: number;
   recents: RecentFolder[];
   terminal: TerminalSettings;
-  footer?: FooterSettings;
   appearance?: AppearanceSettings;
 }
 
@@ -61,7 +51,6 @@ class AppConfig {
   terminalFontSize = $state(DEFAULT_TERMINAL_FONT_SIZE);
   terminalTheme = $state<TerminalThemeId>(DEFAULT_TERMINAL_THEME_ID);
   uiTheme = $state<UiThemeId>(DEFAULT_UI_THEME_ID);
-  footerOrder = $state<FooterActionId[]>([...DEFAULT_FOOTER_ACTION_ORDER]);
   fonts = $state.raw<SystemFont[]>([]);
   fontsLoaded = $state(false);
   loaded = $state(false);
@@ -75,7 +64,6 @@ class AppConfig {
     this.terminalFontSize = clampFontSize(config.terminal.fontSize);
     this.terminalTheme = resolveTerminalThemeId(config.terminal.theme);
     this.uiTheme = resolveUiThemeId(config.appearance?.theme);
-    this.footerOrder = normalizeFooterOrder(config.footer?.actionOrder);
     this.error = null;
   }
 
@@ -93,7 +81,6 @@ class AppConfig {
       this.terminalFontSize = DEFAULT_TERMINAL_FONT_SIZE;
       this.terminalTheme = DEFAULT_TERMINAL_THEME_ID;
       this.uiTheme = DEFAULT_UI_THEME_ID;
-      this.footerOrder = [...DEFAULT_FOOTER_ACTION_ORDER];
       this.error = messageFrom(error);
     } finally {
       if (gen === this.#gen) {
@@ -123,24 +110,6 @@ class AppConfig {
 
     try {
       const config = await invoke<AppConfigDto>("remove_recent_folder", { path });
-      if (gen !== this.#gen) return;
-      this.apply(config);
-    } catch (error) {
-      if (gen !== this.#gen) return;
-      this.error = messageFrom(error);
-    }
-  }
-
-  async saveFooterOrder(order: readonly string[]): Promise<void> {
-    const actionOrder = normalizeFooterOrder(order);
-    this.footerOrder = actionOrder;
-
-    const gen = ++this.#gen;
-
-    try {
-      const config = await invoke<AppConfigDto>("update_footer_settings", {
-        footer: { actionOrder },
-      });
       if (gen !== this.#gen) return;
       this.apply(config);
     } catch (error) {
