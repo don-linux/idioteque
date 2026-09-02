@@ -1,14 +1,16 @@
 <script lang="ts">
-  import { flip } from "svelte/animate";
   import Folder from "@lucide/svelte/icons/folder";
   import GitBranch from "@lucide/svelte/icons/git-branch";
   import House from "@lucide/svelte/icons/house";
   import Settings from "@lucide/svelte/icons/settings";
   import SquareTerminal from "@lucide/svelte/icons/square-terminal";
   import { goto } from "$app/navigation";
-  import { appConfig } from "$lib/app-config.svelte";
   import { ROUTES } from "$lib/app-routes";
-  import { moveFooterAction, runFooterAction, type FooterActionId } from "$lib/footer-actions";
+  import {
+    DEFAULT_FOOTER_ACTION_ORDER,
+    runFooterAction,
+    type FooterActionId,
+  } from "$lib/footer-actions";
   import { gitStatus } from "$lib/git";
   import {
     gitFooterStateFromError,
@@ -19,12 +21,6 @@
   import { dockFromAlt } from "$lib/terminal-dock";
   import { terminal } from "$lib/terminal.svelte";
   import { workspace } from "$lib/workspace.svelte";
-
-  const DRAG_THRESHOLD_PX = 4;
-
-  let dragging = $state<FooterActionId | null>(null);
-  let dragMoved = $state(false);
-  let startX = 0;
 
   const labels: Record<FooterActionId, string> = {
     home: "Inicio",
@@ -68,57 +64,7 @@
 
   let gitTitle = $derived(gitFooterTitle(gitState));
 
-  function startDrag(id: FooterActionId, event: PointerEvent): void {
-    if (event.button !== 0) return;
-
-    dragging = id;
-    dragMoved = false;
-    startX = event.clientX;
-    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-  }
-
-  function onPointerMove(event: PointerEvent): void {
-    if (dragging === null) return;
-
-    if (!dragMoved && Math.abs(event.clientX - startX) < DRAG_THRESHOLD_PX) {
-      return;
-    }
-
-    dragMoved = true;
-
-    const over = document
-      .elementFromPoint(event.clientX, event.clientY)
-      ?.closest("[data-footer-action]");
-    const overId = over?.getAttribute("data-footer-action");
-    if (!overId || overId === dragging) return;
-
-    const from = appConfig.footerOrder.indexOf(dragging);
-    const to = appConfig.footerOrder.indexOf(overId as FooterActionId);
-    if (from < 0 || to < 0 || from === to) return;
-
-    appConfig.footerOrder = moveFooterAction(appConfig.footerOrder, from, to);
-  }
-
-  function endDrag(): void {
-    if (dragging === null) return;
-
-    const moved = dragMoved;
-    dragging = null;
-
-    if (moved) {
-      void appConfig.saveFooterOrder(appConfig.footerOrder);
-      setTimeout(() => {
-        dragMoved = false;
-      }, 0);
-    }
-  }
-
   function onActionClick(id: FooterActionId, event: MouseEvent): void {
-    if (dragMoved) {
-      event.preventDefault();
-      return;
-    }
-
     runFooterAction(id, {
       home: () => {
         void workspace.closeWorkspace().then((left) => {
@@ -136,12 +82,8 @@
 </script>
 
 <div class="actions">
-  {#each appConfig.footerOrder as id (id)}
-    <span
-      class={["item", { dragging: dragging === id }]}
-      animate:flip={{ duration: 160 }}
-      data-footer-action={id}
-    >
+  {#each DEFAULT_FOOTER_ACTION_ORDER as id (id)}
+    <span class="item">
       {#if id === "settings"}
         <a
           href={ROUTES.settings}
@@ -149,10 +91,6 @@
           aria-label={labels.settings}
           title={titles.settings}
           draggable="false"
-          onpointerdown={(event) => startDrag(id, event)}
-          onpointermove={onPointerMove}
-          onpointerup={endDrag}
-          onpointercancel={endDrag}
           onclick={(event) => onActionClick(id, event)}
         >
           <Settings size={16} strokeWidth={1.75} aria-hidden="true" />
@@ -162,7 +100,10 @@
           type="button"
           class={[
             "action",
-            { active: id === "terminal" && (terminal.open || terminal.surface === "terminals") },
+            {
+              active: id === "terminal" && (terminal.open || terminal.surface === "terminals"),
+              idle: id === "git",
+            },
           ]}
           aria-pressed={id === "terminal"
             ? terminal.open || terminal.surface === "terminals"
@@ -172,10 +113,6 @@
           onpointerenter={() => {
             if (id === "git") void refreshGit(workspace.root);
           }}
-          onpointerdown={(event) => startDrag(id, event)}
-          onpointermove={onPointerMove}
-          onpointerup={endDrag}
-          onpointercancel={endDrag}
           onclick={(event) => onActionClick(id, event)}
         >
           {#if id === "home"}
@@ -207,11 +144,6 @@
     display: inline-flex;
   }
 
-  .item.dragging {
-    pointer-events: none;
-    opacity: 0.55;
-  }
-
   .action {
     display: inline-flex;
     align-items: center;
@@ -224,8 +156,11 @@
     background: transparent;
     color: var(--text-muted);
     text-decoration: none;
-    cursor: grab;
-    touch-action: none;
+    cursor: pointer;
+  }
+
+  .action.idle {
+    cursor: default;
   }
 
   .action:hover {
@@ -236,9 +171,5 @@
   .action.active {
     background: var(--accent-soft);
     color: var(--accent);
-  }
-
-  .actions:has(.dragging) .action {
-    cursor: grabbing;
   }
 </style>
