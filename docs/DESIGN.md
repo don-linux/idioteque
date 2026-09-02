@@ -58,6 +58,8 @@ Arriba, solo la ruta de la carpeta abierta (si no cabe, se recorta). Debajo, el 
 
 Si la carpeta no tiene markdown, un texto lo dice. No se ocultan las carpetas de agentes que empiezan con punto.
 
+Si la carpeta abierta tiene subcarpetas, el árbol solo muestra las que el usuario marcó en “Carpetas visibles”. Los `.md` de la raíz siempre aparecen. Sin esa selección, se pinta el árbol completo.
+
 ### Editor
 
 Si no hay archivo elegido, el centro dice “Selecciona un archivo.”
@@ -80,7 +82,7 @@ El tema por defecto es Tokyo Night Night (el de Ghostty/WezTerm, extras de folke
 
 Solo en la vista IDE. No aparece en la selección de carpetas ni en Configuración.
 
-A la izquierda, la palabra “idioteque”, así escrita, en minúsculas. Se queda pegada abajo.
+A la izquierda, la palabra “idioteque”, así escrita, en minúsculas. Si la carpeta abierta tiene subcarpetas, al lado va el icono de carpeta con + (“Carpetas visibles”) para elegir cuáles se ven en el árbol. Se queda pegada abajo.
 
 A la derecha, una barra de iconos. Sin texto. Cada uno tiene tooltip.
 
