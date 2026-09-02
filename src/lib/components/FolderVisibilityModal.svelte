@@ -33,8 +33,7 @@
     >
       <h2 id={titleId}>Carpetas visibles</h2>
       <p id={descId}>
-        Elige qué carpetas de {folderVisibility.rootName} se muestran en el árbol. Los archivos
-        markdown en la raíz siempre se ven.
+        Elige qué carpetas de {folderVisibility.rootName} se muestran en el árbol. Los archivos markdown en la raíz siempre se ven.
       </p>
       <div class="toolbar">
         <button type="button" onclick={() => folderVisibility.selectAll()}>Todas</button>
