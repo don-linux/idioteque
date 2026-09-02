@@ -84,7 +84,7 @@ A la izquierda, la palabra “idioteque”, así escrita, en minúsculas. Se que
 
 A la derecha, una barra de iconos. Sin texto. Cada uno tiene tooltip.
 
-Orden por defecto:
+Orden fijo, definido en código (no en la UI ni en la config):
 
 1. Casa — Inicio. Vuelve a la grilla de carpetas. Eso cierra la terminal.
 2. Carpeta — Cambiar. Abre el selector nativo para otra carpeta.
@@ -93,9 +93,9 @@ Orden por defecto:
 5. Git — Icono de vida. Al pasar el mouse dice si no hay repo o el nombre
    de la carpeta y la rama. El clic no hace nada. No es un panel.
 
-El usuario puede arrastrar los iconos para cambiar el orden. Ese orden se guarda y vuelve a salir igual al abrir la app. Si más adelante se suman iconos nuevos, aparecen al final sin desarmar el orden que ya eligió.
+El usuario no reordena. No hay arrastre ni orden guardado. Si se suma un icono, se mete en esa lista de código.
 
-Un arrastre no dispara la acción del icono. Hay que soltar y hacer clic.
+Al pasar el mouse, Casa, Carpeta, Engrane y Terminal muestran el cursor de clic. Git no es accionable, así que el cursor se queda normal. El clic corre siempre: no hay umbral ni “¿era un arrastre?”.
 
 ## Configuración
 
