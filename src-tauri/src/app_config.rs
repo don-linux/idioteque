@@ -23,6 +23,16 @@ const KNOWN_THEMES: [&str; 8] = [
     "solarized-dark",
     "campbell",
 ];
+const DEFAULT_TREE_WIDTH: u32 = 260;
+const MIN_TREE_WIDTH: u32 = 140;
+const DEFAULT_TERMINAL_BOTTOM: u32 = 280;
+const MIN_TERMINAL_BOTTOM: u32 = 120;
+const DEFAULT_TERMINAL_RIGHT: u32 = 380;
+const MIN_TERMINAL_RIGHT: u32 = 200;
+/// Wider than any display we expect. The frontend clamps again against the viewport.
+const MAX_PANEL_SIZE: u32 = 4000;
+const DEFAULT_TERMINAL_DOCK: &str = "bottom";
+const KNOWN_TERMINAL_DOCKS: [&str; 2] = ["bottom", "right"];
 const DEFAULT_UI_THEME: &str = "idioteque-dark";
 const KNOWN_UI_THEMES: [&str; 11] = [
     "idioteque-dark",
@@ -63,6 +73,23 @@ struct StoredAppearance {
     theme: String,
 }
 
+/// Panel geometry of the IDE view. Whether the terminal is open is not stored:
+/// it stays closed when a folder opens.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredLayout {
+    #[serde(default = "default_tree_width")]
+    tree_width: u32,
+    #[serde(default = "default_tree_visible")]
+    tree_visible: bool,
+    #[serde(default = "default_terminal_bottom")]
+    terminal_bottom: u32,
+    #[serde(default = "default_terminal_right")]
+    terminal_right: u32,
+    #[serde(default = "default_terminal_dock")]
+    terminal_dock: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct StoredConfig {
     version: u32,
@@ -72,6 +99,8 @@ struct StoredConfig {
     terminal: StoredTerminal,
     #[serde(default)]
     appearance: StoredAppearance,
+    #[serde(default)]
+    layout: StoredLayout,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -112,11 +141,32 @@ pub struct AppearanceSettingsUpdate {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LayoutSettings {
+    pub tree_width: u32,
+    pub tree_visible: bool,
+    pub terminal_bottom: u32,
+    pub terminal_right: u32,
+    pub terminal_dock: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LayoutSettingsUpdate {
+    pub tree_width: u32,
+    pub tree_visible: bool,
+    pub terminal_bottom: u32,
+    pub terminal_right: u32,
+    pub terminal_dock: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AppConfig {
     pub version: u32,
     pub recents: Vec<RecentFolder>,
     pub terminal: TerminalSettings,
     pub appearance: AppearanceSettings,
+    pub layout: LayoutSettings,
 }
 
 fn default_font_size() -> u8 {
@@ -157,12 +207,49 @@ impl Default for StoredAppearance {
     }
 }
 
+fn default_tree_width() -> u32 {
+    DEFAULT_TREE_WIDTH
+}
+
+fn default_tree_visible() -> bool {
+    true
+}
+
+fn default_terminal_bottom() -> u32 {
+    DEFAULT_TERMINAL_BOTTOM
+}
+
+fn default_terminal_right() -> u32 {
+    DEFAULT_TERMINAL_RIGHT
+}
+
+fn default_terminal_dock() -> String {
+    DEFAULT_TERMINAL_DOCK.to_string()
+}
+
+fn default_layout() -> StoredLayout {
+    StoredLayout {
+        tree_width: default_tree_width(),
+        tree_visible: default_tree_visible(),
+        terminal_bottom: default_terminal_bottom(),
+        terminal_right: default_terminal_right(),
+        terminal_dock: default_terminal_dock(),
+    }
+}
+
+impl Default for StoredLayout {
+    fn default() -> Self {
+        default_layout()
+    }
+}
+
 fn default_config() -> StoredConfig {
     StoredConfig {
         version: CONFIG_VERSION,
         recents: Vec::new(),
         terminal: default_terminal(),
         appearance: default_appearance(),
+        layout: default_layout(),
     }
 }
 
@@ -205,6 +292,35 @@ fn normalize_ui_theme(theme: String) -> String {
     } else {
         default_ui_theme()
     }
+}
+
+fn clamp_panel_size(size: u32, minimum: u32) -> u32 {
+    size.clamp(minimum, MAX_PANEL_SIZE)
+}
+
+fn normalize_terminal_dock(dock: String) -> String {
+    let trimmed = dock.trim();
+    if KNOWN_TERMINAL_DOCKS.contains(&trimmed) {
+        trimmed.to_string()
+    } else {
+        default_terminal_dock()
+    }
+}
+
+fn normalize_layout(layout: StoredLayout) -> StoredLayout {
+    StoredLayout {
+        tree_width: clamp_panel_size(layout.tree_width, MIN_TREE_WIDTH),
+        tree_visible: layout.tree_visible,
+        terminal_bottom: clamp_panel_size(layout.terminal_bottom, MIN_TERMINAL_BOTTOM),
+        terminal_right: clamp_panel_size(layout.terminal_right, MIN_TERMINAL_RIGHT),
+        terminal_dock: normalize_terminal_dock(layout.terminal_dock),
+    }
+}
+
+fn apply_layout(mut config: StoredConfig, layout: StoredLayout) -> StoredConfig {
+    config.version = CONFIG_VERSION;
+    config.layout = normalize_layout(layout);
+    config
 }
 
 fn apply_appearance(mut config: StoredConfig, theme: String) -> StoredConfig {
@@ -365,6 +481,16 @@ fn annotate(config: StoredConfig) -> AppConfig {
         appearance: AppearanceSettings {
             theme: normalize_ui_theme(config.appearance.theme),
         },
+        layout: {
+            let layout = normalize_layout(config.layout);
+            LayoutSettings {
+                tree_width: layout.tree_width,
+                tree_visible: layout.tree_visible,
+                terminal_bottom: layout.terminal_bottom,
+                terminal_right: layout.terminal_right,
+                terminal_dock: layout.terminal_dock,
+            }
+        },
     }
 }
 
@@ -459,6 +585,25 @@ pub fn update_appearance_settings(
     appearance: AppearanceSettingsUpdate,
 ) -> Result<AppConfig, String> {
     mutate_config(&app, |config| apply_appearance(config, appearance.theme))
+}
+
+#[tauri::command]
+pub fn update_layout_settings(
+    app: AppHandle,
+    layout: LayoutSettingsUpdate,
+) -> Result<AppConfig, String> {
+    mutate_config(&app, |config| {
+        apply_layout(
+            config,
+            StoredLayout {
+                tree_width: layout.tree_width,
+                tree_visible: layout.tree_visible,
+                terminal_bottom: layout.terminal_bottom,
+                terminal_right: layout.terminal_right,
+                terminal_dock: layout.terminal_dock,
+            },
+        )
+    })
 }
 
 #[cfg(test)]
@@ -1047,6 +1192,149 @@ mod tests {
 
         let reread = load_from_path(&path);
         assert_eq!(reread.appearance, stored.appearance);
+        assert!(!path.with_file_name(CONFIG_TMP_NAME).exists());
+    }
+
+    fn custom_layout() -> StoredLayout {
+        StoredLayout {
+            tree_width: 320,
+            tree_visible: false,
+            terminal_bottom: 420,
+            terminal_right: 500,
+            terminal_dock: "right".into(),
+        }
+    }
+
+    #[test]
+    fn parse_config_missing_layout_uses_defaults() {
+        let parsed = parse_config(br#"{"version":1,"recents":[]}"#);
+        assert_eq!(parsed.layout, default_layout());
+        assert_eq!(parsed.layout.tree_width, 260);
+        assert!(parsed.layout.tree_visible);
+        assert_eq!(parsed.layout.terminal_dock, "bottom");
+    }
+
+    #[test]
+    fn parse_config_reads_partial_layout() {
+        let parsed = parse_config(
+            br#"{
+              "version": 1,
+              "recents": [],
+              "layout": { "treeWidth": 300, "treeVisible": false }
+            }"#,
+        );
+        assert_eq!(parsed.layout.tree_width, 300);
+        assert!(!parsed.layout.tree_visible);
+        assert_eq!(parsed.layout.terminal_bottom, 280);
+        assert_eq!(parsed.layout.terminal_right, 380);
+        assert_eq!(parsed.layout.terminal_dock, "bottom");
+    }
+
+    #[test]
+    fn annotate_clamps_layout_and_falls_back_to_bottom_dock() {
+        let mut config = default_config();
+        config.layout = StoredLayout {
+            tree_width: 12,
+            tree_visible: true,
+            terminal_bottom: 4,
+            terminal_right: 9,
+            terminal_dock: "  floating  ".into(),
+        };
+
+        let annotated = annotate(config);
+        assert_eq!(annotated.layout.tree_width, MIN_TREE_WIDTH);
+        assert_eq!(annotated.layout.terminal_bottom, MIN_TERMINAL_BOTTOM);
+        assert_eq!(annotated.layout.terminal_right, MIN_TERMINAL_RIGHT);
+        assert_eq!(annotated.layout.terminal_dock, "bottom");
+    }
+
+    #[test]
+    fn annotate_caps_absurd_panel_sizes() {
+        let mut config = default_config();
+        config.layout = StoredLayout {
+            tree_width: 999_999,
+            tree_visible: true,
+            terminal_bottom: 999_999,
+            terminal_right: 999_999,
+            terminal_dock: "right".into(),
+        };
+
+        let annotated = annotate(config);
+        assert_eq!(annotated.layout.tree_width, MAX_PANEL_SIZE);
+        assert_eq!(annotated.layout.terminal_bottom, MAX_PANEL_SIZE);
+        assert_eq!(annotated.layout.terminal_right, MAX_PANEL_SIZE);
+        assert_eq!(annotated.layout.terminal_dock, "right");
+    }
+
+    #[test]
+    fn annotate_keeps_a_hidden_tree_hidden() {
+        let mut config = default_config();
+        config.layout = custom_layout();
+
+        let annotated = annotate(config);
+        assert!(!annotated.layout.tree_visible);
+        assert_eq!(annotated.layout.tree_width, 320);
+    }
+
+    #[test]
+    fn apply_layout_normalizes_and_preserves_the_rest() {
+        let mut config = config_with(vec![recent("/a", "2026-01-01T00:00:00Z")]);
+        config.terminal = nerd_terminal();
+        config.appearance = custom_appearance();
+
+        let next = apply_layout(
+            config,
+            StoredLayout {
+                tree_width: 1,
+                tree_visible: false,
+                terminal_bottom: 300,
+                terminal_right: 1,
+                terminal_dock: "  right  ".into(),
+            },
+        );
+
+        assert_eq!(next.layout.tree_width, MIN_TREE_WIDTH);
+        assert!(!next.layout.tree_visible);
+        assert_eq!(next.layout.terminal_bottom, 300);
+        assert_eq!(next.layout.terminal_right, MIN_TERMINAL_RIGHT);
+        assert_eq!(next.layout.terminal_dock, "right");
+        assert_eq!(next.terminal, nerd_terminal());
+        assert_eq!(next.appearance, custom_appearance());
+        assert_eq!(next.recents[0].path, "/a");
+    }
+
+    #[test]
+    fn other_mutations_preserve_layout() {
+        let mut config = config_with(vec![recent("/a", "2026-01-01T00:00:00Z")]);
+        config.layout = custom_layout();
+
+        let recorded = record_recent(config.clone(), "/b".into(), "2026-01-02T00:00:00Z".into());
+        assert_eq!(recorded.layout, custom_layout());
+
+        let removed = remove_recent(config.clone(), "/a");
+        assert_eq!(removed.layout, custom_layout());
+
+        let terminal = apply_terminal(config.clone(), Some("Hack".into()), 16, "nord".into());
+        assert_eq!(terminal.layout, custom_layout());
+
+        let appearance = apply_appearance(config, "idioteque-light".into());
+        assert_eq!(appearance.layout, custom_layout());
+    }
+
+    #[test]
+    fn save_and_load_roundtrip_layout_settings() {
+        let home = Home::new();
+        let path = home.config_path();
+        let stored = apply_layout(default_config(), custom_layout());
+        save_to_path(&path, &stored).expect("save");
+
+        let disk = fs::read_to_string(&path).expect("read disk");
+        assert!(disk.contains("\"layout\""));
+        assert!(disk.contains("\"treeWidth\""));
+        assert!(disk.contains("\"terminalDock\""));
+
+        let reread = load_from_path(&path);
+        assert_eq!(reread.layout, custom_layout());
         assert!(!path.with_file_name(CONFIG_TMP_NAME).exists());
     }
 }
