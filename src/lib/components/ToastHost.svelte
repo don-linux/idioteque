@@ -40,6 +40,7 @@
   }
 
   .toast {
+    max-width: min(28rem, calc(100vw - 2.5rem));
     padding: 0.7rem 0.95rem;
     border: 1px solid var(--border);
     border-left: 3px solid var(--accent);
@@ -47,6 +48,7 @@
     background: var(--surface);
     color: var(--text);
     font-size: 0.9rem;
+    line-height: 1.4;
     box-shadow: 0 10px 28px var(--shadow);
   }
 </style>
