@@ -2,11 +2,13 @@
   import type { Snippet } from "svelte";
   import FooterActions from "$lib/components/FooterActions.svelte";
   import FooterTransient from "$lib/components/FooterTransient.svelte";
+  import { handleTreeToggleShortcut, isTerminalTarget } from "$lib/panel-shortcuts";
   import { handleSaveShortcut } from "$lib/save-shortcut";
   import { handleTerminalShortcut, handleTerminalSurfaceShortcut } from "$lib/terminal-dock";
   import { terminal } from "$lib/terminal.svelte";
   import { requestTerminalSurface } from "$lib/terminal-surface";
   import { unsavedExit } from "$lib/unsaved-exit.svelte";
+  import { panels } from "$lib/workspace-panels.svelte";
   import { workspace } from "$lib/workspace.svelte";
 
   let { children }: { children: Snippet } = $props();
@@ -30,11 +32,16 @@
     handleTerminalShortcut(event, {
       hasWorkspace: workspace.root !== null,
       surface: terminal.surface,
-      toggle: (dock) => terminal.toggle(dock),
+      toggle: (dock) => panels.toggleTerminal(dock),
     });
     handleTerminalSurfaceShortcut(event, {
       hasWorkspace: workspace.root !== null,
       toggleSurface: () => void toggleSurface(),
+    });
+    handleTreeToggleShortcut(event, {
+      hasWorkspace: workspace.root !== null,
+      insideTerminal: isTerminalTarget(event.target),
+      toggleTree: () => panels.toggleTree(),
     });
   }
 </script>

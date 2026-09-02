@@ -1,110 +1,67 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
-  import EditorTabs from "$lib/components/EditorTabs.svelte";
-  import FileTree from "$lib/components/FileTree.svelte";
-  import MarkdownEditor from "$lib/components/MarkdownEditor.svelte";
+  import EditorPane from "$lib/components/EditorPane.svelte";
+  import FileTreePanel from "$lib/components/FileTreePanel.svelte";
+  import PanelSplitter from "$lib/components/PanelSplitter.svelte";
   import TerminalHost from "$lib/components/TerminalHost.svelte";
   import { appConfig } from "$lib/app-config.svelte";
   import { terminal } from "$lib/terminal.svelte";
+  import { panels } from "$lib/workspace-panels.svelte";
   import { workspace } from "$lib/workspace.svelte";
 
-  let status = $derived.by(() => {
-    if (workspace.saveState === "error") return "error al guardar";
-    if (workspace.saveState === "saving") return "guardando";
-    if (workspace.dirty) return "sin guardar";
-    if (workspace.saveState === "saved") return "guardado";
-    return "";
-  });
-
-  let stopResize: (() => void) | null = null;
   let terminals = $derived(terminal.surface === "terminals");
   let peeking = $derived(terminal.peeking);
+  let showTree = $derived(panels.treeVisible);
 
-  function startResize(event: PointerEvent): void {
-    event.preventDefault();
-    stopResize?.();
-
-    const vertical = terminal.dock === "bottom";
-    const start = vertical ? event.clientY : event.clientX;
-    const startSize = terminal.size;
-    const viewport = vertical ? window.innerHeight : window.innerWidth;
-
-    function move(next: PointerEvent): void {
-      const current = vertical ? next.clientY : next.clientX;
-      terminal.setSize(startSize + (start - current), viewport);
-    }
-
-    function up(): void {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      stopResize = null;
-    }
-
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-    stopResize = up;
-  }
-
-  onDestroy(() => {
-    stopResize?.();
+  $effect(() => {
+    if (appConfig.loaded) panels.hydrate(appConfig.layout);
   });
 </script>
 
 {#if workspace.root !== null}
   <div
     class="workspace"
+    class:with-tree={showTree && !terminals}
     class:term-bottom={peeking && terminal.dock === "bottom"}
     class:term-right={peeking && terminal.dock === "right"}
     class:surface-terminals={terminals}
+    style:--tree-width="{panels.treeWidth}px"
     style:--term-size="{terminal.size}px"
     style:--park-width="{terminal.parkWidth}px"
     style:--park-height="{terminal.parkHeight}px"
   >
-    <aside class:parked={terminals}>
-      <header>
-        <span class="root" title={workspace.root}>{workspace.root}</span>
-      </header>
-
-      {#if workspace.hasMarkdown}
-        <nav>
-          <FileTree
-            nodes={workspace.tree}
-            selected={workspace.currentPath}
-            onSelect={(path) => workspace.openFile(path)}
-            onDelete={(path) => workspace.deleteFile(path)}
+    {#if showTree}
+      <FileTreePanel parked={terminals} />
+      {#if !terminals}
+        <div class="sash">
+          <PanelSplitter
+            axis="x"
+            grow="forward"
+            size={panels.treeWidth}
+            label="Redimensionar el árbol de archivos"
+            onSize={(pixels) => panels.setTreeWidth(pixels, window.innerWidth)}
+            onCommit={() => panels.commitResize()}
           />
-        </nav>
-      {:else}
-        <p class="hint">Esta carpeta no tiene archivos markdown.</p>
+        </div>
       {/if}
-    </aside>
+    {/if}
 
-    <section class="editor-col" class:parked={terminals}>
-      {#if workspace.currentPath === null}
-        <p class="hint centered">Selecciona un archivo.</p>
-      {:else}
-        <header>
-          <EditorTabs />
-          <span class="status" class:error={workspace.saveState === "error"}>{status}</span>
-        </header>
-        <MarkdownEditor
-          path={workspace.currentPath}
-          content={workspace.content}
-          contentReady={workspace.contentReady}
-          onChange={(contents) => workspace.edit(contents)}
-        />
-      {/if}
-
-      {#if workspace.error || appConfig.error || terminal.error}
-        <p class="error banner">{workspace.error ?? appConfig.error ?? terminal.error}</p>
-      {/if}
-    </section>
+    <EditorPane parked={terminals} />
 
     {#if terminal.started}
-      <div class={["term-slot", { parked: !peeking && !terminals, tiles: terminals }]}>
+      <div class="term-slot" class:parked={!peeking && !terminals}>
         {#if peeking}
-          <button type="button" class="split" aria-label="Redimensionar terminal" onpointerdown={startResize}
-          ></button>
+          <PanelSplitter
+            axis={terminal.dock === "bottom" ? "y" : "x"}
+            grow="backward"
+            size={terminal.size}
+            label="Redimensionar la terminal"
+            onSize={(pixels) =>
+              terminal.setSize(
+                pixels,
+                terminal.dock === "bottom" ? window.innerHeight : window.innerWidth,
+              )}
+            onCommit={() => panels.commitResize()}
+          />
         {/if}
         <TerminalHost cwd={workspace.root} />
       </div>
@@ -113,144 +70,69 @@
 {/if}
 
 <style>
-	.workspace {
-		display: grid;
-		flex: 1;
-		grid-template-columns: 16rem 1fr;
-		grid-template-rows: 1fr;
-		width: 100%;
-		height: 100%;
-		min-height: 0;
-	}
+  /*
+   * Four regions, two of them optional. The tracks are named so a hidden tree or
+   * a parked terminal simply drops out of the template, and every visible region
+   * keeps a definite size: xterm measures its own box and needs one.
+   */
+  .workspace {
+    display: grid;
+    flex: 1;
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr;
+    grid-template-areas: "editor";
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .workspace.with-tree {
+    grid-template-columns: var(--tree-width) 4px 1fr;
+    grid-template-areas: "tree sash editor";
+  }
 
   .workspace.term-bottom {
-    grid-template-columns: 16rem 1fr;
     grid-template-rows: 1fr var(--term-size);
+    grid-template-areas: "editor" "term";
+  }
+
+  .workspace.with-tree.term-bottom {
+    grid-template-columns: var(--tree-width) 4px 1fr;
+    grid-template-rows: 1fr var(--term-size);
+    grid-template-areas: "tree sash editor" "tree sash term";
   }
 
   .workspace.term-right {
-    grid-template-columns: 16rem 1fr var(--term-size);
-    grid-template-rows: 1fr;
+    grid-template-columns: 1fr var(--term-size);
+    grid-template-areas: "editor term";
   }
 
-	.workspace.surface-terminals {
-		position: absolute;
-		top: 0;
-		right: 0;
-		bottom: 0;
-		left: 0;
-		display: block;
-		width: auto;
-		height: auto;
-	}
-
-  .workspace.surface-terminals aside,
-  .workspace.surface-terminals .editor-col {
-    display: none;
+  .workspace.with-tree.term-right {
+    grid-template-columns: var(--tree-width) 4px 1fr var(--term-size);
+    grid-template-areas: "tree sash editor term";
   }
 
-  aside {
+  .workspace.surface-terminals {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: block;
+    width: auto;
+    height: auto;
+  }
+
+  .sash {
     display: flex;
-    flex-direction: column;
+    grid-area: sash;
     min-width: 0;
-    min-height: 0;
-    border-right: 1px solid var(--border);
-    background: var(--surface);
-  }
-
-  .workspace.term-bottom aside {
-    grid-row: 1 / -1;
-  }
-
-  aside header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.6rem 0.75rem;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .root {
-    flex: 1;
-    overflow: hidden;
-    color: var(--text-muted);
-    font-size: 0.75rem;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-    direction: rtl;
-    text-align: left;
-  }
-
-  nav {
-    flex: 1;
-    overflow: auto;
-    padding: 0.5rem;
-  }
-
-  .editor-col {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    min-height: 0;
-  }
-
-  .workspace.term-bottom .editor-col {
-    grid-column: 2;
-    grid-row: 1;
-  }
-
-  .workspace.term-right .editor-col {
-    grid-column: 2;
-  }
-
-  .editor-col header {
-    display: flex;
-    align-items: stretch;
-    gap: 1rem;
-    min-height: 2.35rem;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .status {
-    display: flex;
-    flex-shrink: 0;
-    align-items: center;
-    padding-right: 1.5rem;
-    color: var(--text-faint);
-    font-size: 0.72rem;
-  }
-
-  .status.error {
-    color: var(--danger);
-  }
-
-  .hint {
-    margin: 0;
-    padding: 1rem;
-    color: var(--text-faint);
-    font-size: 0.82rem;
-  }
-
-  .centered {
-    display: grid;
-    flex: 1;
-    place-content: center;
-  }
-
-  .error {
-    color: var(--danger);
-    font-size: 0.8rem;
-  }
-
-  .banner {
-    margin: 0;
-    padding: 0.6rem 1.5rem;
-    border-top: 1px solid var(--border);
   }
 
   .term-slot {
     display: flex;
     box-sizing: border-box;
+    grid-area: term;
     align-self: stretch;
     width: 100%;
     min-width: 0;
@@ -262,82 +144,36 @@
 
   .workspace.term-bottom .term-slot {
     flex-direction: column;
-    grid-column: 2;
-    grid-row: 2;
     border-top: 1px solid var(--border);
   }
 
   .workspace.term-right .term-slot {
     flex-direction: row;
-    grid-column: 3;
     border-left: 1px solid var(--border);
   }
 
-	.workspace.surface-terminals .term-slot {
-		position: absolute;
-		top: 0;
-		right: 0;
-		bottom: 0;
-		left: 0;
-		display: block;
-		width: auto;
-		height: auto;
-		min-height: 0;
-		border: 0;
-	}
+  .workspace.surface-terminals .term-slot {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: block;
+    width: auto;
+    height: auto;
+    min-height: 0;
+    border: 0;
+  }
 
-  .term-slot.parked,
-  aside.parked,
-  .editor-col.parked {
+  /* Alive but out of sight: xterm keeps a measurable box so cols/rows stay valid. */
+  .term-slot.parked {
     position: fixed;
     top: 0;
     left: -12000px;
+    width: var(--park-width);
+    height: var(--park-height);
     overflow: hidden;
     pointer-events: none;
     z-index: -1;
-  }
-
-  .term-slot.parked {
-    grid-column: 1;
-    grid-row: 1;
-    width: var(--park-width);
-    height: var(--park-height);
-  }
-
-  aside.parked {
-    width: 16rem;
-    height: 80vh;
-  }
-
-  .editor-col.parked {
-    width: min(80vw, 1200px);
-    height: 80vh;
-  }
-
-  .split {
-    box-sizing: border-box;
-    flex-shrink: 0;
-    padding: 0;
-    border: 0;
-    border-radius: 0;
-    background: var(--border);
-  }
-
-  .workspace.term-bottom .split {
-    width: 100%;
-    height: 4px;
-    cursor: row-resize;
-  }
-
-  .workspace.term-right .split {
-    width: 4px;
-    height: 100%;
-    cursor: col-resize;
-  }
-
-  .split:hover {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: inherit;
   }
 </style>

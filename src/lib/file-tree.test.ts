@@ -4,6 +4,7 @@ import {
   baseNameOf,
   draftParentFor,
   flattenTree,
+  folderNameOf,
   hasMarkdownExtension,
   joinTreePath,
   normalizeNewName,
@@ -275,6 +276,29 @@ describe("normalizeNewName", () => {
       ok: true,
       name: ".agents/persona.md",
     });
+  });
+});
+
+describe("folderNameOf", () => {
+  it("keeps only the last segment", () => {
+    expect(folderNameOf("/home/fernando/carpeta/subcarpeta")).toBe("subcarpeta");
+    expect(folderNameOf("/home/fernando")).toBe("fernando");
+    expect(folderNameOf("proyecto")).toBe("proyecto");
+  });
+
+  it("ignores trailing separators", () => {
+    expect(folderNameOf("/home/fernando/carpeta/")).toBe("carpeta");
+    expect(folderNameOf("/home/fernando/carpeta///")).toBe("carpeta");
+  });
+
+  it("handles Windows paths", () => {
+    expect(folderNameOf("C:\\Users\\fernando\\notas")).toBe("notas");
+    expect(folderNameOf("C:\\Users\\fernando\\notas\\")).toBe("notas");
+  });
+
+  it("falls back to the path itself at a filesystem root", () => {
+    expect(folderNameOf("/")).toBe("/");
+    expect(folderNameOf("C:\\")).toBe("C:");
   });
 });
 

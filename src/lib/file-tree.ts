@@ -119,6 +119,17 @@ export function baseNameOf(path: string): string {
   return index < 0 ? path : path.slice(index + 1);
 }
 
+/**
+ * Name of the opened folder, for the sidebar header: the full absolute path is
+ * too long to read. Handles both separators and trailing slashes.
+ */
+export function folderNameOf(root: string): string {
+  const trimmed = root.replace(/[\\/]+$/, "");
+  const index = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  const name = index < 0 ? trimmed : trimmed.slice(index + 1);
+  return name || trimmed || root;
+}
+
 export function joinTreePath(parent: string, name: string): string {
   return parent ? `${parent}/${name}` : name;
 }
