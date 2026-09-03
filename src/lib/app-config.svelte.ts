@@ -10,6 +10,11 @@ import {
   type TerminalThemeId,
 } from "$lib/terminal-theme";
 import { visibilityFor, type WorkspaceView } from "$lib/folder-visibility";
+import {
+  DEFAULT_TERMINAL_BOTTOM,
+  DEFAULT_TERMINAL_RIGHT,
+  DEFAULT_TREE_WIDTH,
+} from "$lib/panel-resize";
 import { DEFAULT_UI_THEME_ID, resolveUiThemeId, type UiThemeId } from "$lib/ui-theme";
 
 export interface RecentFolder {
@@ -28,6 +33,15 @@ export interface AppearanceSettings {
   theme: string;
 }
 
+/** Panel geometry of the IDE view. The terminal's open state is never stored. */
+export interface LayoutSettings {
+  treeWidth: number;
+  treeVisible: boolean;
+  terminalBottom: number;
+  terminalRight: number;
+  terminalDock: string;
+}
+
 export type { WorkspaceView };
 
 interface AppConfigDto {
@@ -35,6 +49,7 @@ interface AppConfigDto {
   recents: RecentFolder[];
   terminal: TerminalSettings;
   appearance?: AppearanceSettings;
+  layout?: LayoutSettings;
   workspaceViews?: WorkspaceView[];
 }
 
@@ -49,12 +64,21 @@ function normalizeFamily(family: string | null | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
+export const DEFAULT_LAYOUT: LayoutSettings = {
+  treeWidth: DEFAULT_TREE_WIDTH,
+  treeVisible: true,
+  terminalBottom: DEFAULT_TERMINAL_BOTTOM,
+  terminalRight: DEFAULT_TERMINAL_RIGHT,
+  terminalDock: "bottom",
+};
+
 class AppConfig {
   recents = $state<RecentFolder[]>([]);
   terminalFontFamily = $state<string | null>(null);
   terminalFontSize = $state(DEFAULT_TERMINAL_FONT_SIZE);
   terminalTheme = $state<TerminalThemeId>(DEFAULT_TERMINAL_THEME_ID);
   uiTheme = $state<UiThemeId>(DEFAULT_UI_THEME_ID);
+  layout = $state<LayoutSettings>({ ...DEFAULT_LAYOUT });
   workspaceViews = $state<WorkspaceView[]>([]);
   fonts = $state.raw<SystemFont[]>([]);
   fontsLoaded = $state(false);
@@ -69,6 +93,7 @@ class AppConfig {
     this.terminalFontSize = clampFontSize(config.terminal.fontSize);
     this.terminalTheme = resolveTerminalThemeId(config.terminal.theme);
     this.uiTheme = resolveUiThemeId(config.appearance?.theme);
+    this.layout = { ...DEFAULT_LAYOUT, ...(config.layout ?? {}) };
     this.workspaceViews = config.workspaceViews ?? [];
     this.error = null;
   }
@@ -91,6 +116,7 @@ class AppConfig {
       this.terminalFontSize = DEFAULT_TERMINAL_FONT_SIZE;
       this.terminalTheme = DEFAULT_TERMINAL_THEME_ID;
       this.uiTheme = DEFAULT_UI_THEME_ID;
+      this.layout = { ...DEFAULT_LAYOUT };
       this.workspaceViews = [];
       this.error = messageFrom(error);
     } finally {
@@ -165,6 +191,22 @@ class AppConfig {
       const config = await invoke<AppConfigDto>("update_appearance_settings", {
         appearance: { theme },
       });
+      if (gen !== this.#gen) return;
+      this.apply(config);
+    } catch (error) {
+      if (gen !== this.#gen) return;
+      this.error = messageFrom(error);
+    }
+  }
+
+  /** Called when a drag ends or a panel is toggled, never on every pointer move. */
+  async saveLayout(input: LayoutSettings): Promise<void> {
+    this.layout = { ...input };
+
+    const gen = ++this.#gen;
+
+    try {
+      const config = await invoke<AppConfigDto>("update_layout_settings", { layout: input });
       if (gen !== this.#gen) return;
       this.apply(config);
     } catch (error) {

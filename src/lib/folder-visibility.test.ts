@@ -3,6 +3,7 @@ import {
   FOLDER_VISIBILITY_LABEL,
   FOLDER_VISIBILITY_TOAST,
   folderName,
+  includeCreatedRootFolder,
   needsFolderPicker,
   pathKeysMatch,
   shouldShowFolderVisibilityToast,
@@ -55,6 +56,19 @@ describe("shouldShowFolderVisibilityToast", () => {
     expect(shouldShowFolderVisibilityToast(true, [])).toBe(false);
     expect(shouldShowFolderVisibilityToast(true, ["src"])).toBe(false);
     expect(shouldShowFolderVisibilityToast(false, undefined)).toBe(false);
+  });
+});
+
+describe("includeCreatedRootFolder", () => {
+  it("adds a root folder to an active filter", () => {
+    expect(includeCreatedRootFolder(["src"], "", "notas")).toEqual(["src", "notas"]);
+    expect(includeCreatedRootFolder([], "", "notas")).toEqual(["notas"]);
+  });
+
+  it("leaves nested creates and an unfiltered tree alone", () => {
+    expect(includeCreatedRootFolder(["src"], "src", "lib")).toEqual(["src"]);
+    expect(includeCreatedRootFolder(null, "", "notas")).toBeNull();
+    expect(includeCreatedRootFolder(["src"], "", "src")).toEqual(["src"]);
   });
 });
 

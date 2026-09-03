@@ -42,6 +42,20 @@ export function shouldShowFolderVisibilityToast(
   return hasSubdirs && saved === undefined;
 }
 
+/**
+ * A new root folder stays invisible under an active filter unless it is added.
+ * Nested creates do not change the filter: they already live inside a selected folder.
+ */
+export function includeCreatedRootFolder(
+  visibleFolders: string[] | null,
+  parent: string,
+  name: string,
+): string[] | null {
+  if (visibleFolders === null || parent !== "") return visibleFolders;
+  if (visibleFolders.includes(name)) return visibleFolders;
+  return [...visibleFolders, name];
+}
+
 function trimTrailingSeps(path: string): string {
   const trimmed = path.replace(/[/\\]+$/, "");
   return trimmed === "" ? path : trimmed;

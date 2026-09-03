@@ -6,8 +6,19 @@ import { appConfig } from "$lib/app-config.svelte";
 import { addTab, nextActiveAfterClose, removeTab } from "$lib/editor-tabs";
 import { editorSession } from "$lib/editor-session.svelte";
 import {
+  baseNameOf,
+  folderNameOf,
+  joinTreePath,
+  normalizeNewName,
+  parentDirOf,
+  siblingExists,
+  type DraftKind,
+} from "$lib/file-tree";
+import { fileTree } from "$lib/file-tree.svelte";
+import {
   FOLDER_VISIBILITY_TOAST,
   folderName,
+  includeCreatedRootFolder,
   needsFolderPicker,
   shouldShowFolderVisibilityToast,
 } from "$lib/folder-visibility";
@@ -53,6 +64,17 @@ function treeHasFile(nodes: TreeNode[], path: string): boolean {
   return false;
 }
 
+function treeHasDir(nodes: TreeNode[], path: string): boolean {
+  for (const node of nodes) {
+    if (node.kind !== "dir") continue;
+    if (node.path === path) return true;
+    if (treeHasDir(node.children, path)) return true;
+  }
+
+  return false;
+}
+
+
 class Workspace {
   root = $state<string | null>(null);
   tree = $state<TreeNode[]>([]);
@@ -73,8 +95,16 @@ class Workspace {
   #loadToken = 0;
   #unlisten: UnlistenFn | null = null;
 
-  get hasMarkdown(): boolean {
+  get hasEntries(): boolean {
     return this.tree.length > 0;
+  }
+
+  get folderName(): string {
+    return this.root === null ? "" : folderNameOf(this.root);
+  }
+
+  isDirectory(path: string): boolean {
+    return treeHasDir(this.tree, path);
   }
 
   get canEditVisibility(): boolean {
@@ -213,6 +243,7 @@ class Workspace {
     if (!root) return;
 
     this.openTabs = addTab(this.openTabs, path);
+    fileTree.reveal(path);
     if (path === this.currentPath) return;
 
     const token = ++this.#loadToken;
@@ -280,6 +311,64 @@ class Workspace {
     this.#forgetTab(path);
 
     await this.refreshTree();
+  }
+
+  /**
+   * Creates a file or folder from the inline row of the tree. Failures stay on the
+   * draft row instead of the sidebar banner, so the user can fix the name in place.
+   */
+  async createEntry(kind: DraftKind, parent: string, rawName: string): Promise<boolean> {
+    const root = this.root;
+    if (!root) return false;
+
+    const normalized = normalizeNewName(rawName, kind);
+    if (!normalized.ok) {
+      fileTree.failDraft(normalized.error);
+      return false;
+    }
+
+    const path = joinTreePath(parent, normalized.name);
+    const name = baseNameOf(path);
+
+    if (siblingExists(this.tree, parentDirOf(path), name)) {
+      fileTree.failDraft(`\`${name}\` ya existe`);
+      return false;
+    }
+
+    try {
+      await invoke(kind === "file" ? "create_markdown" : "create_directory", { root, path });
+      this.error = null;
+    } catch (error) {
+      fileTree.failDraft(messageFrom(error));
+      return false;
+    }
+
+    fileTree.cancelDraft();
+
+    if (kind === "dir" && parent === "") {
+      if (!this.childDirs.includes(name)) {
+        this.childDirs = [...this.childDirs, name].sort((a, b) =>
+          a.localeCompare(b, undefined, { sensitivity: "base" }),
+        );
+      }
+
+      const nextVisible = includeCreatedRootFolder(this.visibleFolders, parent, name);
+      if (nextVisible !== null && nextVisible !== this.visibleFolders) {
+        this.visibleFolders = nextVisible;
+        await appConfig.saveVisibility(root, nextVisible);
+      }
+    }
+
+    await this.refreshTree();
+
+    if (kind === "dir") {
+      fileTree.revealFolder(path);
+      return true;
+    }
+
+    fileTree.reveal(path);
+    await this.openFile(path);
+    return true;
   }
 
   async reloadFromDisk(): Promise<void> {
@@ -387,6 +476,7 @@ class Workspace {
   #resetOpenFiles(): void {
     this.openTabs = [];
     editorSession.clearStates();
+    fileTree.reset();
     this.#dropOpenFile();
   }
 

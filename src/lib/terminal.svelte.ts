@@ -1,5 +1,15 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import type { LayoutSettings } from "$lib/app-config.svelte";
 import { nextActiveAfterClose } from "$lib/editor-tabs";
+import {
+  clampPanelSize,
+  DEFAULT_TERMINAL_BOTTOM,
+  DEFAULT_TERMINAL_RIGHT,
+  MIN_TERMINAL_BOTTOM,
+  MIN_TERMINAL_RIGHT,
+  terminalBottomReserve,
+  terminalRightReserve,
+} from "$lib/panel-resize";
 import { MAX_TERMINAL_SESSIONS, workspacePtyId } from "$lib/pty";
 import { nextDockToggle, type TerminalDock } from "$lib/terminal-dock";
 
@@ -14,11 +24,6 @@ export interface TerminalSession {
   error: string | null;
 }
 
-const DEFAULT_BOTTOM = 280;
-const DEFAULT_RIGHT = 380;
-const MIN_BOTTOM = 120;
-const MIN_RIGHT = 200;
-
 function messageFrom(error: unknown): string {
   if (typeof error === "string") return error;
   if (error instanceof Error) return error.message;
@@ -30,10 +35,10 @@ class TerminalPanelState {
   open = $state(false);
   started = $state(false);
   dock = $state<TerminalDock>("bottom");
-  bottomSize = $state(DEFAULT_BOTTOM);
-  rightSize = $state(DEFAULT_RIGHT);
+  bottomSize = $state(DEFAULT_TERMINAL_BOTTOM);
+  rightSize = $state(DEFAULT_TERMINAL_RIGHT);
   parkWidth = $state(640);
-  parkHeight = $state(DEFAULT_BOTTOM);
+  parkHeight = $state(DEFAULT_TERMINAL_BOTTOM);
   sessions = $state<TerminalSession[]>([]);
   activeId = $state<string | null>(null);
 
@@ -55,6 +60,40 @@ class TerminalPanelState {
 
   get peeking(): boolean {
     return this.surface === "editor" && this.open;
+  }
+
+  get minSize(): number {
+    return this.dock === "bottom" ? MIN_TERMINAL_BOTTOM : MIN_TERMINAL_RIGHT;
+  }
+
+  /** Restores the stored panel geometry. The panel itself stays closed. */
+  hydrate(layout: LayoutSettings, treeWidth: number): void {
+    this.dock = layout.terminalDock === "right" ? "right" : "bottom";
+    this.fit(window.innerWidth, window.innerHeight, treeWidth, {
+      bottom: layout.terminalBottom,
+      right: layout.terminalRight,
+    });
+  }
+
+  /** Re-clamps both sides, so a smaller window cannot leave the editor with nothing. */
+  fit(
+    width: number,
+    height: number,
+    treeWidth: number,
+    sizes = { bottom: this.bottomSize, right: this.rightSize },
+  ): void {
+    this.bottomSize = clampPanelSize(
+      sizes.bottom,
+      MIN_TERMINAL_BOTTOM,
+      height,
+      terminalBottomReserve(),
+    );
+    this.rightSize = clampPanelSize(
+      sizes.right,
+      MIN_TERMINAL_RIGHT,
+      width,
+      terminalRightReserve(treeWidth),
+    );
   }
 
   session(id: string): TerminalSession | undefined {
@@ -85,16 +124,23 @@ class TerminalPanelState {
     if (height >= 2) this.parkHeight = height;
   }
 
-  setSize(pixels: number, viewport: number): void {
-    const minimum = this.dock === "bottom" ? MIN_BOTTOM : MIN_RIGHT;
-    const maximum = Math.max(minimum, Math.floor(viewport * 0.8));
-    const next = Math.min(maximum, Math.max(minimum, Math.round(pixels)));
-
+  setSize(pixels: number, viewport: number, treeWidth = 0): void {
     if (this.dock === "bottom") {
-      this.bottomSize = next;
-    } else {
-      this.rightSize = next;
+      this.bottomSize = clampPanelSize(
+        pixels,
+        MIN_TERMINAL_BOTTOM,
+        viewport,
+        terminalBottomReserve(),
+      );
+      return;
     }
+
+    this.rightSize = clampPanelSize(
+      pixels,
+      MIN_TERMINAL_RIGHT,
+      viewport,
+      terminalRightReserve(treeWidth),
+    );
   }
 
   ensureSession(): string | null {
@@ -224,12 +270,12 @@ class TerminalPanelState {
   }
 
   async teardown(): Promise<void> {
+    // Size and dock survive: they are a stored preference, not session state.
     this.surface = "editor";
     this.open = false;
     this.started = false;
     this.sessions = [];
     this.activeId = null;
-    this.dock = "bottom";
     this.#nextSerial = 1;
     this.#spawning.clear();
     this.#writers.clear();
