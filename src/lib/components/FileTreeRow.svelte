@@ -7,48 +7,74 @@
   import FolderOpen from "@lucide/svelte/icons/folder-open";
   import FolderPlus from "@lucide/svelte/icons/folder-plus";
   import Trash2 from "@lucide/svelte/icons/trash-2";
+  import { untrack } from "svelte";
   import type { TreeRow } from "$lib/file-tree";
 
   let {
     row,
     selected,
+    renaming,
     invalid,
     onActivate,
     onExpand,
     onCollapse,
     onDelete,
+    onRename,
+    onContextMenu,
     onCommitDraft,
     onCancelDraft,
+    onCommitRename,
+    onCancelRename,
   }: {
     row: TreeRow;
     selected: boolean;
+    renaming: boolean;
     invalid: boolean;
     onActivate: () => void;
     onExpand: () => void;
     onCollapse: () => void;
     onDelete: () => void;
+    onRename: () => void;
+    onContextMenu: (event: MouseEvent) => void;
     onCommitDraft: (name: string) => void;
     onCancelDraft: () => void;
+    onCommitRename: (name: string) => void;
+    onCancelRename: () => void;
   } = $props();
 
   let draftName = $state("");
-  let input = $state<HTMLInputElement | null>(null);
+  let renameName = $state("");
 
-  $effect(() => {
-    input?.focus();
-  });
+  function attachDraftField(node: HTMLInputElement): void {
+    node.focus();
+  }
+
+  function attachRenameField(node: HTMLInputElement): void {
+    const name = untrack(() => row.name);
+    renameName = name;
+    node.value = name;
+    node.focus();
+    node.select();
+  }
 
   function onRowKeydown(event: KeyboardEvent): void {
-    if (event.key === "Enter" || event.key === " ") {
+    if (event.key === "F2") {
       event.preventDefault();
-      onActivate();
+      event.stopPropagation();
+      onRename();
       return;
     }
 
-    if (event.key === "Delete" && row.kind === "file") {
+    if (event.key === "Delete" && (row.kind === "file" || row.kind === "dir")) {
       event.preventDefault();
       event.stopPropagation();
       onDelete();
+      return;
+    }
+
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onActivate();
       return;
     }
 
@@ -75,6 +101,25 @@
       onCancelDraft();
     }
   }
+
+  function onRenameKeydown(event: KeyboardEvent): void {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      onCommitRename(renameName);
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onCancelRename();
+    }
+  }
+
+  function onRowContextMenu(event: MouseEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    onContextMenu(event);
+  }
 </script>
 
 {#if row.kind === "draft"}
@@ -89,7 +134,7 @@
     </span>
     <!-- Focused on mount so the user types the name right away, like VS Code. -->
     <input
-      bind:this={input}
+      {@attach attachDraftField}
       bind:value={draftName}
       class="field"
       class:invalid
@@ -101,6 +146,48 @@
       placeholder={row.draftKind === "dir" ? "carpeta" : "nombre.md"}
       onkeydown={onDraftKeydown}
       onblur={onCancelDraft}
+    />
+  </div>
+{:else if renaming}
+  <div
+    class="row draft selected"
+    style:--depth={row.depth}
+    role="treeitem"
+    aria-selected="true"
+    aria-expanded={row.kind === "dir" ? row.expanded : undefined}
+  >
+    <span class="twisty" aria-hidden="true">
+      {#if row.kind === "dir"}
+        {#if row.expanded}
+          <ChevronDown size={14} strokeWidth={2} />
+        {:else}
+          <ChevronRight size={14} strokeWidth={2} />
+        {/if}
+      {/if}
+    </span>
+    <span class="icon" aria-hidden="true">
+      {#if row.kind === "dir"}
+        {#if row.expanded}
+          <FolderOpen size={14} strokeWidth={1.75} />
+        {:else}
+          <Folder size={14} strokeWidth={1.75} />
+        {/if}
+      {:else}
+        <FileText size={14} strokeWidth={1.75} />
+      {/if}
+    </span>
+    <input
+      {@attach attachRenameField}
+      bind:value={renameName}
+      class="field"
+      class:invalid
+      type="text"
+      spellcheck="false"
+      autocomplete="off"
+      aria-invalid={invalid}
+      aria-label="Nuevo nombre"
+      onkeydown={onRenameKeydown}
+      onblur={onCancelRename}
     />
   </div>
 {:else}
@@ -116,6 +203,7 @@
     title={row.path}
     onclick={onActivate}
     onkeydown={onRowKeydown}
+    oncontextmenu={onRowContextMenu}
   >
     <span class="twisty" aria-hidden="true">
       {#if row.kind === "dir"}
