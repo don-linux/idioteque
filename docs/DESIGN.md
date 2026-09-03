@@ -50,13 +50,19 @@ Esta pantalla no tiene barra de acciones abajo. El engrane se queda en el header
 
 ## Vista IDE
 
-Aparece al abrir una carpeta, en `/workspace`. Tres zonas: sidebar, editor y, si la pediste, terminal.
+Aparece al abrir una carpeta, en `/workspace`. Cuatro zonas: el árbol de archivos, el editor, la terminal y el footer. El editor y el footer se muestran siempre. El árbol y la terminal se redimensionan y se pueden ocultar; cuando falta uno, el hueco no queda ahí: el layout se rearma.
 
-### Sidebar
+### Árbol de archivos
 
-Arriba, solo la ruta de la carpeta abierta (si no cabe, se recorta). Debajo, el árbol de markdown. No hay botones de Inicio, Cambiar ni Configuración aquí: esos viven en el footer.
+Arriba, solo el nombre de la carpeta abierta, no la ruta completa (`/home/fernando/notas/2026` se ve como `2026`). La ruta entera está en el tooltip. No hay botones de Inicio, Cambiar ni Configuración aquí: esos viven en el footer.
 
-Si la carpeta no tiene markdown, un texto lo dice. No se ocultan las carpetas de agentes que empiezan con punto.
+Debajo del nombre, tres botones chicos: crear archivo, crear carpeta y refrescar. Siguen ahí aunque la carpeta esté vacía, porque de ahí sale el primer archivo. Crear abre una fila con un campo de texto dentro del árbol, en la carpeta seleccionada (o junto al archivo seleccionado, o en la raíz si no hay nada). Enter confirma, Escape o salir del campo cancela. A un archivo se le pone `.md` si no lo trae. Si el nombre choca o es inválido, el aviso sale abajo del árbol y la fila se queda para corregir.
+
+El árbol se lee como el de Visual Studio Code: filas de ancho completo pegadas al inicio de la caja, sin viñetas ni cajas anidadas. Cada nivel entra un poco más con una tabulación sutil. Las carpetas llevan flecha y se abren o cierran al clic; empiezan cerradas. Los archivos de la raíz se ven siempre. Las flechas del teclado abren y cierran, y Delete borra el archivo enfocado.
+
+Se muestran todas las carpetas, con markdown dentro o sin él, salvo las de la lista de exclusión (ver `DIRECTORY-BLACKLIST.md`). De archivos, solo markdown. No se ocultan las carpetas de agentes que empiezan con punto. Si no hay nada, un texto lo dice.
+
+El ancho lo decide el usuario, arrastrando el borde derecho. No hay scroll lateral raro: los nombres que no caben se recortan con puntos suspensivos, y si el usuario quiere la caja angosta y los nombres cortados, es su decisión. El árbol se esconde y se muestra con el icono del footer o con `Ctrl+B`; dentro de la terminal ese atajo no aplica, para no robarle el prefijo a tmux.
 
 ### Editor
 
@@ -68,11 +74,17 @@ Si hay uno abierto, arriba va la ruta y el estado de guardado (sin guardar, guar
 
 Cerrada al entrar a una carpeta. No se abre sola.
 
-Se pide con el icono del footer o con atajos: `Ctrl+J` la pone abajo, `Ctrl+Alt+J` (o Alt + clic en el icono) a la derecha. El sidebar sigue a altura completa cuando el panel está abajo.
+Se pide con el icono del footer o con atajos: `Ctrl+J` la pone abajo, `Ctrl+Alt+J` (o Alt + clic en el icono) a la derecha. El árbol sigue a altura completa cuando el panel está abajo.
 
 Ocultarla no corta lo que esté corriendo. Volver a Inicio o cambiar de carpeta sí mata la sesión.
 
-Una sola terminal, sin pestañas. El tamaño y el lado del panel no se recuerdan al reiniciar. Fuente, tamaño de letra y tema de colores sí (en Configuración).
+Una sola terminal, sin pestañas. Se redimensiona arrastrando su borde, igual que el árbol.
+
+### Lo que el layout recuerda
+
+El ancho del árbol, si el árbol está visible, y el tamaño y el lado de la terminal se guardan en `~/.idioteque/config.json` y vuelven al reiniciar. Se escriben al soltar el arrastre o al alternar un panel, no en cada pixel del movimiento.
+
+Lo que no se guarda: si la terminal estaba abierta (entra cerrada, siempre) ni qué carpetas del árbol estaban desplegadas.
 
 El tema por defecto es Tokyo Night Night (el de Ghostty/WezTerm, extras de folke): fondo `#1a1b26`, texto `#c0caf5`. No es el chrome de la app. Se puede cambiar en Configuración.
 
@@ -89,13 +101,14 @@ Orden fijo, definido en código (no en la UI ni en la config):
 1. Casa — Inicio. Vuelve a la grilla de carpetas. Eso cierra la terminal.
 2. Carpeta — Cambiar. Abre el selector nativo para otra carpeta.
 3. Engrane — Configuración. Va a la página de ajustes. El workspace no se cierra, así la terminal no se apaga.
-4. Terminal — Muestra u oculta el panel. Queda marcado si está visible.
-5. Git — Icono de vida. Al pasar el mouse dice si no hay repo o el nombre
+4. Panel izquierdo — Muestra u oculta el árbol de archivos (también `Ctrl+B`). Queda marcado si está visible.
+5. Terminal — Muestra u oculta el panel. Queda marcado si está visible.
+6. Git — Icono de vida. Al pasar el mouse dice si no hay repo o el nombre
    de la carpeta y la rama. El clic no hace nada. No es un panel.
 
-El usuario no reordena. No hay arrastre ni orden guardado. Si se suma un icono, se mete en esa lista de código.
+Los dos que esconden paneles van juntos, en ese orden. El usuario no reordena. No hay arrastre ni orden guardado. Si se suma un icono, se mete en esa lista de código.
 
-Al pasar el mouse, Casa, Carpeta, Engrane y Terminal muestran el cursor de clic. Git no es accionable, así que el cursor se queda normal. El clic corre siempre: no hay umbral ni “¿era un arrastre?”.
+Al pasar el mouse, Casa, Carpeta, Engrane, Panel izquierdo y Terminal muestran el cursor de clic. Git no es accionable, así que el cursor se queda normal. El clic corre siempre: no hay umbral ni “¿era un arrastre?”.
 
 ## Configuración
 
