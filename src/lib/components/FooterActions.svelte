@@ -38,7 +38,7 @@
     home: "Inicio",
     folder: "Cambiar carpeta",
     settings: "Configuración",
-    explorer: "Mostrar u ocultar el árbol de archivos (Ctrl+B)",
+    explorer: "Árbol de archivos (Ctrl+B) · dentro de la terminal, Ctrl+Shift+B",
     terminal: "Terminal (Ctrl+J) · a la derecha (Ctrl+Alt+J) · pantalla (Ctrl+Shift+J)",
     git: "Git",
   };

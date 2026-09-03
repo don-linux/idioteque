@@ -17,6 +17,8 @@
   });
 </script>
 
+<svelte:window onresize={() => panels.fit(window.innerWidth, window.innerHeight)} />
+
 {#if workspace.root !== null}
   <div
     class="workspace"
@@ -59,6 +61,7 @@
               terminal.setSize(
                 pixels,
                 terminal.dock === "bottom" ? window.innerHeight : window.innerWidth,
+                panels.treeSpace,
               )}
             onCommit={() => panels.commitResize()}
           />

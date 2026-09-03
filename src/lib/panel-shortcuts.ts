@@ -9,13 +9,16 @@ export interface TreeToggleEvent {
   stopImmediatePropagation?: () => void;
 }
 
-export function isTreeToggleShortcut(event: {
+interface Chord {
   code: string;
   ctrlKey: boolean;
   metaKey: boolean;
   shiftKey: boolean;
   altKey: boolean;
-}): boolean {
+}
+
+/** Ctrl+B, like Visual Studio Code. Not delivered while the terminal has focus. */
+export function isTreeToggleShortcut(event: Chord): boolean {
   return (
     event.code === "KeyB" &&
     event.ctrlKey &&
@@ -25,17 +28,32 @@ export function isTreeToggleShortcut(event: {
   );
 }
 
+/** Ctrl+Shift+B: the one that also works from inside the terminal. */
+export function isTreeToggleAnywhereShortcut(event: Chord): boolean {
+  return (
+    event.code === "KeyB" &&
+    event.ctrlKey &&
+    event.shiftKey &&
+    !event.metaKey &&
+    !event.altKey
+  );
+}
+
 export function handleTreeToggleShortcut(
   event: TreeToggleEvent,
   ctx: {
     hasWorkspace: boolean;
-    /// Ctrl+B is the tmux prefix, so the terminal keeps it when it has focus.
     insideTerminal: boolean;
     toggleTree: () => void;
   },
 ): void {
-  if (!isTreeToggleShortcut(event)) return;
-  if (!ctx.hasWorkspace || ctx.insideTerminal) return;
+  const anywhere = isTreeToggleAnywhereShortcut(event);
+  const plain = isTreeToggleShortcut(event);
+
+  if (!anywhere && !plain) return;
+  if (!ctx.hasWorkspace) return;
+  // Ctrl+B is the tmux prefix, so a focused terminal keeps it. Ctrl+Shift+B is ours.
+  if (plain && ctx.insideTerminal) return;
 
   event.preventDefault();
   event.stopPropagation();

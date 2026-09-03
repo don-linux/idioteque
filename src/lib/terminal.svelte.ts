@@ -7,6 +7,8 @@ import {
   DEFAULT_TERMINAL_RIGHT,
   MIN_TERMINAL_BOTTOM,
   MIN_TERMINAL_RIGHT,
+  terminalBottomReserve,
+  terminalRightReserve,
 } from "$lib/panel-resize";
 import { MAX_TERMINAL_SESSIONS, workspacePtyId } from "$lib/pty";
 import { nextDockToggle, type TerminalDock } from "$lib/terminal-dock";
@@ -65,14 +67,33 @@ class TerminalPanelState {
   }
 
   /** Restores the stored panel geometry. The panel itself stays closed. */
-  hydrate(layout: LayoutSettings): void {
+  hydrate(layout: LayoutSettings, treeWidth: number): void {
     this.dock = layout.terminalDock === "right" ? "right" : "bottom";
+    this.fit(window.innerWidth, window.innerHeight, treeWidth, {
+      bottom: layout.terminalBottom,
+      right: layout.terminalRight,
+    });
+  }
+
+  /** Re-clamps both sides, so a smaller window cannot leave the editor with nothing. */
+  fit(
+    width: number,
+    height: number,
+    treeWidth: number,
+    sizes = { bottom: this.bottomSize, right: this.rightSize },
+  ): void {
     this.bottomSize = clampPanelSize(
-      layout.terminalBottom,
+      sizes.bottom,
       MIN_TERMINAL_BOTTOM,
-      window.innerHeight,
+      height,
+      terminalBottomReserve(),
     );
-    this.rightSize = clampPanelSize(layout.terminalRight, MIN_TERMINAL_RIGHT, window.innerWidth);
+    this.rightSize = clampPanelSize(
+      sizes.right,
+      MIN_TERMINAL_RIGHT,
+      width,
+      terminalRightReserve(treeWidth),
+    );
   }
 
   session(id: string): TerminalSession | undefined {
@@ -103,14 +124,23 @@ class TerminalPanelState {
     if (height >= 2) this.parkHeight = height;
   }
 
-  setSize(pixels: number, viewport: number): void {
-    const next = clampPanelSize(pixels, this.minSize, viewport);
-
+  setSize(pixels: number, viewport: number, treeWidth = 0): void {
     if (this.dock === "bottom") {
-      this.bottomSize = next;
-    } else {
-      this.rightSize = next;
+      this.bottomSize = clampPanelSize(
+        pixels,
+        MIN_TERMINAL_BOTTOM,
+        viewport,
+        terminalBottomReserve(),
+      );
+      return;
     }
+
+    this.rightSize = clampPanelSize(
+      pixels,
+      MIN_TERMINAL_RIGHT,
+      viewport,
+      terminalRightReserve(treeWidth),
+    );
   }
 
   ensureSession(): string | null {

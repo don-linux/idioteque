@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   handleTreeToggleShortcut,
   isTerminalTarget,
+  isTreeToggleAnywhereShortcut,
   isTreeToggleShortcut,
 } from "./panel-shortcuts";
 
@@ -35,6 +36,21 @@ describe("isTreeToggleShortcut", () => {
     expect(isTreeToggleShortcut(key({ metaKey: true }))).toBe(false);
     expect(isTreeToggleShortcut(key({ shiftKey: true }))).toBe(false);
     expect(isTreeToggleShortcut(key({ altKey: true }))).toBe(false);
+  });
+});
+
+describe("isTreeToggleAnywhereShortcut", () => {
+  it("matches only Ctrl+Shift+B", () => {
+    expect(isTreeToggleAnywhereShortcut(key({ shiftKey: true }))).toBe(true);
+    expect(isTreeToggleAnywhereShortcut(key())).toBe(false);
+    expect(isTreeToggleAnywhereShortcut(key({ shiftKey: true, altKey: true }))).toBe(false);
+    expect(isTreeToggleAnywhereShortcut(key({ shiftKey: true, metaKey: true }))).toBe(false);
+    expect(isTreeToggleAnywhereShortcut(key({ code: "KeyJ", shiftKey: true }))).toBe(false);
+  });
+
+  it("does not overlap with the plain chord", () => {
+    expect(isTreeToggleShortcut(key({ shiftKey: true }))).toBe(false);
+    expect(isTreeToggleAnywhereShortcut(key())).toBe(false);
   });
 });
 
@@ -72,11 +88,40 @@ describe("handleTreeToggleShortcut", () => {
     expect(event.stopPropagation).not.toHaveBeenCalled();
   });
 
-  it("ignores other chords without touching the event", () => {
+  it("still toggles from inside the terminal with Ctrl+Shift+B", () => {
+    const event = key({ shiftKey: true });
+    const toggleTree = vi.fn();
+
+    handleTreeToggleShortcut(event, { hasWorkspace: true, insideTerminal: true, toggleTree });
+
+    expect(toggleTree).toHaveBeenCalledTimes(1);
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts Ctrl+Shift+B outside the terminal too", () => {
     const event = key({ shiftKey: true });
     const toggleTree = vi.fn();
 
     handleTreeToggleShortcut(event, { hasWorkspace: true, insideTerminal: false, toggleTree });
+
+    expect(toggleTree).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores other chords without touching the event", () => {
+    const event = key({ altKey: true });
+    const toggleTree = vi.fn();
+
+    handleTreeToggleShortcut(event, { hasWorkspace: true, insideTerminal: false, toggleTree });
+
+    expect(toggleTree).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("does not fire without a workspace, even with the anywhere chord", () => {
+    const event = key({ shiftKey: true });
+    const toggleTree = vi.fn();
+
+    handleTreeToggleShortcut(event, { hasWorkspace: false, insideTerminal: true, toggleTree });
 
     expect(toggleTree).not.toHaveBeenCalled();
     expect(event.preventDefault).not.toHaveBeenCalled();

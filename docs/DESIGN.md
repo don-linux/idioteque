@@ -62,7 +62,11 @@ El árbol se lee como el de Visual Studio Code: filas de ancho completo pegadas 
 
 Se muestran todas las carpetas, con markdown dentro o sin él, salvo las de la lista de exclusión (ver `DIRECTORY-BLACKLIST.md`). De archivos, solo markdown. No se ocultan las carpetas de agentes que empiezan con punto. Si no hay nada, un texto lo dice.
 
-El ancho lo decide el usuario, arrastrando el borde derecho. No hay scroll lateral raro: los nombres que no caben se recortan con puntos suspensivos, y si el usuario quiere la caja angosta y los nombres cortados, es su decisión. El árbol se esconde y se muestra con el icono del footer o con `Ctrl+B`; dentro de la terminal ese atajo no aplica, para no robarle el prefijo a tmux.
+El ancho lo decide el usuario, arrastrando el borde derecho. No hay scroll lateral raro: los nombres que no caben se recortan con puntos suspensivos, y si el usuario quiere la caja angosta y los nombres cortados, es su decisión.
+
+El editor nunca queda sin espacio: el árbol deja de crecer antes de aplastarlo, con la terminal a la derecha o sin ella. Y si abres la terminal a la derecha y ya no cabe todo, el árbol cede y se queda con ese ancho; no rebota al cerrar la terminal.
+
+El árbol se esconde y se muestra con el icono del footer o con `Ctrl+B`. Con el foco dentro de la terminal, `Ctrl+B` es de la terminal (es el prefijo de tmux) y el atajo pasa a ser `Ctrl+Shift+B`, que funciona en cualquier lado.
 
 ### Editor
 
@@ -82,7 +86,9 @@ Una sola terminal, sin pestañas. Se redimensiona arrastrando su borde, igual qu
 
 ### Lo que el layout recuerda
 
-El ancho del árbol, si el árbol está visible, y el tamaño y el lado de la terminal se guardan en `~/.idioteque/config.json` y vuelven al reiniciar. Se escriben al soltar el arrastre o al alternar un panel, no en cada pixel del movimiento.
+El ancho del árbol, si el árbol está visible, el lado que usó la terminal la última vez y su tamaño en cada lado (uno para abajo, otro para la derecha) se guardan en `~/.idioteque/config.json` y vuelven al reiniciar. Se escriben al soltar el arrastre o al alternar un panel, no en cada pixel del movimiento.
+
+El lado guardado no cambia los atajos: `Ctrl+J` sigue poniendo la terminal abajo y `Ctrl+Alt+J` a la derecha. Lo que se recupera es el tamaño con el que quedó cada lado.
 
 Lo que no se guarda: si la terminal estaba abierta (entra cerrada, siempre) ni qué carpetas del árbol estaban desplegadas.
 
@@ -101,7 +107,7 @@ Orden fijo, definido en código (no en la UI ni en la config):
 1. Casa — Inicio. Vuelve a la grilla de carpetas. Eso cierra la terminal.
 2. Carpeta — Cambiar. Abre el selector nativo para otra carpeta.
 3. Engrane — Configuración. Va a la página de ajustes. El workspace no se cierra, así la terminal no se apaga.
-4. Panel izquierdo — Muestra u oculta el árbol de archivos (también `Ctrl+B`). Queda marcado si está visible.
+4. Panel izquierdo — Muestra u oculta el árbol de archivos (también `Ctrl+B`, o `Ctrl+Shift+B` con el foco en la terminal). Queda marcado si está visible.
 5. Terminal — Muestra u oculta el panel. Queda marcado si está visible.
 6. Git — Icono de vida. Al pasar el mouse dice si no hay repo o el nombre
    de la carpeta y la rama. El clic no hace nada. No es un panel.
