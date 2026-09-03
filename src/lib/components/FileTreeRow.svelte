@@ -164,14 +164,14 @@
     box-sizing: border-box;
     width: 100%;
     min-width: 0;
-    height: 1.45rem;
+    height: 1.6rem;
     padding-inline: calc(0.25rem + var(--depth, 0) * var(--indent-step)) 0.25rem;
     border: 0;
     background: none;
     color: var(--text);
     font: inherit;
     font-size: 0.8rem;
-    line-height: 1;
+    line-height: 1.25;
     white-space: nowrap;
     cursor: pointer;
   }
@@ -207,8 +207,10 @@
 
   .name {
     flex: 1;
+    align-self: stretch;
     min-width: 0;
     overflow: hidden;
+    line-height: 1.6rem;
     text-overflow: ellipsis;
   }
 
