@@ -26,7 +26,12 @@
   }
 </script>
 
-<aside class:parked>
+<aside
+  class:parked
+  oncontextmenu={(event) => {
+    event.preventDefault();
+  }}
+>
   <header>
     <span class="folder" title={workspace.root}>{workspace.folderName}</span>
   </header>
@@ -68,10 +73,17 @@
         nodes={workspace.tree}
         selected={workspace.currentPath}
         onSelect={(path) => workspace.openFile(path)}
-        onDelete={(path) => workspace.deleteFile(path)}
+        onDelete={(path, kind) => {
+          if (kind === "dir") void workspace.deleteFolder(path);
+          else void workspace.deleteFile(path);
+        }}
         onCreate={(name) => {
           const draft = fileTree.draft;
           if (draft) void workspace.createEntry(draft.kind, draft.parent, name);
+        }}
+        onRename={(name) => {
+          const rename = fileTree.rename;
+          if (rename) void workspace.renameEntry(rename.path, rename.kind, name);
         }}
       />
     {:else}

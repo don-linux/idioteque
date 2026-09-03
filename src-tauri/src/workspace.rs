@@ -366,6 +366,72 @@ pub fn delete_markdown(root: String, path: String) -> Result<(), String> {
     fs::remove_file(&target).map_err(|error| format!("No se pudo borrar `{path}`: {error}"))
 }
 
+/// Existing directory inside the opened root. The workspace root itself is refused.
+fn resolve_directory(root: &str, relative: &str) -> Result<PathBuf, String> {
+    let target = join_relative(root, relative)?;
+
+    let canonical_root = fs::canonicalize(root).map_err(|error| error.to_string())?;
+    let canonical_target = fs::canonicalize(&target).map_err(|error| error.to_string())?;
+
+    if !canonical_target.starts_with(&canonical_root) {
+        return Err("La ruta sale de la carpeta abierta".to_string());
+    }
+
+    if canonical_target == canonical_root {
+        return Err("No se puede usar la carpeta abierta".to_string());
+    }
+
+    if !canonical_target.is_dir() {
+        return Err("No es una carpeta".to_string());
+    }
+
+    Ok(canonical_target)
+}
+
+fn same_parent(from: &str, to: &str) -> bool {
+    Path::new(from).parent() == Path::new(to).parent()
+}
+
+fn rename_entry(root: &str, from: &str, to: &str, kind: NewKind) -> Result<(), String> {
+    if from == to {
+        return Ok(());
+    }
+
+    // Reject `..` and empty paths first so they stay "Ruta inválida", not a
+    // same-folder rename error.
+    join_relative(root, from)?;
+    join_relative(root, to)?;
+
+    if !same_parent(from, to) {
+        return Err("Solo se puede renombrar en la misma carpeta".to_string());
+    }
+
+    let source = match kind {
+        NewKind::File => resolve_markdown(root, from)?,
+        NewKind::Dir => resolve_directory(root, from)?,
+    };
+    let dest = resolve_new_target(root, to, kind)?;
+
+    fs::rename(&source, &dest).map_err(|error| format!("No se pudo renombrar `{from}`: {error}"))
+}
+
+#[tauri::command]
+pub fn rename_markdown(root: String, from: String, to: String) -> Result<(), String> {
+    rename_entry(&root, &from, &to, NewKind::File)
+}
+
+#[tauri::command]
+pub fn rename_directory(root: String, from: String, to: String) -> Result<(), String> {
+    rename_entry(&root, &from, &to, NewKind::Dir)
+}
+
+#[tauri::command]
+pub fn delete_directory(root: String, path: String) -> Result<(), String> {
+    let target = resolve_directory(&root, &path)?;
+
+    fs::remove_dir_all(&target).map_err(|error| format!("No se pudo borrar `{path}`: {error}"))
+}
+
 pub struct WatchState {
     inner: Mutex<Option<notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>>>,
 }
@@ -900,6 +966,114 @@ mod tests {
 
         let error = delete_markdown(fixture.root_str(), "docs/notes.txt".to_string()).unwrap_err();
         assert_eq!(error, "Solo se pueden abrir archivos .md");
+    }
+
+    #[test]
+    fn rename_markdown_renames_in_place_and_rejects_escape() {
+        let fixture = Fixture::new();
+        fixture.write_md("docs/note.md", "hola\n");
+
+        let root = fixture.root_str();
+        rename_markdown(
+            root.clone(),
+            "docs/note.md".to_string(),
+            "docs/renamed.md".to_string(),
+        )
+        .expect("rename file");
+
+        assert!(!fixture.path("docs/note.md").exists());
+        assert_eq!(
+            read_markdown(root.clone(), "docs/renamed.md".to_string()).expect("read"),
+            "hola\n"
+        );
+
+        let moved = rename_markdown(
+            root.clone(),
+            "docs/renamed.md".to_string(),
+            "other/renamed.md".to_string(),
+        )
+        .unwrap_err();
+        assert_eq!(moved, "Solo se puede renombrar en la misma carpeta");
+
+        let escape = rename_markdown(
+            root,
+            "docs/renamed.md".to_string(),
+            "../fuera.md".to_string(),
+        )
+        .unwrap_err();
+        assert_eq!(escape, "Ruta inválida");
+    }
+
+    #[test]
+    fn rename_markdown_rejects_collision_and_non_md() {
+        let fixture = Fixture::new();
+        fixture.write_md("a.md", "a\n");
+        fixture.write_md("b.md", "b\n");
+
+        let root = fixture.root_str();
+        let taken =
+            rename_markdown(root.clone(), "a.md".to_string(), "b.md".to_string()).unwrap_err();
+        assert_eq!(taken, "`b.md` ya existe");
+        assert_eq!(fs::read_to_string(fixture.path("a.md")).expect("keep a"), "a\n");
+
+        let not_md =
+            rename_markdown(root, "a.md".to_string(), "nota.txt".to_string()).unwrap_err();
+        assert_eq!(not_md, "Solo se pueden crear archivos .md");
+    }
+
+    #[test]
+    fn rename_directory_renames_children_and_rejects_root() {
+        let fixture = Fixture::new();
+        fixture.write_md("docs/guide.md", "g\n");
+        fixture.write_md("docs/sub/note.md", "n\n");
+
+        let root = fixture.root_str();
+        rename_directory(root.clone(), "docs".to_string(), "notas".to_string())
+            .expect("rename dir");
+
+        assert!(!fixture.path("docs").exists());
+        assert_eq!(
+            read_markdown(root.clone(), "notas/guide.md".to_string()).expect("guide"),
+            "g\n"
+        );
+        assert_eq!(
+            read_markdown(root.clone(), "notas/sub/note.md".to_string()).expect("note"),
+            "n\n"
+        );
+
+        let root_rename =
+            rename_directory(root, "".to_string(), "otro".to_string()).unwrap_err();
+        assert_eq!(root_rename, "Ruta inválida");
+    }
+
+    #[test]
+    fn delete_directory_removes_children_and_rejects_escape() {
+        let fixture = Fixture::new();
+        fixture.write_md("docs/guide.md", "g\n");
+        fixture.write_md("docs/sub/note.md", "n\n");
+        fixture.mkdir("docs/empty");
+
+        let root = fixture.root_str();
+        delete_directory(root.clone(), "docs".to_string()).expect("delete dir");
+
+        assert!(!fixture.path("docs").exists());
+        assert!(read_markdown(root.clone(), "docs/guide.md".to_string()).is_err());
+
+        let escape = delete_directory(root.clone(), "../afuera".to_string()).unwrap_err();
+        assert_eq!(escape, "Ruta inválida");
+
+        let root_delete = delete_directory(root, "".to_string()).unwrap_err();
+        assert_eq!(root_delete, "Ruta inválida");
+    }
+
+    #[test]
+    fn delete_directory_rejects_a_file() {
+        let fixture = Fixture::new();
+        fixture.write_md("note.md", "x\n");
+
+        let error = delete_directory(fixture.root_str(), "note.md".to_string()).unwrap_err();
+        assert_eq!(error, "No es una carpeta");
+        assert!(fixture.path("note.md").exists());
     }
 
     #[test]

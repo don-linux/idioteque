@@ -10,8 +10,11 @@ import {
   folderNameOf,
   joinTreePath,
   normalizeNewName,
+  normalizeRenameName,
   parentDirOf,
+  remapPathPrefix,
   siblingExists,
+  siblingExistsExcept,
   type DraftKind,
 } from "$lib/file-tree";
 import { fileTree } from "$lib/file-tree.svelte";
@@ -20,6 +23,8 @@ import {
   folderName,
   includeCreatedRootFolder,
   needsFolderPicker,
+  removeVisibleRootFolder,
+  renameVisibleRootFolder,
   shouldShowFolderVisibilityToast,
 } from "$lib/folder-visibility";
 import { folderVisibility } from "$lib/folder-visibility.svelte";
@@ -313,6 +318,111 @@ class Workspace {
     await this.refreshTree();
   }
 
+  async deleteFolder(path: string): Promise<void> {
+    const root = this.root;
+    if (!root) return;
+
+    const confirmed = await ask(`¿Borrar la carpeta ${path} y todo su contenido?`, {
+      title: "idioteque",
+      kind: "warning",
+    });
+    if (!confirmed) return;
+
+    const gone = this.openTabs.filter((tab) => tab.startsWith(`${path}/`));
+    for (const tab of gone) this.#dropDraft(tab);
+
+    try {
+      await invoke("delete_directory", { root, path });
+      this.error = null;
+    } catch (error) {
+      this.error = messageFrom(error);
+      return;
+    }
+
+    this.#forgetTabs(gone);
+    fileTree.dropExpandedUnder(path);
+
+    if (parentDirOf(path) === "") {
+      const name = baseNameOf(path);
+      this.childDirs = this.childDirs.filter((dir) => dir !== name);
+      const nextVisible = removeVisibleRootFolder(this.visibleFolders, name);
+      if (nextVisible !== this.visibleFolders) {
+        this.visibleFolders = nextVisible;
+        if (nextVisible !== null) {
+          await appConfig.saveVisibility(root, nextVisible);
+        }
+      }
+    }
+
+    await this.refreshTree();
+  }
+
+  /**
+   * Renames a file or folder from the inline row of the tree. Failures stay on
+   * that row instead of the sidebar banner.
+   */
+  async renameEntry(from: string, kind: DraftKind, rawName: string): Promise<boolean> {
+    const root = this.root;
+    if (!root) return false;
+
+    const normalized = normalizeRenameName(rawName, kind);
+    if (!normalized.ok) {
+      fileTree.failDraft(normalized.error);
+      return false;
+    }
+
+    const parent = parentDirOf(from);
+    const to = joinTreePath(parent, normalized.name);
+
+    if (to === from) {
+      fileTree.cancelRename();
+      return true;
+    }
+
+    if (siblingExistsExcept(this.tree, parent, normalized.name, from)) {
+      fileTree.failDraft(`\`${normalized.name}\` ya existe`);
+      return false;
+    }
+
+    try {
+      await invoke(kind === "file" ? "rename_markdown" : "rename_directory", {
+        root,
+        from,
+        to,
+      });
+      this.error = null;
+    } catch (error) {
+      fileTree.failDraft(messageFrom(error));
+      return false;
+    }
+
+    this.#remapOpenPaths(from, to);
+    fileTree.remapExpanded(from, to);
+    fileTree.cancelRename();
+
+    if (kind === "dir" && parent === "") {
+      const fromName = baseNameOf(from);
+      this.childDirs = this.childDirs
+        .map((dir) => (dir === fromName ? normalized.name : dir))
+        .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+
+      const nextVisible = renameVisibleRootFolder(
+        this.visibleFolders,
+        fromName,
+        normalized.name,
+      );
+      if (nextVisible !== this.visibleFolders) {
+        this.visibleFolders = nextVisible;
+        if (nextVisible !== null) {
+          await appConfig.saveVisibility(root, nextVisible);
+        }
+      }
+    }
+
+    await this.refreshTree();
+    return true;
+  }
+
   /**
    * Creates a file or folder from the inline row of the tree. Failures stay on the
    * draft row instead of the sidebar banner, so the user can fix the name in place.
@@ -471,6 +581,49 @@ class Workspace {
     }
 
     this.#dropOpenFile();
+  }
+
+  #forgetTabs(paths: string[]): void {
+    if (paths.length === 0) return;
+
+    const gone = new Set(paths);
+    const remaining = this.openTabs.filter((tab) => !gone.has(tab));
+    for (const tab of paths) editorSession.dropState(tab);
+
+    const currentGone = this.currentPath !== null && gone.has(this.currentPath);
+    this.openTabs = remaining;
+
+    if (!currentGone) return;
+
+    if (remaining.length > 0) {
+      void this.openFile(remaining[0]);
+      return;
+    }
+
+    this.#dropOpenFile();
+  }
+
+  #remapOpenPaths(from: string, to: string): void {
+    this.openTabs = this.openTabs.map((tab) => remapPathPrefix(tab, from, to));
+
+    if (this.currentPath !== null) {
+      this.currentPath = remapPathPrefix(this.currentPath, from, to);
+    }
+
+    if (this.#contentFor !== null) {
+      this.#contentFor = remapPathPrefix(this.#contentFor, from, to);
+    }
+
+    const remapped = new Map<string, string>();
+    for (const [path, contents] of this.#drafts) {
+      remapped.set(remapPathPrefix(path, from, to), contents);
+    }
+    this.#drafts.clear();
+    for (const [path, contents] of remapped) {
+      this.#drafts.set(path, contents);
+    }
+
+    editorSession.remapStatesUnder(from, to);
   }
 
   #resetOpenFiles(): void {

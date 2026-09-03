@@ -56,6 +56,25 @@ export function includeCreatedRootFolder(
   return [...visibleFolders, name];
 }
 
+export function renameVisibleRootFolder(
+  visibleFolders: string[] | null,
+  from: string,
+  to: string,
+): string[] | null {
+  if (visibleFolders === null || from === to) return visibleFolders;
+  if (!visibleFolders.includes(from)) return visibleFolders;
+  return visibleFolders.map((name) => (name === from ? to : name));
+}
+
+export function removeVisibleRootFolder(
+  visibleFolders: string[] | null,
+  name: string,
+): string[] | null {
+  if (visibleFolders === null) return visibleFolders;
+  if (!visibleFolders.includes(name)) return visibleFolders;
+  return visibleFolders.filter((entry) => entry !== name);
+}
+
 function trimTrailingSeps(path: string): string {
   const trimmed = path.replace(/[/\\]+$/, "");
   return trimmed === "" ? path : trimmed;

@@ -106,7 +106,6 @@ Nada de lo previsto se quedó fuera.
 
 Esto se dejó fuera a propósito, no son fallas:
 
-- Borrar o renombrar carpetas desde el árbol
 - Arrastrar y soltar archivos
 - Navegación completa con flechas dentro del árbol
 - Recordar qué carpetas estaban desplegadas

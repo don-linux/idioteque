@@ -191,6 +191,74 @@ function childrenAt(nodes: TreeNode[], parent: string): TreeNode[] {
 
 /** Case insensitive on purpose: macOS and Windows would collide anyway. */
 export function siblingExists(nodes: TreeNode[], parent: string, name: string): boolean {
+  return siblingExistsExcept(nodes, parent, name, null);
+}
+
+/** Like `siblingExists`, but a rename may keep its own current name. */
+export function siblingExistsExcept(
+  nodes: TreeNode[],
+  parent: string,
+  name: string,
+  exceptPath: string | null,
+): boolean {
   const target = name.toLowerCase();
-  return childrenAt(nodes, parent).some((node) => node.name.toLowerCase() === target);
+  return childrenAt(nodes, parent).some((node) => {
+    if (exceptPath !== null && node.path === exceptPath) return false;
+    return node.name.toLowerCase() === target;
+  });
+}
+
+/**
+ * Cleans a rename typed in the tree. Unlike create, slashes are refused: this is
+ * a same-folder rename, not a move.
+ */
+export function normalizeRenameName(raw: string, kind: DraftKind): NewNameResult {
+  const trimmed = raw.trim();
+
+  if (trimmed.length === 0) return { ok: false, error: "Escribe un nombre" };
+  if (trimmed.includes("/") || trimmed.includes("\\")) {
+    return { ok: false, error: "El nombre no puede llevar `/`" };
+  }
+  if (trimmed === "." || trimmed === "..") return { ok: false, error: "Ruta inválida" };
+
+  if (kind === "dir") return { ok: true, name: trimmed };
+
+  const name = hasMarkdownExtension(trimmed) ? trimmed : `${trimmed}${MARKDOWN_EXTENSION}`;
+  if (name === MARKDOWN_EXTENSION) return { ok: false, error: "Escribe un nombre" };
+
+  return { ok: true, name };
+}
+
+/** `docs` → `notas` also rewrites `docs/guia.md` to `notas/guia.md`. */
+export function remapPathPrefix(path: string, from: string, to: string): string {
+  if (path === from) return to;
+  if (from.length > 0 && path.startsWith(`${from}/`)) {
+    return `${to}${path.slice(from.length)}`;
+  }
+  return path;
+}
+
+export function pathIsUnder(path: string, folder: string): boolean {
+  return path === folder || (folder.length > 0 && path.startsWith(`${folder}/`));
+}
+
+/** First click activates; a second click inside this window must not (it is a double-click). */
+export const DOUBLE_CLICK_MS = 400;
+
+export interface RowClickStamp {
+  path: string;
+  at: number;
+}
+
+/** True when this click is the second half of a double-click on the same row. */
+export function isSameRowDoubleClick(
+  previous: RowClickStamp | null,
+  path: string,
+  now: number,
+  intervalMs = DOUBLE_CLICK_MS,
+): boolean {
+  if (previous === null) return false;
+  if (previous.path !== path) return false;
+  const delta = now - previous.at;
+  return delta >= 0 && delta < intervalMs;
 }
