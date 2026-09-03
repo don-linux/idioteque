@@ -128,7 +128,10 @@ fn resolve_new_target(root: &str, relative: &str, kind: NewKind) -> Result<PathB
 
     let canonical_root = fs::canonicalize(root).map_err(|error| error.to_string())?;
     let anchor = existing_ancestor(&target).ok_or_else(|| "Ruta inválida".to_string())?;
-    let canonical_anchor = fs::canonicalize(anchor).map_err(|error| error.to_string())?;
+    // A parent that cannot be resolved (a broken symlink, say) has nothing to compare
+    // against the root, so it is refused with a message the sidebar can show.
+    let canonical_anchor =
+        fs::canonicalize(anchor).map_err(|_| "La carpeta destino no existe".to_string())?;
 
     if !canonical_anchor.starts_with(&canonical_root) {
         return Err("La ruta sale de la carpeta abierta".to_string());
@@ -406,6 +409,42 @@ mod tests {
         }
     }
 
+    /// A path outside the fixture root, for the escape tests. Unique per run and
+    /// wiped on drop: an escaped write that survived would make the next run pass
+    /// (or fail) for the wrong reason.
+    #[cfg(unix)]
+    struct Outside {
+        path: PathBuf,
+    }
+
+    #[cfg(unix)]
+    impl Outside {
+        fn new(label: &str) -> Self {
+            let seq = FIXTURE_SEQ.fetch_add(1, Ordering::Relaxed);
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos();
+            let outside = Self {
+                path: std::env::temp_dir().join(format!("idioteque-outside-{label}-{nanos}-{seq}")),
+            };
+            outside.wipe();
+            outside
+        }
+
+        fn wipe(&self) {
+            let _ = fs::remove_file(&self.path);
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for Outside {
+        fn drop(&mut self) {
+            self.wipe();
+        }
+    }
+
     fn names(nodes: &[TreeNode]) -> Vec<&str> {
         nodes.iter().map(|node| node.name.as_str()).collect()
     }
@@ -469,6 +508,58 @@ mod tests {
     }
 
     #[test]
+    fn tree_sorts_folders_then_files_ignoring_case() {
+        let fixture = Fixture::new();
+        fixture.write_md("Zeta.md", "# z\n");
+        fixture.write_md("alfa.md", "# a\n");
+        fixture.mkdir("Zonas");
+        fixture.mkdir("apuntes");
+
+        assert_eq!(
+            names(&fixture.tree()),
+            ["apuntes", "Zonas", "alfa.md", "Zeta.md"]
+        );
+    }
+
+    /// Following a link would list files outside the root and, with a loop, never
+    /// come back. The tree skips them, and reading one is refused as an escape.
+    #[cfg(unix)]
+    #[test]
+    fn tree_ignores_symlinks_so_it_cannot_leave_the_root() {
+        let fixture = Fixture::new();
+        fixture.write_md("README.md", "# root\n");
+
+        let outside = Outside::new("enlazada");
+        fs::create_dir_all(&outside.path).expect("outside dir");
+        fs::write(outside.path.join("secreto.md"), "# fuera\n").expect("outside markdown");
+
+        std::os::unix::fs::symlink(&outside.path, fixture.path("atajo")).expect("dir symlink");
+        std::os::unix::fs::symlink(outside.path.join("secreto.md"), fixture.path("secreto.md"))
+            .expect("file symlink");
+        std::os::unix::fs::symlink(&fixture.root, fixture.path("bucle")).expect("loop symlink");
+
+        assert_eq!(names(&fixture.tree()), ["README.md"]);
+
+        let error = read_markdown(fixture.root_str(), "secreto.md".to_string()).unwrap_err();
+        assert_eq!(error, "La ruta sale de la carpeta abierta");
+    }
+
+    #[test]
+    fn list_context_tree_rejects_a_root_that_is_not_a_folder() {
+        let fixture = Fixture::new();
+        fixture.write_md("README.md", "# root\n");
+
+        let file = fixture.path("README.md").to_string_lossy().into_owned();
+        let error = list_context_tree(file.clone())
+            .err()
+            .expect("a file is not a folder");
+        assert_eq!(error, format!("`{file}` no es una carpeta"));
+
+        let missing = fixture.path("no-existe").to_string_lossy().into_owned();
+        assert!(list_context_tree(missing).is_err());
+    }
+
+    #[test]
     fn tree_skips_node_modules() {
         let fixture = Fixture::new();
         fixture.write_md("docs/note.md", "# note\n");
@@ -488,6 +579,14 @@ mod tests {
         assert_eq!(error, "Ruta inválida");
 
         let error = join_relative(&fixture.root_str(), "docs/../secret.md").unwrap_err();
+        assert_eq!(error, "Ruta inválida");
+
+        // An absolute path would replace the root outright when joined.
+        let error = join_relative(&fixture.root_str(), "/etc/passwd.md").unwrap_err();
+        assert_eq!(error, "Ruta inválida");
+
+        let inside = format!("{}/docs/note.md", fixture.root_str());
+        let error = join_relative(&fixture.root_str(), &inside).unwrap_err();
         assert_eq!(error, "Ruta inválida");
     }
 
@@ -561,8 +660,23 @@ mod tests {
         let escape = create_markdown(root.clone(), "../fuera.md".to_string()).unwrap_err();
         assert_eq!(escape, "Ruta inválida");
 
-        let nested_escape = create_markdown(root, "docs/../../fuera.md".to_string()).unwrap_err();
+        let nested_escape =
+            create_markdown(root.clone(), "docs/../../fuera.md".to_string()).unwrap_err();
         assert_eq!(nested_escape, "Ruta inválida");
+
+        let sibling = format!("{root}-absoluta.md");
+        let absolute = create_markdown(root.clone(), sibling.clone()).unwrap_err();
+        assert_eq!(absolute, "Ruta inválida");
+        assert!(!Path::new(&sibling).exists());
+
+        // Absolute even when it points back inside: the frontend sends relative paths.
+        let absolute_inside =
+            create_markdown(root.clone(), format!("{root}/absoluta.md")).unwrap_err();
+        assert_eq!(absolute_inside, "Ruta inválida");
+        assert!(!fixture.path("absoluta.md").exists());
+
+        let directory_escape = create_directory(root, "../fuera-dir".to_string()).unwrap_err();
+        assert_eq!(directory_escape, "Ruta inválida");
     }
 
     #[test]
@@ -604,34 +718,54 @@ mod tests {
     #[test]
     fn create_markdown_refuses_to_follow_a_broken_symlink() {
         let fixture = Fixture::new();
-        let outside = std::env::temp_dir().join(format!(
-            "idioteque-outside-{}.md",
-            FIXTURE_SEQ.fetch_add(1, Ordering::Relaxed)
-        ));
-        let _ = fs::remove_file(&outside);
-        std::os::unix::fs::symlink(&outside, fixture.path("trampa.md")).expect("symlink");
+        let outside = Outside::new("roto.md");
+        std::os::unix::fs::symlink(&outside.path, fixture.path("trampa.md")).expect("symlink");
 
         let error = create_markdown(fixture.root_str(), "trampa.md".to_string()).unwrap_err();
         assert_eq!(error, "`trampa.md` ya existe");
-        assert!(!outside.exists());
+        assert!(!outside.path.exists());
     }
 
     #[cfg(unix)]
     #[test]
     fn create_markdown_rejects_a_symlinked_parent_outside_the_root() {
         let fixture = Fixture::new();
-        let outside = std::env::temp_dir().join(format!(
-            "idioteque-outside-dir-{}",
-            FIXTURE_SEQ.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&outside).expect("outside dir");
-        std::os::unix::fs::symlink(&outside, fixture.path("fuga")).expect("symlink");
+        let outside = Outside::new("dir");
+        fs::create_dir_all(&outside.path).expect("outside dir");
+        std::os::unix::fs::symlink(&outside.path, fixture.path("fuga")).expect("symlink");
 
         let error = create_markdown(fixture.root_str(), "fuga/nota.md".to_string()).unwrap_err();
         assert_eq!(error, "La ruta sale de la carpeta abierta");
-        assert!(!outside.join("nota.md").exists());
+        assert!(!outside.path.join("nota.md").exists());
 
-        let _ = fs::remove_dir_all(&outside);
+        let directory =
+            create_directory(fixture.root_str(), "fuga/carpeta".to_string()).unwrap_err();
+        assert_eq!(directory, "La ruta sale de la carpeta abierta");
+        assert!(!outside.path.join("carpeta").exists());
+    }
+
+    /// The parent is a symlink that points nowhere, so it cannot be canonicalized and
+    /// there is nothing to compare against the root. Refusing is the only safe answer:
+    /// `create_dir_all` through it would otherwise materialize the link's target.
+    #[cfg(unix)]
+    #[test]
+    fn create_refuses_a_parent_that_is_a_broken_symlink() {
+        let fixture = Fixture::new();
+        let outside = Outside::new("padre-roto");
+        std::os::unix::fs::symlink(&outside.path, fixture.path("fuga")).expect("symlink");
+
+        let file = create_markdown(fixture.root_str(), "fuga/nota.md".to_string()).unwrap_err();
+        assert_eq!(file, "La carpeta destino no existe");
+
+        let directory =
+            create_directory(fixture.root_str(), "fuga/carpeta".to_string()).unwrap_err();
+        assert_eq!(directory, "La carpeta destino no existe");
+
+        // Nothing was created on either side of the link.
+        assert!(!outside.path.exists());
+        assert!(!fixture.path("fuga/nota.md").exists());
+        assert!(!fixture.path("fuga/carpeta").exists());
+        assert_eq!(names(&fixture.tree()), Vec::<&str>::new());
     }
 
     #[test]

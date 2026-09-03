@@ -159,6 +159,18 @@ pub struct LayoutSettingsUpdate {
     pub terminal_dock: String,
 }
 
+impl From<LayoutSettingsUpdate> for StoredLayout {
+    fn from(update: LayoutSettingsUpdate) -> Self {
+        Self {
+            tree_width: update.tree_width,
+            tree_visible: update.tree_visible,
+            terminal_bottom: update.terminal_bottom,
+            terminal_right: update.terminal_right,
+            terminal_dock: update.terminal_dock,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
@@ -592,18 +604,7 @@ pub fn update_layout_settings(
     app: AppHandle,
     layout: LayoutSettingsUpdate,
 ) -> Result<AppConfig, String> {
-    mutate_config(&app, |config| {
-        apply_layout(
-            config,
-            StoredLayout {
-                tree_width: layout.tree_width,
-                tree_visible: layout.tree_visible,
-                terminal_bottom: layout.terminal_bottom,
-                terminal_right: layout.terminal_right,
-                terminal_dock: layout.terminal_dock,
-            },
-        )
-    })
+    mutate_config(&app, |config| apply_layout(config, layout.into()))
 }
 
 #[cfg(test)]
@@ -1231,6 +1232,37 @@ mod tests {
     }
 
     #[test]
+    fn parse_config_fills_in_the_layout_keys_that_are_missing() {
+        let parsed = parse_config(
+            br#"{
+              "version": 1,
+              "recents": [],
+              "layout": { "terminalBottom": 300, "terminalDock": "right" }
+            }"#,
+        );
+
+        assert_eq!(parsed.layout.tree_width, DEFAULT_TREE_WIDTH);
+        assert!(parsed.layout.tree_visible);
+        assert_eq!(parsed.layout.terminal_bottom, 300);
+        assert_eq!(parsed.layout.terminal_right, DEFAULT_TERMINAL_RIGHT);
+        assert_eq!(parsed.layout.terminal_dock, "right");
+    }
+
+    /// The frontend clamps against the viewport with its own copy of these numbers
+    /// (`src/lib/panel-resize.ts`). If they drift, a stored layout stops round tripping.
+    #[test]
+    fn layout_bounds_match_the_frontend_contract() {
+        assert_eq!(MIN_TREE_WIDTH, 140);
+        assert_eq!(MIN_TERMINAL_BOTTOM, 120);
+        assert_eq!(MIN_TERMINAL_RIGHT, 200);
+        assert_eq!(MAX_PANEL_SIZE, 4000);
+        assert_eq!(DEFAULT_TREE_WIDTH, 260);
+        assert_eq!(DEFAULT_TERMINAL_BOTTOM, 280);
+        assert_eq!(DEFAULT_TERMINAL_RIGHT, 380);
+        assert_eq!(KNOWN_TERMINAL_DOCKS, ["bottom", "right"]);
+    }
+
+    #[test]
     fn annotate_clamps_layout_and_falls_back_to_bottom_dock() {
         let mut config = default_config();
         config.layout = StoredLayout {
@@ -1274,6 +1306,31 @@ mod tests {
         let annotated = annotate(config);
         assert!(!annotated.layout.tree_visible);
         assert_eq!(annotated.layout.tree_width, 320);
+    }
+
+    /// What `update_layout_settings` hands to `apply_layout`: the command itself
+    /// needs an `AppHandle`, so the mapping is what a test can hold on to.
+    #[test]
+    fn a_layout_update_keeps_every_field_on_its_way_to_disk() {
+        let stored: StoredLayout = LayoutSettingsUpdate {
+            tree_width: 321,
+            tree_visible: false,
+            terminal_bottom: 322,
+            terminal_right: 323,
+            terminal_dock: "right".into(),
+        }
+        .into();
+
+        assert_eq!(
+            stored,
+            StoredLayout {
+                tree_width: 321,
+                tree_visible: false,
+                terminal_bottom: 322,
+                terminal_right: 323,
+                terminal_dock: "right".into(),
+            }
+        );
     }
 
     #[test]

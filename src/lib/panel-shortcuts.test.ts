@@ -37,6 +37,15 @@ describe("isTreeToggleShortcut", () => {
     expect(isTreeToggleShortcut(key({ shiftKey: true }))).toBe(false);
     expect(isTreeToggleShortcut(key({ altKey: true }))).toBe(false);
   });
+
+  // `code` has to match whole, not by suffix or substring: a looser comparison
+  // would hand unrelated physical keys the tree toggle.
+  it("compares the whole code, not part of it", () => {
+    for (const code of ["IntlB", "KeyBB", "BracketLeftB", "keyb", "Key", "B", ""]) {
+      expect(isTreeToggleShortcut(key({ code }))).toBe(false);
+      expect(isTreeToggleAnywhereShortcut(key({ code, shiftKey: true }))).toBe(false);
+    }
+  });
 });
 
 describe("isTreeToggleAnywhereShortcut", () => {
@@ -125,6 +134,46 @@ describe("handleTreeToggleShortcut", () => {
 
     expect(toggleTree).not.toHaveBeenCalled();
     expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
+  // How the layout wires it: the target of the keydown decides `insideTerminal`.
+  it("lets tmux keep Ctrl+B when the event came from an xterm surface", () => {
+    const target = { closest: (selector: string) => (selector === ".xterm" ? {} : null) };
+    const event = key();
+    const toggleTree = vi.fn();
+
+    handleTreeToggleShortcut(event, {
+      hasWorkspace: true,
+      insideTerminal: isTerminalTarget(target as unknown as EventTarget),
+      toggleTree,
+    });
+
+    expect(toggleTree).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+
+    const anywhere = key({ shiftKey: true });
+    handleTreeToggleShortcut(anywhere, {
+      hasWorkspace: true,
+      insideTerminal: isTerminalTarget(target as unknown as EventTarget),
+      toggleTree,
+    });
+
+    expect(toggleTree).toHaveBeenCalledTimes(1);
+  });
+
+  it("toggles on Ctrl+B when the event came from the editor", () => {
+    const target = { closest: () => null };
+    const event = key();
+    const toggleTree = vi.fn();
+
+    handleTreeToggleShortcut(event, {
+      hasWorkspace: true,
+      insideTerminal: isTerminalTarget(target as unknown as EventTarget),
+      toggleTree,
+    });
+
+    expect(toggleTree).toHaveBeenCalledTimes(1);
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
   });
 });
 

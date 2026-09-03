@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   clampPanelSize,
+  DEFAULT_TREE_WIDTH,
   dragSize,
   FOOTER_HEIGHT,
   MAX_PANEL_RATIO,
@@ -14,6 +15,7 @@ import {
   terminalBottomReserve,
   terminalRightReserve,
   treeReserve,
+  TREE_WIDTH_STEP,
 } from "./panel-resize";
 
 describe("panelMaximum", () => {
@@ -39,6 +41,12 @@ describe("panelMaximum", () => {
 
   it("ignores a negative reserve", () => {
     expect(panelMaximum(MIN_TREE_WIDTH, 1000, -500)).toBe(800);
+  });
+
+  it("floors a fractional viewport, so neither bound leaks a pixel", () => {
+    expect(panelMaximum(MIN_TREE_WIDTH, 1200.5, treeReserve(675))).toBe(201);
+    expect(panelMaximum(MIN_TREE_WIDTH, 2000.5)).toBe(1600);
+    expect(panelMaximum(MIN_TREE_WIDTH, 2000.5)).toBeLessThanOrEqual(2000.5 * MAX_PANEL_RATIO);
   });
 });
 
@@ -71,6 +79,14 @@ describe("clampPanelSize", () => {
 });
 
 describe("reserves", () => {
+  it("mirrors the CSS geometry it has to reserve", () => {
+    // The workspace grid puts a 4px sash next to the tree, and the footer of the
+    // IDE layout is --footer-height: 2.75rem. Drifting from those starves the editor.
+    expect(SASH_SIZE).toBe(4);
+    expect(FOOTER_HEIGHT).toBe(44);
+    expect(terminalBottomReserve()).toBe(MIN_EDITOR_HEIGHT + 44);
+  });
+
   it("keeps the editor and a right docked terminal out of the tree's budget", () => {
     expect(treeReserve(0)).toBe(MIN_EDITOR_WIDTH + SASH_SIZE);
     expect(treeReserve(380)).toBe(MIN_EDITOR_WIDTH + SASH_SIZE + 380);
@@ -124,6 +140,101 @@ describe("reserves", () => {
 
     expect(size).toBe(viewport - MIN_EDITOR_HEIGHT - FOOTER_HEIGHT);
     expect(size).toBeLessThan(Math.floor(viewport * MAX_PANEL_RATIO));
+  });
+});
+
+/**
+ * The reserves only hold if they hold for every window, not for the one case that
+ * was easy to write down. `fitWidth` mirrors the order `WorkspacePanels.fit` uses:
+ * the tree yields first, then the terminal works around the width it kept.
+ */
+describe("the editor minimum survives any window", () => {
+  /** Smallest window where all four regions fit at once: below it, the editor pays. */
+  const SMALLEST_ROOMY = MIN_TREE_WIDTH + SASH_SIZE + MIN_TERMINAL_RIGHT + MIN_EDITOR_WIDTH;
+
+  const viewports = [SMALLEST_ROOMY, 700, 900.5, 1200, 1279.5, 1600, 2560.5];
+  const treeRequests = [0, MIN_TREE_WIDTH, DEFAULT_TREE_WIDTH, 900, 5000];
+
+  function fitWidth(viewport: number, tree: number, dock: number) {
+    const treeWidth = clampPanelSize(tree, MIN_TREE_WIDTH, viewport, treeReserve(dock));
+    const dockWidth = clampPanelSize(
+      dock,
+      MIN_TERMINAL_RIGHT,
+      viewport,
+      terminalRightReserve(treeWidth),
+    );
+
+    return { treeWidth, dockWidth, editor: viewport - treeWidth - SASH_SIZE - dockWidth };
+  }
+
+  it("keeps the tree away from the editor when no terminal is docked right", () => {
+    for (const viewport of viewports) {
+      for (const request of treeRequests) {
+        const treeWidth = clampPanelSize(request, MIN_TREE_WIDTH, viewport, treeReserve(0));
+
+        expect(Number.isInteger(treeWidth)).toBe(true);
+        expect(treeWidth).toBeGreaterThanOrEqual(MIN_TREE_WIDTH);
+        expect(treeWidth).toBeLessThanOrEqual(viewport * MAX_PANEL_RATIO);
+        expect(viewport - treeWidth - SASH_SIZE).toBeGreaterThanOrEqual(MIN_EDITOR_WIDTH);
+      }
+    }
+  });
+
+  it("keeps both panels away from the editor with the terminal docked right", () => {
+    for (const viewport of viewports) {
+      for (const tree of treeRequests) {
+        for (const dock of [MIN_TERMINAL_RIGHT, 380, 675, 5000]) {
+          const { treeWidth, dockWidth, editor } = fitWidth(viewport, tree, dock);
+
+          expect(Number.isInteger(treeWidth)).toBe(true);
+          expect(Number.isInteger(dockWidth)).toBe(true);
+          expect(treeWidth).toBeGreaterThanOrEqual(MIN_TREE_WIDTH);
+          expect(dockWidth).toBeGreaterThanOrEqual(MIN_TERMINAL_RIGHT);
+          expect(treeWidth).toBeLessThanOrEqual(viewport * MAX_PANEL_RATIO);
+          expect(dockWidth).toBeLessThanOrEqual(viewport * MAX_PANEL_RATIO);
+          expect(editor).toBeGreaterThanOrEqual(MIN_EDITOR_WIDTH);
+        }
+      }
+    }
+  });
+
+  it("keeps the editor under a bottom docked terminal in any window", () => {
+    const shortest = MIN_TERMINAL_BOTTOM + MIN_EDITOR_HEIGHT + FOOTER_HEIGHT;
+
+    for (const viewport of [shortest, 500, 720.5, 1080]) {
+      for (const request of [0, MIN_TERMINAL_BOTTOM, 280, 5000]) {
+        const size = clampPanelSize(
+          request,
+          MIN_TERMINAL_BOTTOM,
+          viewport,
+          terminalBottomReserve(),
+        );
+
+        expect(size).toBeGreaterThanOrEqual(MIN_TERMINAL_BOTTOM);
+        expect(viewport - size - FOOTER_HEIGHT).toBeGreaterThanOrEqual(MIN_EDITOR_HEIGHT);
+      }
+    }
+  });
+
+  it("only starves the editor in a window too small for every minimum", () => {
+    const tiny = SMALLEST_ROOMY - 1;
+    const { treeWidth, dockWidth, editor } = fitWidth(tiny, 5000, 5000);
+
+    expect(treeWidth).toBe(MIN_TREE_WIDTH);
+    expect(dockWidth).toBe(MIN_TERMINAL_RIGHT);
+    expect(editor).toBe(MIN_EDITOR_WIDTH - 1);
+  });
+});
+
+describe("TREE_WIDTH_STEP", () => {
+  it("moves the panel when the sash is nudged with the keyboard", () => {
+    const start = DEFAULT_TREE_WIDTH;
+    const wider = clampPanelSize(start + TREE_WIDTH_STEP, MIN_TREE_WIDTH, 1400);
+    const narrower = clampPanelSize(start - TREE_WIDTH_STEP, MIN_TREE_WIDTH, 1400);
+
+    expect(wider).toBeGreaterThan(start);
+    expect(narrower).toBeLessThan(start);
+    expect(wider - start).toBe(start - narrower);
   });
 });
 

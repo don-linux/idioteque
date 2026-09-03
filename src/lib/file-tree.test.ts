@@ -128,9 +128,28 @@ describe("flattenTree", () => {
       draft: { kind: "file", parent: "borrada" },
     });
 
-    const drafts = rows.filter((row) => row.kind === "draft");
-    expect(drafts).toHaveLength(1);
-    expect(drafts[0].depth).toBe(0);
+    // The whole shape, so the fallback cannot reorder or drop the real entries.
+    expect(shape(rows)).toEqual([
+      "0:dir:docs",
+      "0:dir:src",
+      "0:file:README.md",
+      "0:draft:file",
+    ]);
+    expect(rows.filter((row) => row.kind === "draft")).toHaveLength(1);
+  });
+
+  it("still shows a draft whose parent hides under a collapsed folder", () => {
+    const rows = flattenTree(tree(), {
+      expanded: new Set(),
+      draft: { kind: "file", parent: "docs/sub" },
+    });
+
+    expect(shape(rows)).toEqual([
+      "0:dir:docs",
+      "0:dir:src",
+      "0:file:README.md",
+      "0:draft:file",
+    ]);
   });
 
   it("emits a single draft row even for a deeply nested parent", () => {
@@ -179,6 +198,11 @@ describe("ancestorsOf / revealPath", () => {
     expect(ancestorsOf("a/b/c.md")).toEqual(["a", "a/b"]);
     expect(ancestorsOf("README.md")).toEqual([]);
     expect(ancestorsOf("")).toEqual([]);
+  });
+
+  it("ignores empty segments instead of inventing a folder", () => {
+    expect(ancestorsOf("a//b/c.md")).toEqual(["a", "a/b"]);
+    expect(ancestorsOf("/a/b.md")).toEqual(["a"]);
   });
 
   it("expands every ancestor and keeps what was open", () => {
@@ -239,6 +263,7 @@ describe("normalizeNewName", () => {
 
   it("keeps other extensions and appends .md", () => {
     expect(normalizeNewName("script.ts", "file")).toEqual({ ok: true, name: "script.ts.md" });
+    expect(normalizeNewName("nota.md.txt", "file")).toEqual({ ok: true, name: "nota.md.txt.md" });
   });
 
   it("trims spaces and surrounding slashes", () => {
@@ -309,6 +334,11 @@ describe("hasMarkdownExtension", () => {
     expect(hasMarkdownExtension("a.markdown")).toBe(false);
     expect(hasMarkdownExtension("md")).toBe(false);
   });
+
+  it("looks at the end of the name, not anywhere in it", () => {
+    expect(hasMarkdownExtension("a.md.txt")).toBe(false);
+    expect(hasMarkdownExtension(".md.old")).toBe(false);
+  });
 });
 
 describe("siblingExists", () => {
@@ -329,5 +359,25 @@ describe("siblingExists", () => {
   it("reports no collision for an unknown parent", () => {
     expect(siblingExists(tree(), "nueva", "nota.md")).toBe(false);
     expect(siblingExists(tree(), "src", "nota.md")).toBe(false);
+  });
+
+  it("does not answer for a parent with the children of another folder", () => {
+    // Names that do exist, but somewhere else: a fallback to the root entries
+    // would block a perfectly free name.
+    expect(siblingExists(tree(), "nueva", "README.md")).toBe(false);
+    expect(siblingExists(tree(), "nueva", "docs")).toBe(false);
+    expect(siblingExists(tree(), "src", "README.md")).toBe(false);
+    expect(siblingExists(tree(), "docs/sub", "guia.md")).toBe(false);
+  });
+
+  it("does not confuse a folder with a longer name that starts the same", () => {
+    const nodes = [
+      dir("docs", "docs", [file("guia.md", "docs/guia.md")]),
+      dir("docs-viejos", "docs-viejos", [file("antiguo.md", "docs-viejos/antiguo.md")]),
+    ];
+
+    expect(siblingExists(nodes, "docs-viejos", "antiguo.md")).toBe(true);
+    expect(siblingExists(nodes, "docs-viejos", "guia.md")).toBe(false);
+    expect(siblingExists(nodes, "docs", "antiguo.md")).toBe(false);
   });
 });
