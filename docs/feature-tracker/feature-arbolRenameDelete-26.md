@@ -35,11 +35,13 @@ footer: solo en ese menú.
 
 **4. Renombrar en el sitio**
 
-Desde el menú o con F2 en la fila enfocada, el nombre se vuelve un
-campo. Enter confirma, Escape o salir cancela. A un archivo se le pone
-`.md` si falta. No se puede meter una barra para moverlo a otra carpeta.
-Si el nombre choca, el aviso sale abajo y se puede corregir. Las
-pestañas abiertas y las carpetas desplegadas siguen a la ruta nueva.
+Doble clic en el archivo o la carpeta, F2 con la fila enfocada, o
+Renombrar en el menú: el nombre se vuelve un campo. Un solo clic sigue
+abriendo el archivo o expandiendo la carpeta. Enter confirma, Escape o
+salir cancela. A un archivo se le pone `.md` si falta. No se puede meter
+una barra para moverlo a otra carpeta. Si el nombre choca, el aviso sale
+abajo y se puede corregir. Las pestañas abiertas y las carpetas
+desplegadas siguen a la ruta nueva.
 
 **5. Borrar carpetas**
 

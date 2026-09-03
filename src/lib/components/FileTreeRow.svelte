@@ -122,6 +122,8 @@
     onContextMenu(event);
   }
 
+  // Two clicks fire before dblclick. The first opens or toggles; the second
+  // must not, or a folder would collapse and then rename.
   function onRowClick(): void {
     const now = Date.now();
     const second = isSameRowDoubleClick(lastClick, row.path, now);
