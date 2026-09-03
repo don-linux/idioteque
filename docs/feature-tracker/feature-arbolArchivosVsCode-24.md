@@ -50,12 +50,19 @@ Se quitó el scroll lateral raro. El ancho de la caja se ajusta
 arrastrando el borde derecho, como en VS Code. Los nombres que no caben
 se recortan con puntos suspensivos.
 
+El editor nunca se queda sin espacio: el árbol deja de crecer antes de
+aplastarlo, y si abres la terminal a la derecha y ya no cabe todo, el
+árbol cede. Lo mismo si achicas la ventana.
+
 **5. Mostrar y ocultar el árbol**
 
 Un icono nuevo en el footer esconde o muestra el árbol, y `Ctrl+B` hace
 lo mismo. Ya se pueden minimizar los dos paneles: la terminal y el
-árbol. Con el foco dentro de la terminal el atajo no aplica, para no
-robarle el prefijo a tmux.
+árbol.
+
+Con el foco dentro de la terminal, `Ctrl+B` es de la terminal (es el
+prefijo de tmux) y el atajo pasa a ser `Ctrl+Shift+B`, que funciona en
+cualquier lado.
 
 **6. La vista workspace en componentes**
 
@@ -78,8 +85,12 @@ excluir más directorios.
 **8. El layout se recuerda**
 
 En `~/.idioteque/config.json` se guardan el ancho del árbol, si el árbol
-está visible, y el tamaño y el lado de la terminal. Se escribe al soltar
-el arrastre o al alternar un panel.
+está visible, el lado que usó la terminal la última vez y su tamaño en
+cada lado (uno para abajo, otro para la derecha). Se escribe al soltar el
+arrastre o al alternar un panel, no en cada pixel del movimiento.
+
+El lado guardado no cambia los atajos: `Ctrl+J` sigue poniendo la
+terminal abajo y `Ctrl+Alt+J` a la derecha.
 
 Lo que no se guarda: si la terminal estaba abierta — siempre entra
 cerrada — ni qué carpetas quedaron desplegadas.
