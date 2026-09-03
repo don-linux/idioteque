@@ -6,6 +6,7 @@ import {
   flattenTree,
   folderNameOf,
   hasMarkdownExtension,
+  isSameRowDoubleClick,
   joinTreePath,
   normalizeNewName,
   normalizeRenameName,
@@ -16,6 +17,7 @@ import {
   siblingExists,
   siblingExistsExcept,
   toggleExpanded,
+  DOUBLE_CLICK_MS,
   type TreeRow,
 } from "./file-tree";
 import type { TreeNode } from "./workspace.svelte";
@@ -437,5 +439,25 @@ describe("pathIsUnder", () => {
     expect(pathIsUnder("docs", "docs")).toBe(true);
     expect(pathIsUnder("docs/guia.md", "docs")).toBe(true);
     expect(pathIsUnder("docs-viejos", "docs")).toBe(false);
+  });
+});
+
+describe("isSameRowDoubleClick", () => {
+  const first = { path: "docs/guia.md", at: 1_000 };
+
+  it("treats the first click as a single click", () => {
+    expect(isSameRowDoubleClick(null, "docs/guia.md", 1_000)).toBe(false);
+  });
+
+  it("detects a second click on the same row inside the window", () => {
+    expect(isSameRowDoubleClick(first, "docs/guia.md", 1_000 + DOUBLE_CLICK_MS - 1)).toBe(true);
+  });
+
+  it("lets a later click on the same row activate again", () => {
+    expect(isSameRowDoubleClick(first, "docs/guia.md", 1_000 + DOUBLE_CLICK_MS)).toBe(false);
+  });
+
+  it("does not treat a fast click on another row as a double-click", () => {
+    expect(isSameRowDoubleClick(first, "docs", 1_050)).toBe(false);
   });
 });

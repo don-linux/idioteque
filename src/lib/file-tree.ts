@@ -241,3 +241,24 @@ export function remapPathPrefix(path: string, from: string, to: string): string 
 export function pathIsUnder(path: string, folder: string): boolean {
   return path === folder || (folder.length > 0 && path.startsWith(`${folder}/`));
 }
+
+/** First click activates; a second click inside this window must not (it is a double-click). */
+export const DOUBLE_CLICK_MS = 400;
+
+export interface RowClickStamp {
+  path: string;
+  at: number;
+}
+
+/** True when this click is the second half of a double-click on the same row. */
+export function isSameRowDoubleClick(
+  previous: RowClickStamp | null,
+  path: string,
+  now: number,
+  intervalMs = DOUBLE_CLICK_MS,
+): boolean {
+  if (previous === null) return false;
+  if (previous.path !== path) return false;
+  const delta = now - previous.at;
+  return delta >= 0 && delta < intervalMs;
+}
