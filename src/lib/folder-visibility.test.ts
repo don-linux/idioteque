@@ -5,6 +5,8 @@ import {
   folderName,
   includeCreatedRootFolder,
   needsFolderPicker,
+  removeVisibleRootFolder,
+  renameVisibleRootFolder,
   pathKeysMatch,
   shouldShowFolderVisibilityToast,
   visibilityFor,
@@ -69,6 +71,28 @@ describe("includeCreatedRootFolder", () => {
     expect(includeCreatedRootFolder(["src"], "src", "lib")).toEqual(["src"]);
     expect(includeCreatedRootFolder(null, "", "notas")).toBeNull();
     expect(includeCreatedRootFolder(["src"], "", "src")).toEqual(["src"]);
+  });
+});
+
+describe("renameVisibleRootFolder", () => {
+  it("renames a root folder inside an active filter", () => {
+    expect(renameVisibleRootFolder(["src", "docs"], "docs", "notas")).toEqual(["src", "notas"]);
+  });
+
+  it("leaves an unfiltered tree and unknown names alone", () => {
+    expect(renameVisibleRootFolder(null, "docs", "notas")).toBeNull();
+    expect(renameVisibleRootFolder(["src"], "docs", "notas")).toEqual(["src"]);
+  });
+});
+
+describe("removeVisibleRootFolder", () => {
+  it("drops a deleted root folder from the filter", () => {
+    expect(removeVisibleRootFolder(["src", "docs"], "docs")).toEqual(["src"]);
+    expect(removeVisibleRootFolder(["docs"], "docs")).toEqual([]);
+  });
+
+  it("leaves an unfiltered tree alone", () => {
+    expect(removeVisibleRootFolder(null, "docs")).toBeNull();
   });
 });
 

@@ -1,5 +1,6 @@
 import type { EditorState } from "@codemirror/state";
 import type { EditorView } from "codemirror";
+import { remapPathPrefix } from "$lib/file-tree";
 import { canUndoFromState, undoEditor } from "$lib/editor-undo";
 
 class EditorSession {
@@ -42,6 +43,24 @@ class EditorSession {
   dropState(path: string): void {
     this.#states.delete(path);
     this.#dropped.add(path);
+  }
+
+  remapStatesUnder(from: string, to: string): void {
+    if (from === to) return;
+
+    const paths = new Set([...this.#states.keys(), ...this.#dropped]);
+    for (const path of paths) {
+      const next = remapPathPrefix(path, from, to);
+      if (next === path) continue;
+
+      const state = this.#states.get(path);
+      if (state) {
+        this.#states.delete(path);
+        this.#states.set(next, state);
+      }
+
+      if (this.#dropped.delete(path)) this.#dropped.add(next);
+    }
   }
 
   clearStates(): void {

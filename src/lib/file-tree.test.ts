@@ -8,9 +8,13 @@ import {
   hasMarkdownExtension,
   joinTreePath,
   normalizeNewName,
+  normalizeRenameName,
   parentDirOf,
+  pathIsUnder,
+  remapPathPrefix,
   revealPath,
   siblingExists,
+  siblingExistsExcept,
   toggleExpanded,
   type TreeRow,
 } from "./file-tree";
@@ -379,5 +383,59 @@ describe("siblingExists", () => {
     expect(siblingExists(nodes, "docs-viejos", "antiguo.md")).toBe(true);
     expect(siblingExists(nodes, "docs-viejos", "guia.md")).toBe(false);
     expect(siblingExists(nodes, "docs", "antiguo.md")).toBe(false);
+  });
+});
+
+describe("siblingExistsExcept", () => {
+  it("lets a rename keep its own name", () => {
+    expect(siblingExistsExcept(tree(), "", "README.md", "README.md")).toBe(false);
+    expect(siblingExistsExcept(tree(), "docs", "guia.md", "docs/guia.md")).toBe(false);
+  });
+
+  it("still reports a different sibling", () => {
+    expect(siblingExistsExcept(tree(), "", "docs", "README.md")).toBe(true);
+    expect(siblingExistsExcept(tree(), "docs", "guia.md", "docs/otra.md")).toBe(true);
+  });
+});
+
+describe("normalizeRenameName", () => {
+  it("adds .md to files and leaves folders alone", () => {
+    expect(normalizeRenameName("nota", "file")).toEqual({ ok: true, name: "nota.md" });
+    expect(normalizeRenameName("nota.md", "file")).toEqual({ ok: true, name: "nota.md" });
+    expect(normalizeRenameName("notas", "dir")).toEqual({ ok: true, name: "notas" });
+  });
+
+  it("refuses slashes so a rename cannot become a move", () => {
+    expect(normalizeRenameName("sub/nota", "file").ok).toBe(false);
+    expect(normalizeRenameName("2026/enero", "dir").ok).toBe(false);
+    expect(normalizeRenameName("a\\b", "dir").ok).toBe(false);
+  });
+
+  it("rejects empty names and traversal", () => {
+    expect(normalizeRenameName("   ", "file").ok).toBe(false);
+    expect(normalizeRenameName(".", "dir").ok).toBe(false);
+    expect(normalizeRenameName("..", "file").ok).toBe(false);
+    expect(normalizeRenameName(".md", "file").ok).toBe(false);
+  });
+});
+
+describe("remapPathPrefix", () => {
+  it("rewrites the folder and every path under it", () => {
+    expect(remapPathPrefix("docs", "docs", "notas")).toBe("notas");
+    expect(remapPathPrefix("docs/guia.md", "docs", "notas")).toBe("notas/guia.md");
+    expect(remapPathPrefix("docs/sub/nota.md", "docs", "notas")).toBe("notas/sub/nota.md");
+  });
+
+  it("does not rewrite a sibling that only starts the same", () => {
+    expect(remapPathPrefix("docs-viejos/guia.md", "docs", "notas")).toBe("docs-viejos/guia.md");
+    expect(remapPathPrefix("README.md", "docs", "notas")).toBe("README.md");
+  });
+});
+
+describe("pathIsUnder", () => {
+  it("includes the folder itself and its children", () => {
+    expect(pathIsUnder("docs", "docs")).toBe(true);
+    expect(pathIsUnder("docs/guia.md", "docs")).toBe(true);
+    expect(pathIsUnder("docs-viejos", "docs")).toBe(false);
   });
 });
