@@ -1,5 +1,7 @@
 import {
+  HINT_TOAST_DURATION_MS,
   TOAST_DURATION_MS,
+  createHintToast,
   createSuccessToast,
   withoutToast,
   type ToastItem,
@@ -11,11 +13,11 @@ class ToastBus {
   #timers = new Map<number, ReturnType<typeof setTimeout>>();
 
   success(message: string): number {
-    const id = ++this.#nextId;
-    this.items = [...this.items, createSuccessToast(id, message)];
-    const timer = setTimeout(() => this.dismiss(id), TOAST_DURATION_MS);
-    this.#timers.set(id, timer);
-    return id;
+    return this.#push(createSuccessToast(++this.#nextId, message), TOAST_DURATION_MS);
+  }
+
+  hint(message: string): number {
+    return this.#push(createHintToast(++this.#nextId, message), HINT_TOAST_DURATION_MS);
   }
 
   dismiss(id: number): void {
@@ -25,6 +27,13 @@ class ToastBus {
       this.#timers.delete(id);
     }
     this.items = withoutToast(this.items, id);
+  }
+
+  #push(toast: ToastItem, duration: number): number {
+    this.items = [...this.items, toast];
+    const timer = setTimeout(() => this.dismiss(toast.id), duration);
+    this.#timers.set(toast.id, timer);
+    return toast.id;
   }
 }
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, type Snippet } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import FolderVisibilityModal from "$lib/components/FolderVisibilityModal.svelte";
   import ToastHost from "$lib/components/ToastHost.svelte";
   import UnsavedExitModal from "$lib/components/UnsavedExitModal.svelte";
   import { appConfig } from "$lib/app-config.svelte";
@@ -46,6 +47,7 @@
   </div>
 </div>
 <UnsavedExitModal />
+<FolderVisibilityModal />
 <ToastHost />
 
 <style>

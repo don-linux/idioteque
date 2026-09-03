@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
@@ -12,20 +13,27 @@ const MARKDOWN_EXTENSION: &str = "md";
 /// Noise we never walk. Hidden agent dirs (`.cursor`, `.agents`, …) are not here.
 const SKIP_DIRS: [&str; 5] = [".git", "node_modules", "target", "dist", ".svelte-kit"];
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NodeKind {
     Dir,
     File,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct TreeNode {
     name: String,
     /// Slash separated, relative to the opened workspace root.
     path: String,
     kind: NodeKind,
     children: Vec<TreeNode>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceDirs {
+    pub root: String,
+    pub dirs: Vec<String>,
 }
 
 fn is_markdown(path: &Path) -> bool {
@@ -144,7 +152,68 @@ fn resolve_new_target(root: &str, relative: &str, kind: NewKind) -> Result<PathB
     Ok(canonical_anchor.join(rest))
 }
 
-fn collect_children(directory: &Path, prefix: &str) -> Vec<TreeNode> {
+fn strip_windows_extended_prefix(path: &str) -> &str {
+    match path.strip_prefix(r#"\\?\"#) {
+        Some(rest) if !rest.starts_with("UNC\\") && !rest.starts_with("UNC/") => rest,
+        _ => path,
+    }
+}
+
+fn portable_path(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    strip_windows_extended_prefix(&raw).to_string()
+}
+
+/// Immediate child names only: one normal component, no `..` or slashes.
+fn include_dir_set(root: &str, include_dirs: &[String]) -> Result<HashSet<String>, String> {
+    let mut allowed = HashSet::with_capacity(include_dirs.len());
+
+    for name in include_dirs {
+        join_relative(root, name)?;
+
+        if Path::new(name).components().count() != 1 {
+            return Err("Ruta inválida".to_string());
+        }
+
+        allowed.insert(name.clone());
+    }
+
+    Ok(allowed)
+}
+
+fn list_immediate_dirs(directory: &Path) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return Vec::new();
+    };
+
+    let mut dirs = Vec::new();
+
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+
+        if file_type.is_symlink() || !file_type.is_dir() {
+            continue;
+        }
+
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if should_skip_dir(&name) {
+            continue;
+        }
+
+        dirs.push(name);
+    }
+
+    dirs.sort_by_key(|name| name.to_lowercase());
+    dirs
+}
+
+fn collect_children(
+    directory: &Path,
+    prefix: &str,
+    include: Option<&HashSet<String>>,
+) -> Vec<TreeNode> {
     let Ok(entries) = fs::read_dir(directory) else {
         return Vec::new();
     };
@@ -169,9 +238,17 @@ fn collect_children(directory: &Path, prefix: &str) -> Vec<TreeNode> {
                 continue;
             }
 
+            // Visibility filter applies only at this level. Nested walks pass
+            // `None` so a selected folder still shows its full subtree.
+            if let Some(allowed) = include {
+                if !allowed.contains(&name) {
+                    continue;
+                }
+            }
+
             // Every directory outside the blacklist shows, markdown inside or not:
             // otherwise a folder the user just created would be invisible.
-            let children = collect_children(&entry.path(), &path);
+            let children = collect_children(&entry.path(), &path, None);
 
             directories.push(TreeNode {
                 name,
@@ -196,14 +273,38 @@ fn collect_children(directory: &Path, prefix: &str) -> Vec<TreeNode> {
 }
 
 #[tauri::command]
-pub fn list_context_tree(root: String) -> Result<Vec<TreeNode>, String> {
+pub fn list_workspace_dirs(root: String) -> Result<WorkspaceDirs, String> {
     let root_path = Path::new(&root);
 
     if !root_path.is_dir() {
         return Err(format!("`{root}` no es una carpeta"));
     }
 
-    Ok(collect_children(root_path, ""))
+    let canonical = fs::canonicalize(root_path).map_err(|error| error.to_string())?;
+
+    Ok(WorkspaceDirs {
+        root: portable_path(&canonical),
+        dirs: list_immediate_dirs(&canonical),
+    })
+}
+
+#[tauri::command]
+pub fn list_context_tree(
+    root: String,
+    include_dirs: Option<Vec<String>>,
+) -> Result<Vec<TreeNode>, String> {
+    let root_path = Path::new(&root);
+
+    if !root_path.is_dir() {
+        return Err(format!("`{root}` no es una carpeta"));
+    }
+
+    let allowed = match include_dirs.as_deref() {
+        Some(dirs) => Some(include_dir_set(&root, dirs)?),
+        None => None,
+    };
+
+    Ok(collect_children(root_path, "", allowed.as_ref()))
 }
 
 #[tauri::command]
@@ -399,7 +500,15 @@ mod tests {
         }
 
         fn tree(&self) -> Vec<TreeNode> {
-            list_context_tree(self.root_str()).expect("list tree")
+            list_context_tree(self.root_str(), None).expect("list tree")
+        }
+
+        fn tree_filtered(&self, include: &[&str]) -> Vec<TreeNode> {
+            list_context_tree(
+                self.root_str(),
+                Some(include.iter().map(|name| (*name).to_string()).collect()),
+            )
+            .expect("list filtered tree")
         }
     }
 
@@ -550,13 +659,13 @@ mod tests {
         fixture.write_md("README.md", "# root\n");
 
         let file = fixture.path("README.md").to_string_lossy().into_owned();
-        let error = list_context_tree(file.clone())
+        let error = list_context_tree(file.clone(), None)
             .err()
             .expect("a file is not a folder");
         assert_eq!(error, format!("`{file}` no es una carpeta"));
 
         let missing = fixture.path("no-existe").to_string_lossy().into_owned();
-        assert!(list_context_tree(missing).is_err());
+        assert!(list_context_tree(missing, None).is_err());
     }
 
     #[test]
@@ -791,6 +900,94 @@ mod tests {
 
         let error = delete_markdown(fixture.root_str(), "docs/notes.txt".to_string()).unwrap_err();
         assert_eq!(error, "Solo se pueden abrir archivos .md");
+    }
+
+    #[test]
+    fn list_workspace_dirs_lists_immediate_children_only() {
+        let fixture = Fixture::new();
+        fixture.write_md("README.md", "# root\n");
+        fixture.write_md("docs/guide.md", "# guide\n");
+        fixture.write_md(".cursor/rules/agent.md", "# cursor\n");
+        fixture.write_md("src/nested/deep.md", "# deep\n");
+        fixture.mkdir("empty");
+        fixture.write_md("node_modules/pkg/README.md", "# skip\n");
+        fixture.mkdir("target");
+
+        let listed = list_workspace_dirs(fixture.root_str()).expect("list dirs");
+        assert_eq!(listed.dirs, [".cursor", "docs", "empty", "src"]);
+        assert!(Path::new(&listed.root).is_dir());
+        assert!(!listed.dirs.iter().any(|name| name == "nested"));
+        assert!(!listed.dirs.iter().any(|name| name == "node_modules"));
+        assert!(!listed.dirs.iter().any(|name| name == "target"));
+    }
+
+    #[test]
+    fn list_workspace_dirs_rejects_files() {
+        let fixture = Fixture::new();
+        fixture.write_md("note.md", "x\n");
+        let file = fixture.path("note.md");
+
+        let error = list_workspace_dirs(file.to_string_lossy().into_owned()).unwrap_err();
+        assert!(error.contains("no es una carpeta"));
+    }
+
+    #[test]
+    fn list_context_tree_include_dirs_keeps_root_md_and_selected() {
+        let fixture = Fixture::new();
+        fixture.write_md("README.md", "# root\n");
+        fixture.write_md("docs/guide.md", "# guide\n");
+        fixture.write_md(".cursor/rules/agent.md", "# cursor\n");
+        fixture.write_md("src/nested/deep.md", "# deep\n");
+
+        let tree = fixture.tree_filtered(&["docs", ".cursor"]);
+        assert_eq!(names(&tree), [".cursor", "docs", "README.md"]);
+        assert!(tree.iter().all(|node| node.name != "src"));
+
+        let cursor = find(&tree, ".cursor");
+        assert_eq!(
+            find(&find(&cursor.children, "rules").children, "agent.md").path,
+            ".cursor/rules/agent.md"
+        );
+    }
+
+    #[test]
+    fn list_context_tree_empty_include_is_root_markdown_only() {
+        let fixture = Fixture::new();
+        fixture.write_md("README.md", "# root\n");
+        fixture.write_md("docs/guide.md", "# guide\n");
+
+        let tree = fixture.tree_filtered(&[]);
+        assert_eq!(names(&tree), ["README.md"]);
+    }
+
+    #[test]
+    fn filtered_tree_still_shows_empty_dirs_inside_an_included_folder() {
+        let fixture = Fixture::new();
+        fixture.mkdir("src/nueva");
+        fixture.write_md("docs/guide.md", "# guide\n");
+
+        let tree = fixture.tree_filtered(&["src"]);
+        assert_eq!(names(&tree), ["src"]);
+        assert_eq!(names(&find(&tree, "src").children), ["nueva"]);
+        assert!(find(&find(&tree, "src").children, "nueva")
+            .children
+            .is_empty());
+    }
+
+    #[test]
+    fn list_context_tree_rejects_nested_include_name() {
+        let fixture = Fixture::new();
+        fixture.write_md("docs/guide.md", "# guide\n");
+
+        let error = list_context_tree(
+            fixture.root_str(),
+            Some(vec!["docs/nested".into()]),
+        )
+        .unwrap_err();
+        assert_eq!(error, "Ruta inválida");
+
+        let parent = list_context_tree(fixture.root_str(), Some(vec!["..".into()])).unwrap_err();
+        assert_eq!(parent, "Ruta inválida");
     }
 
     #[test]

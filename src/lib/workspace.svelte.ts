@@ -15,7 +15,16 @@ import {
   type DraftKind,
 } from "$lib/file-tree";
 import { fileTree } from "$lib/file-tree.svelte";
+import {
+  FOLDER_VISIBILITY_TOAST,
+  folderName,
+  includeCreatedRootFolder,
+  needsFolderPicker,
+  shouldShowFolderVisibilityToast,
+} from "$lib/folder-visibility";
+import { folderVisibility } from "$lib/folder-visibility.svelte";
 import { terminal } from "$lib/terminal.svelte";
+import { toasts } from "$lib/toast.svelte";
 import { unsavedExit } from "$lib/unsaved-exit.svelte";
 import { collectDraftWrites } from "$lib/workspace-save";
 
@@ -29,6 +38,11 @@ export interface TreeNode {
 }
 
 export type SaveState = "idle" | "saving" | "saved" | "error";
+
+export interface WorkspaceDirs {
+  root: string;
+  dirs: string[];
+}
 
 interface PendingWrite {
   path: string;
@@ -64,6 +78,9 @@ function treeHasDir(nodes: TreeNode[], path: string): boolean {
 class Workspace {
   root = $state<string | null>(null);
   tree = $state<TreeNode[]>([]);
+  childDirs = $state<string[]>([]);
+  /// `null` means the full tree. An array (even empty) is a confirmed filter.
+  visibleFolders = $state<string[] | null>(null);
   openTabs = $state<string[]>([]);
   currentPath = $state<string | null>(null);
   content = $state("");
@@ -90,6 +107,10 @@ class Workspace {
     return treeHasDir(this.tree, path);
   }
 
+  get canEditVisibility(): boolean {
+    return this.root !== null && this.childDirs.length > 0;
+  }
+
   get hasUnsaved(): boolean {
     return this.#drafts.size > 0;
   }
@@ -112,25 +133,56 @@ class Workspace {
   async openRoot(path: string): Promise<void> {
     if (!(await this.#confirmDiscardUnsaved())) return;
 
+    let listed: WorkspaceDirs;
+    try {
+      listed = await invoke<WorkspaceDirs>("list_workspace_dirs", { root: path });
+    } catch (error) {
+      this.error = messageFrom(error);
+      return;
+    }
+
+    const saved = appConfig.visibilityFor(listed.root);
+    let includeDirs: string[] | null = null;
+
+    if (needsFolderPicker(listed.dirs, saved)) {
+      const picked = await folderVisibility.request({
+        rootName: folderName(listed.root),
+        dirs: listed.dirs,
+        selected: [],
+      });
+      if (picked !== null) {
+        await appConfig.saveVisibility(listed.root, picked);
+        includeDirs = picked;
+      }
+    } else if (saved !== undefined) {
+      includeDirs = saved;
+    }
+
     await this.#leaveSession();
 
     try {
-      this.tree = await invoke<TreeNode[]>("list_context_tree", { root: path });
+      this.tree = await this.#listTree(listed.root, includeDirs);
       this.error = null;
     } catch (error) {
       this.error = messageFrom(error);
       return;
     }
 
-    this.root = path;
+    this.root = listed.root;
+    this.childDirs = listed.dirs;
+    this.visibleFolders = includeDirs;
     this.#resetOpenFiles();
 
-    const recorded = await appConfig.record(path);
+    const recorded = await appConfig.record(listed.root);
     if (recorded) {
       this.root = recorded;
     }
 
     await this.#startWatch(this.root);
+
+    if (shouldShowFolderVisibilityToast(listed.dirs.length > 0, includeDirs ?? undefined)) {
+      toasts.hint(FOLDER_VISIBILITY_TOAST);
+    }
   }
 
   async closeWorkspace(): Promise<boolean> {
@@ -140,6 +192,8 @@ class Workspace {
 
     this.root = null;
     this.tree = [];
+    this.childDirs = [];
+    this.visibleFolders = null;
     this.#resetOpenFiles();
     this.error = null;
     return true;
@@ -150,11 +204,38 @@ class Workspace {
     if (!root) return;
 
     try {
-      this.tree = await invoke<TreeNode[]>("list_context_tree", { root });
+      this.tree = await this.#listTree(root, this.visibleFolders);
     } catch (error) {
       this.tree = [];
       this.error = messageFrom(error);
     }
+  }
+
+  async editVisibility(): Promise<void> {
+    const root = this.root;
+    if (!root || this.childDirs.length === 0) return;
+
+    let listed: WorkspaceDirs;
+    try {
+      listed = await invoke<WorkspaceDirs>("list_workspace_dirs", { root });
+    } catch (error) {
+      this.error = messageFrom(error);
+      return;
+    }
+
+    this.childDirs = listed.dirs;
+    if (listed.dirs.length === 0) return;
+
+    const picked = await folderVisibility.request({
+      rootName: folderName(root),
+      dirs: listed.dirs,
+      selected: this.visibleFolders ?? [],
+    });
+    if (picked === null) return;
+
+    await appConfig.saveVisibility(root, picked);
+    this.visibleFolders = picked;
+    await this.reloadFromDisk();
   }
 
   async openFile(path: string): Promise<void> {
@@ -263,6 +344,21 @@ class Workspace {
     }
 
     fileTree.cancelDraft();
+
+    if (kind === "dir" && parent === "") {
+      if (!this.childDirs.includes(name)) {
+        this.childDirs = [...this.childDirs, name].sort((a, b) =>
+          a.localeCompare(b, undefined, { sensitivity: "base" }),
+        );
+      }
+
+      const nextVisible = includeCreatedRootFolder(this.visibleFolders, parent, name);
+      if (nextVisible !== null && nextVisible !== this.visibleFolders) {
+        this.visibleFolders = nextVisible;
+        await appConfig.saveVisibility(root, nextVisible);
+      }
+    }
+
     await this.refreshTree();
 
     if (kind === "dir") {
@@ -403,6 +499,10 @@ class Workspace {
   #clearDrafts(): void {
     this.#drafts.clear();
     this.dirty = false;
+  }
+
+  async #listTree(root: string, includeDirs: string[] | null): Promise<TreeNode[]> {
+    return invoke<TreeNode[]>("list_context_tree", { root, includeDirs });
   }
 
   async #confirmDiscardUnsaved(): Promise<boolean> {

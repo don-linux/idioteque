@@ -56,7 +56,7 @@ Aparece al abrir una carpeta, en `/workspace`. Cuatro zonas: el árbol de archiv
 
 Arriba, solo el nombre de la carpeta abierta, no la ruta completa (`/home/fernando/notas/2026` se ve como `2026`). La ruta entera está en el tooltip. No hay botones de Inicio, Cambiar ni Configuración aquí: esos viven en el footer.
 
-Debajo del nombre, tres botones chicos: crear archivo, crear carpeta y refrescar. Siguen ahí aunque la carpeta esté vacía, porque de ahí sale el primer archivo. Crear abre una fila con un campo de texto dentro del árbol, en la carpeta seleccionada (o junto al archivo seleccionado, o en la raíz si no hay nada). Enter confirma, Escape o salir del campo cancela. A un archivo se le pone `.md` si no lo trae. Si el nombre choca o es inválido, el aviso sale abajo del árbol y la fila se queda para corregir.
+Debajo del nombre, tres botones chicos: crear archivo, crear carpeta y refrescar. El de crear carpeta usa el mismo icono de carpeta con + que “Carpetas visibles” junto a idioteque; no son el mismo botón. Siguen ahí aunque la carpeta esté vacía, porque de ahí sale el primer archivo. Crear abre una fila con un campo de texto dentro del árbol, en la carpeta seleccionada (o junto al archivo seleccionado, o en la raíz si no hay nada). Enter confirma, Escape o salir del campo cancela. A un archivo se le pone `.md` si no lo trae. Si el nombre choca o es inválido, el aviso sale abajo del árbol y la fila se queda para corregir.
 
 El árbol se lee como el de Visual Studio Code: filas de ancho completo pegadas al inicio de la caja, sin viñetas ni cajas anidadas. Cada nivel entra un poco más con una tabulación sutil. Las carpetas llevan flecha y se abren o cierran al clic; empiezan cerradas. Los archivos de la raíz se ven siempre. Las flechas del teclado abren y cierran, y Delete borra el archivo enfocado.
 
@@ -67,6 +67,8 @@ El ancho lo decide el usuario, arrastrando el borde derecho. No hay scroll later
 El editor nunca queda sin espacio: el árbol deja de crecer antes de aplastarlo, con la terminal a la derecha o sin ella. Y si abres la terminal a la derecha y ya no cabe todo, el árbol cede y se queda con ese ancho; no rebota al cerrar la terminal.
 
 El árbol se esconde y se muestra con el icono del footer o con `Ctrl+B`. Con el foco dentro de la terminal, `Ctrl+B` es de la terminal (es el prefijo de tmux) y el atajo pasa a ser `Ctrl+Shift+B`, que funciona en cualquier lado.
+
+Si la carpeta abierta tiene subcarpetas, el árbol solo muestra las que el usuario marcó en “Carpetas visibles”. Los `.md` de la raíz siempre aparecen. Sin esa selección, se pinta el árbol completo.
 
 ### Editor
 
@@ -86,7 +88,7 @@ Una sola terminal, sin pestañas. Se redimensiona arrastrando su borde, igual qu
 
 ### Lo que el layout recuerda
 
-El ancho del árbol, si el árbol está visible, el lado que usó la terminal la última vez y su tamaño en cada lado (uno para abajo, otro para la derecha) se guardan en `~/.idioteque/config.json` y vuelven al reiniciar. Se escriben al soltar el arrastre o al alternar un panel, no en cada pixel del movimiento.
+El ancho del árbol, si el árbol está visible, el lado que usó la terminal la última vez y su tamaño en cada lado (uno para abajo, otro para la derecha) se guardan en `~/.idioteque/config.json` y vuelven al reiniciar. Se escriben al soltar el arrastre o al alternar un panel, no en cada pixel del movimiento. Las carpetas visibles de cada workspace (`workspaceViews`) también se recuerdan.
 
 El lado guardado no cambia los atajos: `Ctrl+J` sigue poniendo la terminal abajo y `Ctrl+Alt+J` a la derecha. Lo que se recupera es el tamaño con el que quedó cada lado.
 
@@ -98,7 +100,7 @@ El tema por defecto es Tokyo Night Night (el de Ghostty/WezTerm, extras de folke
 
 Solo en la vista IDE. No aparece en la selección de carpetas ni en Configuración.
 
-A la izquierda, la palabra “idioteque”, así escrita, en minúsculas. Se queda pegada abajo.
+A la izquierda, la palabra “idioteque”, así escrita, en minúsculas. Si la carpeta abierta tiene subcarpetas, al lado va el icono de carpeta con + (“Carpetas visibles”) para elegir cuáles se ven en el árbol. Se queda pegada abajo.
 
 A la derecha, una barra de iconos. Sin texto. Cada uno tiene tooltip.
 

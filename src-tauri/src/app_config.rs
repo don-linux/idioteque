@@ -1,5 +1,6 @@
+use std::collections::HashSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -7,6 +8,7 @@ use tauri::{AppHandle, Manager};
 
 const CONFIG_VERSION: u32 = 1;
 const MAX_RECENTS: usize = 24;
+const MAX_WORKSPACE_VIEWS: usize = 48;
 const MIN_FONT_SIZE: u8 = 10;
 const MAX_FONT_SIZE: u8 = 24;
 const CONFIG_DIR_NAME: &str = ".idioteque";
@@ -91,6 +93,13 @@ struct StoredLayout {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredWorkspaceView {
+    path: String,
+    visible_folders: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct StoredConfig {
     version: u32,
     #[serde(default)]
@@ -101,6 +110,8 @@ struct StoredConfig {
     appearance: StoredAppearance,
     #[serde(default)]
     layout: StoredLayout,
+    #[serde(default, rename = "workspaceViews")]
+    workspace_views: Vec<StoredWorkspaceView>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -149,6 +160,13 @@ pub struct LayoutSettings {
     pub terminal_dock: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceView {
+    pub path: String,
+    pub visible_folders: Vec<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LayoutSettingsUpdate {
@@ -171,6 +189,13 @@ impl From<LayoutSettingsUpdate> for StoredLayout {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceViewUpdate {
+    pub path: String,
+    pub visible_folders: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
@@ -179,6 +204,7 @@ pub struct AppConfig {
     pub terminal: TerminalSettings,
     pub appearance: AppearanceSettings,
     pub layout: LayoutSettings,
+    pub workspace_views: Vec<WorkspaceView>,
 }
 
 fn default_font_size() -> u8 {
@@ -262,7 +288,68 @@ fn default_config() -> StoredConfig {
         terminal: default_terminal(),
         appearance: default_appearance(),
         layout: default_layout(),
+        workspace_views: Vec::new(),
     }
+}
+
+fn is_immediate_folder_name(name: &str) -> bool {
+    let path = Path::new(name);
+    let mut count = 0;
+
+    for component in path.components() {
+        if !matches!(component, Component::Normal(_)) {
+            return false;
+        }
+        count += 1;
+        if count > 1 {
+            return false;
+        }
+    }
+
+    count == 1
+}
+
+fn normalize_visible_folders(folders: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+
+    for folder in folders {
+        let name = folder.trim();
+        if !is_immediate_folder_name(name) {
+            continue;
+        }
+        if seen.insert(name.to_string()) {
+            out.push(name.to_string());
+        }
+    }
+
+    out
+}
+
+fn apply_workspace_view(
+    mut config: StoredConfig,
+    path: String,
+    visible_folders: Vec<String>,
+) -> StoredConfig {
+    let visible_folders = normalize_visible_folders(visible_folders);
+    let mut views: Vec<StoredWorkspaceView> = config
+        .workspace_views
+        .into_iter()
+        .filter(|view| !path_keys_match(&view.path, &path))
+        .collect();
+
+    views.insert(
+        0,
+        StoredWorkspaceView {
+            path,
+            visible_folders,
+        },
+    );
+    views.truncate(MAX_WORKSPACE_VIEWS);
+
+    config.version = CONFIG_VERSION;
+    config.workspace_views = views;
+    config
 }
 
 fn clamp_font_size(size: u8) -> u8 {
@@ -503,6 +590,14 @@ fn annotate(config: StoredConfig) -> AppConfig {
                 terminal_dock: layout.terminal_dock,
             }
         },
+        workspace_views: config
+            .workspace_views
+            .into_iter()
+            .map(|view| WorkspaceView {
+                path: view.path,
+                visible_folders: normalize_visible_folders(view.visible_folders),
+            })
+            .collect(),
     }
 }
 
@@ -607,6 +702,17 @@ pub fn update_layout_settings(
     mutate_config(&app, |config| apply_layout(config, layout.into()))
 }
 
+#[tauri::command]
+pub fn update_workspace_view(
+    app: AppHandle,
+    view: WorkspaceViewUpdate,
+) -> Result<AppConfig, String> {
+    let canonical = resolve_folder(&view.path)?;
+    mutate_config(&app, |config| {
+        apply_workspace_view(config, canonical, view.visible_folders)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -705,6 +811,7 @@ mod tests {
         assert!(parsed.recents.is_empty());
         assert_eq!(parsed.terminal, default_terminal());
         assert_eq!(parsed.appearance, default_appearance());
+        assert!(parsed.workspace_views.is_empty());
     }
 
     #[test]
@@ -1374,8 +1481,11 @@ mod tests {
         let terminal = apply_terminal(config.clone(), Some("Hack".into()), 16, "nord".into());
         assert_eq!(terminal.layout, custom_layout());
 
-        let appearance = apply_appearance(config, "idioteque-light".into());
+        let appearance = apply_appearance(config.clone(), "idioteque-light".into());
         assert_eq!(appearance.layout, custom_layout());
+
+        let view_saved = apply_workspace_view(config, "/proj".into(), vec!["src".into()]);
+        assert_eq!(view_saved.layout, custom_layout());
     }
 
     #[test]
@@ -1393,5 +1503,188 @@ mod tests {
         let reread = load_from_path(&path);
         assert_eq!(reread.layout, custom_layout());
         assert!(!path.with_file_name(CONFIG_TMP_NAME).exists());
+    }
+
+    fn view(path: &str, folders: &[&str]) -> StoredWorkspaceView {
+        StoredWorkspaceView {
+            path: path.to_string(),
+            visible_folders: folders.iter().map(|name| (*name).to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn parse_config_missing_workspace_views_is_empty() {
+        let parsed = parse_config(
+            br#"{
+              "version": 1,
+              "recents": []
+            }"#,
+        );
+        assert!(parsed.workspace_views.is_empty());
+    }
+
+    #[test]
+    fn parse_config_reads_workspace_views() {
+        let parsed = parse_config(
+            br#"{
+              "version": 1,
+              "recents": [],
+              "workspaceViews": [
+                { "path": "/tmp/idioteque", "visibleFolders": [".cursor", "src"] }
+              ]
+            }"#,
+        );
+        assert_eq!(
+            parsed.workspace_views,
+            vec![view("/tmp/idioteque", &[".cursor", "src"])]
+        );
+    }
+
+    #[test]
+    fn apply_workspace_view_replaces_and_moves_to_front() {
+        let mut config = default_config();
+        config.workspace_views = vec![
+            view("/a", &["src"]),
+            view("/b", &["docs"]),
+        ];
+
+        let next = apply_workspace_view(config, "/b".into(), vec!["src".into(), "docs".into()]);
+        assert_eq!(
+            next.workspace_views,
+            vec![view("/b", &["src", "docs"]), view("/a", &["src"])]
+        );
+    }
+
+    #[test]
+    fn apply_workspace_view_matches_trailing_slash() {
+        let mut config = default_config();
+        config.workspace_views = vec![view("/gone", &["src"])];
+
+        let next = apply_workspace_view(config, "/gone/".into(), vec!["docs".into()]);
+        assert_eq!(next.workspace_views, vec![view("/gone/", &["docs"])]);
+    }
+
+    #[test]
+    fn apply_workspace_view_caps_at_max() {
+        let mut config = default_config();
+        config.workspace_views = (0..MAX_WORKSPACE_VIEWS)
+            .map(|index| view(&format!("/{index}"), &["src"]))
+            .collect();
+
+        let next = apply_workspace_view(config, "/new".into(), vec!["docs".into()]);
+        assert_eq!(MAX_WORKSPACE_VIEWS, 48);
+        assert_eq!(next.workspace_views.len(), 48);
+        assert_eq!(next.workspace_views[0].path, "/new");
+        assert!(next
+            .workspace_views
+            .iter()
+            .all(|view| view.path != "/47"));
+    }
+
+    #[test]
+    fn apply_workspace_view_drops_invalid_and_duplicate_names() {
+        let next = apply_workspace_view(
+            default_config(),
+            "/proj".into(),
+            vec![
+                "  src  ".into(),
+                "src".into(),
+                "docs/nested".into(),
+                "..".into(),
+                "".into(),
+                "docs".into(),
+            ],
+        );
+        assert_eq!(next.workspace_views, vec![view("/proj", &["src", "docs"])]);
+    }
+
+    #[test]
+    fn apply_workspace_view_empty_folders_is_explicit() {
+        let next = apply_workspace_view(default_config(), "/proj".into(), vec![]);
+        assert_eq!(next.workspace_views, vec![view("/proj", &[])]);
+    }
+
+    #[test]
+    fn apply_workspace_view_preserves_recents_and_appearance() {
+        let mut config = config_with(vec![recent("/a", "2026-01-01T00:00:00Z")]);
+        config.appearance = custom_appearance();
+        config.terminal = nerd_terminal();
+
+        config.layout = custom_layout();
+
+        let next = apply_workspace_view(config, "/proj".into(), vec!["src".into()]);
+        assert_eq!(next.recents, vec![recent("/a", "2026-01-01T00:00:00Z")]);
+        assert_eq!(next.appearance, custom_appearance());
+        assert_eq!(next.terminal, nerd_terminal());
+        assert_eq!(next.layout, custom_layout());
+    }
+
+    #[test]
+    fn record_recent_preserves_workspace_views() {
+        let mut config = default_config();
+        config.workspace_views = vec![view("/proj", &["src"])];
+
+        let next = record_recent(config, "/b".into(), "2026-01-02T00:00:00Z".into());
+        assert_eq!(next.workspace_views, vec![view("/proj", &["src"])]);
+    }
+
+    #[test]
+    fn remove_recent_keeps_workspace_views() {
+        let mut config = config_with(vec![recent("/proj", "2026-01-01T00:00:00Z")]);
+        config.workspace_views = vec![view("/proj", &["src"])];
+
+        let next = remove_recent(config, "/proj");
+        assert!(next.recents.is_empty());
+        assert_eq!(next.workspace_views, vec![view("/proj", &["src"])]);
+    }
+
+    #[test]
+    fn save_and_load_roundtrip_workspace_views() {
+        let home = Home::new();
+        let path = home.config_path();
+        let stored = apply_workspace_view(
+            default_config(),
+            "/tmp/idioteque".into(),
+            vec![".cursor".into(), "src".into()],
+        );
+        save_to_path(&path, &stored).expect("save");
+
+        let disk = fs::read_to_string(&path).expect("read disk");
+        assert!(disk.contains("\"workspaceViews\""));
+        assert!(disk.contains("visibleFolders"));
+        assert!(disk.contains(".cursor"));
+
+        let reread = load_from_path(&path);
+        assert_eq!(reread.workspace_views, stored.workspace_views);
+        assert!(!path.with_file_name(CONFIG_TMP_NAME).exists());
+    }
+
+    #[test]
+    fn annotate_exposes_workspace_views() {
+        let mut config = default_config();
+        config.workspace_views = vec![view("/proj", &["  src  ", "src", "docs"])];
+
+        let annotated = annotate(config);
+        assert_eq!(annotated.workspace_views.len(), 1);
+        assert_eq!(annotated.workspace_views[0].path, "/proj");
+        assert_eq!(
+            annotated.workspace_views[0].visible_folders,
+            vec!["src", "docs"]
+        );
+    }
+
+    #[test]
+    fn layout_and_workspace_views_do_not_clobber_each_other() {
+        let mut config = default_config();
+        config.layout = custom_layout();
+        config.workspace_views = vec![view("/proj", &["src"])];
+
+        let after_layout = apply_layout(config.clone(), default_layout());
+        assert_eq!(after_layout.workspace_views, vec![view("/proj", &["src"])]);
+        assert_eq!(after_layout.layout, default_layout());
+
+        let after_view = apply_workspace_view(config, "/proj".into(), vec!["docs".into()]);
+        assert_eq!(after_view.layout, custom_layout());
+        assert_eq!(after_view.workspace_views, vec![view("/proj", &["docs"])]);
     }
 }

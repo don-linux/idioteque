@@ -95,6 +95,9 @@ terminal abajo y `Ctrl+Alt+J` a la derecha.
 Lo que no se guarda: si la terminal estaba abierta — siempre entra
 cerrada — ni qué carpetas quedaron desplegadas.
 
+Si hay un filtro de “Carpetas visibles”, crear una carpeta en la raíz la
+añade a esa lista para que aparezca en el árbol.
+
 ## NO se pudo implementar
 
 Nada de lo previsto se quedó fuera.
