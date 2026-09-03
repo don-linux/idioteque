@@ -397,6 +397,11 @@ fn rename_entry(root: &str, from: &str, to: &str, kind: NewKind) -> Result<(), S
         return Ok(());
     }
 
+    // Reject `..` and empty paths first so they stay "Ruta inválida", not a
+    // same-folder rename error.
+    join_relative(root, from)?;
+    join_relative(root, to)?;
+
     if !same_parent(from, to) {
         return Err("Solo se puede renombrar en la misma carpeta".to_string());
     }
