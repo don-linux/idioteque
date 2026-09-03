@@ -8,7 +8,7 @@
   import FolderPlus from "@lucide/svelte/icons/folder-plus";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import { untrack } from "svelte";
-  import type { TreeRow } from "$lib/file-tree";
+  import { isSameRowDoubleClick, type RowClickStamp, type TreeRow } from "$lib/file-tree";
 
   let {
     row,
@@ -44,6 +44,7 @@
 
   let draftName = $state("");
   let renameName = $state("");
+  let lastClick: RowClickStamp | null = null;
 
   function attachDraftField(node: HTMLInputElement): void {
     node.focus();
@@ -119,6 +120,19 @@
     event.preventDefault();
     event.stopPropagation();
     onContextMenu(event);
+  }
+
+  function onRowClick(): void {
+    const now = Date.now();
+    const second = isSameRowDoubleClick(lastClick, row.path, now);
+    lastClick = { path: row.path, at: now };
+    if (second) return;
+    onActivate();
+  }
+
+  function onRowDblClick(event: MouseEvent): void {
+    event.preventDefault();
+    onRename();
   }
 </script>
 
@@ -201,7 +215,8 @@
     aria-selected={selected}
     aria-expanded={row.kind === "dir" ? row.expanded : undefined}
     title={row.path}
-    onclick={onActivate}
+    onclick={onRowClick}
+    ondblclick={onRowDblClick}
     onkeydown={onRowKeydown}
     oncontextmenu={onRowContextMenu}
   >
@@ -234,6 +249,10 @@
         onclick={(event) => {
           event.stopPropagation();
           onDelete();
+        }}
+        ondblclick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
         }}
       >
         <Trash2 size={13} strokeWidth={1.75} aria-hidden="true" />
