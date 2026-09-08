@@ -2,8 +2,6 @@
   import Folder from "@lucide/svelte/icons/folder";
   import GitBranch from "@lucide/svelte/icons/git-branch";
   import House from "@lucide/svelte/icons/house";
-  import PanelLeft from "@lucide/svelte/icons/panel-left";
-  import PanelLeftClose from "@lucide/svelte/icons/panel-left-close";
   import Settings from "@lucide/svelte/icons/settings";
   import SquareTerminal from "@lucide/svelte/icons/square-terminal";
   import { goto } from "$app/navigation";
@@ -29,7 +27,6 @@
     home: "Inicio",
     folder: "Cambiar",
     settings: "Configuración",
-    explorer: "Árbol de archivos",
     terminal: "Terminal",
     git: "Git",
   };
@@ -38,7 +35,6 @@
     home: "Inicio",
     folder: "Cambiar carpeta",
     settings: "Configuración",
-    explorer: "Árbol de archivos (Ctrl+B) · dentro de la terminal, Ctrl+Shift+B",
     terminal: "Terminal (Ctrl+J) · a la derecha (Ctrl+Alt+J) · pantalla (Ctrl+Shift+J)",
     git: "Git",
   };
@@ -79,9 +75,6 @@
       folder: () => {
         void workspace.openFolder();
       },
-      explorer: () => {
-        panels.toggleTree();
-      },
       terminal: () => {
         panels.toggleTerminal(dockFromAlt(event.altKey));
       },
@@ -109,17 +102,13 @@
           class={[
             "action",
             {
-              active:
-                (id === "terminal" && (terminal.open || terminal.surface === "terminals")) ||
-                (id === "explorer" && panels.treeVisible),
+              active: id === "terminal" && (terminal.open || terminal.surface === "terminals"),
               idle: id === "git",
             },
           ]}
           aria-pressed={id === "terminal"
             ? terminal.open || terminal.surface === "terminals"
-            : id === "explorer"
-              ? panels.treeVisible
-              : undefined}
+            : undefined}
           aria-label={labels[id]}
           title={id === "git" ? gitTitle : titles[id]}
           onpointerenter={() => {
@@ -133,12 +122,6 @@
             <Folder size={16} strokeWidth={1.75} aria-hidden="true" />
           {:else if id === "git"}
             <GitBranch size={16} strokeWidth={1.75} aria-hidden="true" />
-          {:else if id === "explorer"}
-            {#if panels.treeVisible}
-              <PanelLeftClose size={16} strokeWidth={1.75} aria-hidden="true" />
-            {:else}
-              <PanelLeft size={16} strokeWidth={1.75} aria-hidden="true" />
-            {/if}
           {:else}
             <SquareTerminal size={16} strokeWidth={1.75} aria-hidden="true" />
           {/if}

@@ -68,7 +68,7 @@ El ancho lo decide el usuario, arrastrando el borde derecho. No hay scroll later
 
 El editor nunca queda sin espacio: el árbol deja de crecer antes de aplastarlo, con la terminal a la derecha o sin ella. Y si abres la terminal a la derecha y ya no cabe todo, el árbol cede y se queda con ese ancho; no rebota al cerrar la terminal.
 
-El árbol se esconde y se muestra con el icono del footer o con `Ctrl+B`. Con el foco dentro de la terminal, `Ctrl+B` es de la terminal (es el prefijo de tmux) y el atajo pasa a ser `Ctrl+Shift+B`, que funciona en cualquier lado.
+El árbol se esconde con `Ctrl+B`. Cuando está oculto, junto a la palabra “idioteque” aparece el icono de panel izquierdo para volver a mostrarlo. Con el foco dentro de la terminal, `Ctrl+B` es de la terminal (es el prefijo de tmux) y el atajo pasa a ser `Ctrl+Shift+B`, que funciona en cualquier lado.
 
 Si la carpeta abierta tiene subcarpetas, el árbol solo muestra las que el usuario marcó en “Carpetas visibles”. Los `.md` de la raíz siempre aparecen. Sin esa selección, se pinta el árbol completo.
 
@@ -102,7 +102,7 @@ El tema por defecto es Tokyo Night Night (el de Ghostty/WezTerm, extras de folke
 
 Solo en la vista IDE. No aparece en la selección de carpetas ni en Configuración.
 
-A la izquierda, la palabra “idioteque”, así escrita, en minúsculas. Si la carpeta abierta tiene subcarpetas, al lado va el icono de carpeta con + (“Carpetas visibles”) para elegir cuáles se ven en el árbol. Se queda pegada abajo.
+A la izquierda, la palabra “idioteque”, así escrita, en minúsculas. Si el árbol está oculto, al lado va el icono de panel izquierdo para volver a mostrarlo (también `Ctrl+B`, o `Ctrl+Shift+B` con el foco en la terminal). Si la carpeta abierta tiene subcarpetas, después va el icono de carpeta con + (“Carpetas visibles”) para elegir cuáles se ven en el árbol. Se queda pegada abajo.
 
 A la derecha, una barra de iconos. Sin texto. Cada uno tiene tooltip.
 
@@ -111,14 +111,13 @@ Orden fijo, definido en código (no en la UI ni en la config):
 1. Casa — Inicio. Vuelve a la grilla de carpetas. Eso cierra la terminal.
 2. Carpeta — Cambiar. Abre el selector nativo para otra carpeta.
 3. Engrane — Configuración. Va a la página de ajustes. El workspace no se cierra, así la terminal no se apaga.
-4. Panel izquierdo — Muestra u oculta el árbol de archivos (también `Ctrl+B`, o `Ctrl+Shift+B` con el foco en la terminal). Queda marcado si está visible.
-5. Terminal — Muestra u oculta el panel. Queda marcado si está visible.
-6. Git — Icono de vida. Al pasar el mouse dice si no hay repo o el nombre
+4. Terminal — Muestra u oculta el panel. Queda marcado si está visible.
+5. Git — Icono de vida. Al pasar el mouse dice si no hay repo o el nombre
    de la carpeta y la rama. El clic no hace nada. No es un panel.
 
-Los dos que esconden paneles van juntos, en ese orden. El usuario no reordena. No hay arrastre ni orden guardado. Si se suma un icono, se mete en esa lista de código.
+El usuario no reordena. No hay arrastre ni orden guardado. Si se suma un icono, se mete en esa lista de código.
 
-Al pasar el mouse, Casa, Carpeta, Engrane, Panel izquierdo y Terminal muestran el cursor de clic. Git no es accionable, así que el cursor se queda normal. El clic corre siempre: no hay umbral ni “¿era un arrastre?”.
+Al pasar el mouse, Casa, Carpeta, Engrane y Terminal muestran el cursor de clic. Git no es accionable, así que el cursor se queda normal. El clic corre siempre: no hay umbral ni “¿era un arrastre?”.
 
 ## Configuración
 

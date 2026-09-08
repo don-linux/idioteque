@@ -2,7 +2,6 @@ export const FOOTER_ACTION_IDS = [
   "home",
   "folder",
   "settings",
-  "explorer",
   "terminal",
   "git",
 ] as const;
@@ -24,7 +23,6 @@ export function runFooterAction(
   actions: {
     home: () => void;
     folder: () => void;
-    explorer: () => void;
     terminal: () => void;
   },
 ): void {
@@ -34,9 +32,6 @@ export function runFooterAction(
       return;
     case "folder":
       actions.folder();
-      return;
-    case "explorer":
-      actions.explorer();
       return;
     case "terminal":
       actions.terminal();

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import FolderPlus from "@lucide/svelte/icons/folder-plus";
+  import PanelLeft from "@lucide/svelte/icons/panel-left";
   import FooterActions from "$lib/components/FooterActions.svelte";
   import FooterTransient from "$lib/components/FooterTransient.svelte";
   import { FOLDER_VISIBILITY_LABEL } from "$lib/folder-visibility";
@@ -58,6 +59,17 @@
     <div class="footer-start">
       <div class="brand-group">
         <span class="brand">idioteque</span>
+        {#if !panels.treeVisible}
+          <button
+            type="button"
+            class="action"
+            aria-label="Árbol de archivos (Ctrl+B) · dentro de la terminal, Ctrl+Shift+B"
+            title="Árbol de archivos (Ctrl+B) · dentro de la terminal, Ctrl+Shift+B"
+            onclick={() => panels.toggleTree()}
+          >
+            <PanelLeft size={16} strokeWidth={1.75} aria-hidden="true" />
+          </button>
+        {/if}
         {#if workspace.canEditVisibility}
           <button
             type="button"
