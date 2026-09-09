@@ -102,7 +102,8 @@
 
 <style>
   .editor {
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     overflow: hidden;
   }
 
@@ -125,6 +126,13 @@
   .editor :global(.cm-content) {
     padding: 1.25rem 0;
     caret-color: var(--accent);
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  .editor :global(.cm-line) {
+    padding-right: 1rem;
+    padding-left: 1rem;
   }
 
   .editor :global(.cm-gutters) {
@@ -134,7 +142,7 @@
   }
 
   .editor :global(.cm-activeLine) {
-    background: var(--surface-hover);
+    background: color-mix(in srgb, var(--surface-hover) 55%, transparent);
   }
 
   .editor :global(.cm-activeLineGutter) {
@@ -146,9 +154,18 @@
     border-left-color: var(--accent);
   }
 
+  .editor :global(.cm-selectionLayer),
+  .editor :global(.cm-selectionLayer .cm-selectionBackground) {
+    pointer-events: none;
+  }
+
+  .editor :global(.cm-selectionLayer) {
+    z-index: 1 !important;
+  }
+
   .editor :global(.cm-selectionBackground),
-  .editor :global(.cm-editor.cm-focused .cm-selectionBackground),
-  .editor :global(.cm-content ::selection) {
+  .editor :global(.cm-editor.cm-focused .cm-selectionBackground) {
     background: var(--accent-soft);
+    background: color-mix(in srgb, var(--accent) 38%, transparent);
   }
 </style>

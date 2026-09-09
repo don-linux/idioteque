@@ -29,6 +29,8 @@ pub fn run() {
             workspace::delete_markdown,
             workspace::rename_markdown,
             workspace::rename_directory,
+            workspace::move_markdown,
+            workspace::move_directory,
             workspace::delete_directory,
             workspace::watch_workspace,
             workspace::unwatch_workspace,

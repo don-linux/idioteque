@@ -134,6 +134,14 @@ export function joinTreePath(parent: string, name: string): string {
   return parent ? `${parent}/${name}` : name;
 }
 
+/** Path the tree treats as selected: click focus first, else the open editor file. */
+export function selectedTreePath(
+  focused: string | null,
+  openFile: string | null,
+): string | null {
+  return focused ?? openFile;
+}
+
 /** Where a new entry lands when the user has a file or folder selected. */
 export function draftParentFor(
   selected: string | null,
@@ -142,6 +150,22 @@ export function draftParentFor(
   if (!selected) return "";
   if (isDirectory(selected)) return selected;
   return parentDirOf(selected);
+}
+
+export type DraftCommandSource = "toolbar" | "blank";
+
+/**
+ * Create parent for a command. The blank context menu is always the root;
+ * the toolbar follows the tree selection (focus, then the open file).
+ */
+export function draftParentForCommand(
+  source: DraftCommandSource,
+  focused: string | null,
+  openFile: string | null,
+  isDirectory: (path: string) => boolean,
+): string {
+  if (source === "blank") return "";
+  return draftParentFor(selectedTreePath(focused, openFile), isDirectory);
 }
 
 export function hasMarkdownExtension(name: string): boolean {
@@ -240,6 +264,46 @@ export function remapPathPrefix(path: string, from: string, to: string): string 
 
 export function pathIsUnder(path: string, folder: string): boolean {
   return path === folder || (folder.length > 0 && path.startsWith(`${folder}/`));
+}
+
+export type DropTarget = { kind: "file" | "dir"; path: string } | { kind: "root" };
+
+/** Folder that receives a drop: the folder itself, a file's parent, or the tree root. */
+export function dropParentFor(target: DropTarget): string {
+  if (target.kind === "root") return "";
+  if (target.kind === "dir") return target.path;
+  return parentDirOf(target.path);
+}
+
+export type MoveCheck =
+  | { ok: true; to: string }
+  | { ok: false; reason: "noop" | "self" };
+
+export type PlanMove =
+  | { ok: true; to: string }
+  | { ok: false; reason: "noop" | "self" | "exists" };
+
+/** Whether `from` can land in `toParent`. Same folder is a no-op; a folder cannot enter itself. */
+export function canMoveEntry(from: string, kind: DraftKind, toParent: string): MoveCheck {
+  const to = joinTreePath(toParent, baseNameOf(from));
+  if (to === from) return { ok: false, reason: "noop" };
+  if (kind === "dir" && pathIsUnder(toParent, from)) return { ok: false, reason: "self" };
+  return { ok: true, to };
+}
+
+/** `canMoveEntry` plus a case-insensitive name clash at the destination. */
+export function planMove(
+  nodes: TreeNode[],
+  from: string,
+  kind: DraftKind,
+  toParent: string,
+): PlanMove {
+  const check = canMoveEntry(from, kind, toParent);
+  if (!check.ok) return check;
+  if (siblingExists(nodes, toParent, baseNameOf(from))) {
+    return { ok: false, reason: "exists" };
+  }
+  return check;
 }
 
 /** First click activates; a second click inside this window must not (it is a double-click). */

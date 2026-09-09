@@ -3,17 +3,94 @@
   import FolderPlus from "@lucide/svelte/icons/folder-plus";
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import FileTree from "./FileTree.svelte";
-  import { draftParentFor, type DraftKind } from "$lib/file-tree";
+  import FileTreeContextMenu from "./FileTreeContextMenu.svelte";
+  import { draftParentForCommand, selectedTreePath, type DraftKind, type TreeRow } from "$lib/file-tree";
   import { fileTree } from "$lib/file-tree.svelte";
   import { workspace } from "$lib/workspace.svelte";
 
   let { parked = false }: { parked?: boolean } = $props();
 
   let refreshing = $state(false);
+  let menu = $state<
+    | { variant: "row"; x: number; y: number; path: string; kind: DraftKind }
+    | { variant: "blank"; x: number; y: number }
+    | null
+  >(null);
 
   function startDraft(kind: DraftKind): void {
-    const parent = draftParentFor(workspace.currentPath, (path) => workspace.isDirectory(path));
+    menu = null;
+    const parent = draftParentForCommand(
+      "toolbar",
+      fileTree.focusedPath,
+      workspace.currentPath,
+      (path) => workspace.isDirectory(path),
+    );
     fileTree.startDraft(kind, parent);
+  }
+
+  function startRootDraft(kind: DraftKind): void {
+    menu = null;
+    const parent = draftParentForCommand(
+      "blank",
+      fileTree.focusedPath,
+      workspace.currentPath,
+      (path) => workspace.isDirectory(path),
+    );
+    fileTree.startDraft(kind, parent);
+  }
+
+  function closeMenu(): void {
+    menu = null;
+  }
+
+  function openRowMenu(row: TreeRow, event: MouseEvent): void {
+    if (row.kind !== "file" && row.kind !== "dir") return;
+    menu = {
+      variant: "row",
+      x: event.clientX,
+      y: event.clientY,
+      path: row.path,
+      kind: row.kind,
+    };
+  }
+
+  function onBodyContextMenu(event: MouseEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    menu = { variant: "blank", x: event.clientX, y: event.clientY };
+  }
+
+  function onBodyDragOver(event: DragEvent): void {
+    if (!fileTree.canDropOn("")) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+    fileTree.hoverDropParent("");
+  }
+
+  function onBodyDrop(event: DragEvent): void {
+    event.preventDefault();
+    const drag = fileTree.drag;
+    fileTree.endDrag();
+    if (!drag) return;
+    void workspace.moveEntry(drag.path, drag.kind, "");
+  }
+
+  function onBodyDragLeave(event: DragEvent): void {
+    if (event.currentTarget instanceof Node && event.relatedTarget instanceof Node) {
+      if (event.currentTarget.contains(event.relatedTarget)) return;
+    }
+    if (fileTree.hoverDrop === "") fileTree.hoverDropParent(null);
+  }
+
+  function startRename(path: string, kind: DraftKind): void {
+    closeMenu();
+    fileTree.startRename(path, kind);
+  }
+
+  function deleteTarget(path: string, kind: DraftKind): void {
+    closeMenu();
+    if (kind === "dir") void workspace.deleteFolder(path);
+    else void workspace.deleteFile(path);
   }
 
   async function refresh(): Promise<void> {
@@ -25,6 +102,23 @@
     }
   }
 </script>
+
+<svelte:window
+  onkeydown={(event) => {
+    if (menu?.variant !== "row") return;
+
+    if (event.key === "F2") {
+      event.preventDefault();
+      startRename(menu.path, menu.kind);
+      return;
+    }
+
+    if (event.key === "Delete") {
+      event.preventDefault();
+      deleteTarget(menu.path, menu.kind);
+    }
+  }}
+/>
 
 <aside
   class:parked
@@ -67,16 +161,22 @@
     </button>
   </div>
 
-  <div class="body">
+  <div
+    class="body"
+    class:drop-root={fileTree.hoverDrop === ""}
+    role="group"
+    aria-label="Área del árbol"
+    oncontextmenu={onBodyContextMenu}
+    ondragover={onBodyDragOver}
+    ondrop={onBodyDrop}
+    ondragleave={onBodyDragLeave}
+  >
     {#if workspace.hasEntries || fileTree.draft}
       <FileTree
         nodes={workspace.tree}
-        selected={workspace.currentPath}
+        selected={selectedTreePath(fileTree.focusedPath, workspace.currentPath)}
         onSelect={(path) => workspace.openFile(path)}
-        onDelete={(path, kind) => {
-          if (kind === "dir") void workspace.deleteFolder(path);
-          else void workspace.deleteFile(path);
-        }}
+        onDelete={(path, kind) => deleteTarget(path, kind)}
         onCreate={(name) => {
           const draft = fileTree.draft;
           if (draft) void workspace.createEntry(draft.kind, draft.parent, name);
@@ -85,6 +185,10 @@
           const rename = fileTree.rename;
           if (rename) void workspace.renameEntry(rename.path, rename.kind, name);
         }}
+        onMove={(from, kind, toParent) => {
+          void workspace.moveEntry(from, kind, toParent);
+        }}
+        onRowMenu={openRowMenu}
       />
     {:else}
       <p class="hint">Esta carpeta está vacía.</p>
@@ -95,6 +199,28 @@
     <p class="draft-error">{fileTree.draftError}</p>
   {/if}
 </aside>
+
+{#if menu}
+  {@const target = menu}
+  {#if target.variant === "blank"}
+    <FileTreeContextMenu
+      variant="blank"
+      x={target.x}
+      y={target.y}
+      onNewFile={() => startRootDraft("file")}
+      onNewFolder={() => startRootDraft("dir")}
+      onClose={closeMenu}
+    />
+  {:else}
+    <FileTreeContextMenu
+      x={target.x}
+      y={target.y}
+      onDelete={() => deleteTarget(target.path, target.kind)}
+      onRename={() => startRename(target.path, target.kind)}
+      onClose={closeMenu}
+    />
+  {/if}
+{/if}
 
 <style>
   aside {
@@ -173,6 +299,10 @@
     min-height: 0;
     overflow-x: hidden;
     overflow-y: auto;
+  }
+
+  .body.drop-root {
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent);
   }
 
   .hint {

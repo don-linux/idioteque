@@ -2,14 +2,20 @@
   let {
     x,
     y,
+    variant = "row",
     onDelete,
     onRename,
+    onNewFile,
+    onNewFolder,
     onClose,
   }: {
     x: number;
     y: number;
-    onDelete: () => void;
-    onRename: () => void;
+    variant?: "row" | "blank";
+    onDelete?: () => void;
+    onRename?: () => void;
+    onNewFile?: () => void;
+    onNewFolder?: () => void;
     onClose: () => void;
   } = $props();
 
@@ -62,12 +68,21 @@
   role="menu"
   aria-label="Acciones del árbol"
 >
-  <button type="button" class="item danger" role="menuitem" onclick={onDelete}>
-    Borrar <span class="key">(Delete)</span>
-  </button>
-  <button type="button" class="item" role="menuitem" onclick={onRename}>
-    Renombrar <span class="key">(F2)</span>
-  </button>
+  {#if variant === "blank"}
+    <button type="button" class="item" role="menuitem" onclick={onNewFile}>
+      Nuevo archivo
+    </button>
+    <button type="button" class="item" role="menuitem" onclick={onNewFolder}>
+      Nueva carpeta
+    </button>
+  {:else}
+    <button type="button" class="item danger" role="menuitem" onclick={onDelete}>
+      Borrar <span class="key">(Delete)</span>
+    </button>
+    <button type="button" class="item" role="menuitem" onclick={onRename}>
+      Renombrar <span class="key">(F2)</span>
+    </button>
+  {/if}
 </div>
 
 <style>

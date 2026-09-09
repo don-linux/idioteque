@@ -13,6 +13,7 @@
   let {
     row,
     selected,
+    dropTarget = false,
     renaming,
     invalid,
     onActivate,
@@ -25,9 +26,15 @@
     onCancelDraft,
     onCommitRename,
     onCancelRename,
+    onDragStart,
+    onDragOver,
+    onDrop,
+    onDragLeave,
+    onDragEnd,
   }: {
     row: TreeRow;
     selected: boolean;
+    dropTarget?: boolean;
     renaming: boolean;
     invalid: boolean;
     onActivate: () => void;
@@ -40,6 +47,11 @@
     onCancelDraft: () => void;
     onCommitRename: (name: string) => void;
     onCancelRename: () => void;
+    onDragStart: (event: DragEvent) => void;
+    onDragOver: (event: DragEvent) => void;
+    onDrop: (event: DragEvent) => void;
+    onDragLeave: (event: DragEvent) => void;
+    onDragEnd: () => void;
   } = $props();
 
   let draftName = $state("");
@@ -210,6 +222,7 @@
   <div
     class="row"
     class:selected
+    class:drop-target={dropTarget}
     style:--depth={row.depth}
     role="treeitem"
     tabindex="0"
@@ -217,10 +230,16 @@
     aria-selected={selected}
     aria-expanded={row.kind === "dir" ? row.expanded : undefined}
     title={row.path}
+    draggable="true"
     onclick={onRowClick}
     ondblclick={onRowDblClick}
     onkeydown={onRowKeydown}
     oncontextmenu={onRowContextMenu}
+    ondragstart={onDragStart}
+    ondragover={onDragOver}
+    ondrop={onDrop}
+    ondragleave={onDragLeave}
+    ondragend={onDragEnd}
   >
     <span class="twisty" aria-hidden="true">
       {#if row.kind === "dir"}
@@ -248,11 +267,16 @@
         type="button"
         class="delete"
         aria-label="Borrar {row.name}"
+        draggable="false"
         onclick={(event) => {
           event.stopPropagation();
           onDelete();
         }}
         ondblclick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+        ondragstart={(event) => {
           event.preventDefault();
           event.stopPropagation();
         }}
@@ -292,6 +316,10 @@
   .row.selected {
     background: var(--accent-soft);
     color: var(--accent);
+  }
+
+  .row.drop-target {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
   }
 
   .row:focus-visible {

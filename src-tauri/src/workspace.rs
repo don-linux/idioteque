@@ -425,6 +425,48 @@ pub fn rename_directory(root: String, from: String, to: String) -> Result<(), St
     rename_entry(&root, &from, &to, NewKind::Dir)
 }
 
+fn path_is_under(path: &str, folder: &str) -> bool {
+    path == folder || (!folder.is_empty() && path.starts_with(&format!("{folder}/")))
+}
+
+fn move_entry(root: &str, from: &str, to: &str, kind: NewKind) -> Result<(), String> {
+    if from == to {
+        return Ok(());
+    }
+
+    join_relative(root, from)?;
+    join_relative(root, to)?;
+
+    if kind == NewKind::Dir && path_is_under(to, from) {
+        return Err("No se puede mover una carpeta dentro de sí misma".to_string());
+    }
+
+    let source = match kind {
+        NewKind::File => resolve_markdown(root, from)?,
+        NewKind::Dir => resolve_directory(root, from)?,
+    };
+    let dest = resolve_new_target(root, to, kind)?;
+
+    let dest_parent = dest
+        .parent()
+        .ok_or_else(|| "Ruta inválida".to_string())?;
+    if !dest_parent.is_dir() {
+        return Err("La carpeta destino no existe".to_string());
+    }
+
+    fs::rename(&source, &dest).map_err(|error| format!("No se pudo mover `{from}`: {error}"))
+}
+
+#[tauri::command]
+pub fn move_markdown(root: String, from: String, to: String) -> Result<(), String> {
+    move_entry(&root, &from, &to, NewKind::File)
+}
+
+#[tauri::command]
+pub fn move_directory(root: String, from: String, to: String) -> Result<(), String> {
+    move_entry(&root, &from, &to, NewKind::Dir)
+}
+
 #[tauri::command]
 pub fn delete_directory(root: String, path: String) -> Result<(), String> {
     let target = resolve_directory(&root, &path)?;
@@ -1019,6 +1061,174 @@ mod tests {
         let not_md =
             rename_markdown(root, "a.md".to_string(), "nota.txt".to_string()).unwrap_err();
         assert_eq!(not_md, "Solo se pueden crear archivos .md");
+    }
+
+    #[test]
+    fn move_markdown_moves_across_folders_and_rejects_escape() {
+        let fixture = Fixture::new();
+        fixture.write_md("docs/note.md", "hola\n");
+        fixture.mkdir("other");
+
+        let root = fixture.root_str();
+        move_markdown(
+            root.clone(),
+            "docs/note.md".to_string(),
+            "other/note.md".to_string(),
+        )
+        .expect("move file");
+
+        assert!(!fixture.path("docs/note.md").exists());
+        assert_eq!(
+            read_markdown(root.clone(), "other/note.md".to_string()).expect("read"),
+            "hola\n"
+        );
+
+        let missing = move_markdown(
+            root.clone(),
+            "other/note.md".to_string(),
+            "gone/note.md".to_string(),
+        )
+        .unwrap_err();
+        assert_eq!(missing, "La carpeta destino no existe");
+
+        let escape = move_markdown(
+            root,
+            "other/note.md".to_string(),
+            "../fuera.md".to_string(),
+        )
+        .unwrap_err();
+        assert_eq!(escape, "Ruta inválida");
+    }
+
+    #[test]
+    fn move_markdown_rejects_collision() {
+        let fixture = Fixture::new();
+        fixture.write_md("docs/a.md", "a\n");
+        fixture.write_md("other/a.md", "keep\n");
+
+        let error = move_markdown(
+            fixture.root_str(),
+            "docs/a.md".to_string(),
+            "other/a.md".to_string(),
+        )
+        .unwrap_err();
+        assert_eq!(error, "`other/a.md` ya existe");
+        assert_eq!(
+            fs::read_to_string(fixture.path("docs/a.md")).expect("keep source"),
+            "a\n"
+        );
+    }
+
+    #[test]
+    fn move_directory_moves_children_and_rejects_nesting_in_self() {
+        let fixture = Fixture::new();
+        fixture.write_md("docs/guide.md", "g\n");
+        fixture.write_md("docs/sub/note.md", "n\n");
+        fixture.mkdir("other");
+
+        let root = fixture.root_str();
+        move_directory(
+            root.clone(),
+            "docs".to_string(),
+            "other/docs".to_string(),
+        )
+        .expect("move dir");
+
+        assert!(!fixture.path("docs").exists());
+        assert_eq!(
+            read_markdown(root.clone(), "other/docs/guide.md".to_string()).expect("guide"),
+            "g\n"
+        );
+        assert_eq!(
+            read_markdown(root.clone(), "other/docs/sub/note.md".to_string()).expect("note"),
+            "n\n"
+        );
+
+        let nested = move_directory(
+            root,
+            "other/docs".to_string(),
+            "other/docs/sub/docs".to_string(),
+        )
+        .unwrap_err();
+        assert_eq!(nested, "No se puede mover una carpeta dentro de sí misma");
+    }
+
+    #[test]
+    fn move_markdown_to_root_keeps_contents() {
+        let fixture = Fixture::new();
+        fixture.write_md("docs/note.md", "hola\n");
+
+        let root = fixture.root_str();
+        move_markdown(
+            root.clone(),
+            "docs/note.md".to_string(),
+            "note.md".to_string(),
+        )
+        .expect("move to root");
+
+        assert!(!fixture.path("docs/note.md").exists());
+        assert_eq!(
+            read_markdown(root, "note.md".to_string()).expect("read"),
+            "hola\n"
+        );
+    }
+
+    #[test]
+    fn move_directory_rejects_collision() {
+        let fixture = Fixture::new();
+        fixture.write_md("docs/guide.md", "g\n");
+        fixture.write_md("other/docs/keep.md", "keep\n");
+
+        let error = move_directory(
+            fixture.root_str(),
+            "docs".to_string(),
+            "other/docs".to_string(),
+        )
+        .unwrap_err();
+        assert_eq!(error, "`other/docs` ya existe");
+        assert_eq!(
+            fs::read_to_string(fixture.path("docs/guide.md")).expect("keep source"),
+            "g\n"
+        );
+    }
+
+    #[test]
+    fn move_directory_into_prefix_sibling() {
+        let fixture = Fixture::new();
+        fixture.write_md("docs/guide.md", "g\n");
+        fixture.mkdir("docs-viejos");
+
+        let root = fixture.root_str();
+        move_directory(
+            root.clone(),
+            "docs".to_string(),
+            "docs-viejos/docs".to_string(),
+        )
+        .expect("move into prefix sibling");
+
+        assert!(!fixture.path("docs").exists());
+        assert_eq!(
+            read_markdown(root, "docs-viejos/docs/guide.md".to_string()).expect("guide"),
+            "g\n"
+        );
+    }
+
+    #[test]
+    fn move_markdown_rejects_non_md_destination() {
+        let fixture = Fixture::new();
+        fixture.write_md("docs/note.md", "hola\n");
+
+        let error = move_markdown(
+            fixture.root_str(),
+            "docs/note.md".to_string(),
+            "docs/note.txt".to_string(),
+        )
+        .unwrap_err();
+        assert_eq!(error, "Solo se pueden crear archivos .md");
+        assert_eq!(
+            fs::read_to_string(fixture.path("docs/note.md")).expect("keep source"),
+            "hola\n"
+        );
     }
 
     #[test]

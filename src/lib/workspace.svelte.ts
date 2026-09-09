@@ -12,6 +12,7 @@ import {
   normalizeNewName,
   normalizeRenameName,
   parentDirOf,
+  planMove,
   remapPathPrefix,
   siblingExists,
   siblingExistsExcept,
@@ -419,6 +420,77 @@ class Workspace {
       }
     }
 
+    await this.refreshTree();
+    return true;
+  }
+
+  /**
+   * Moves a file or folder into another directory. Failures stay on the tree
+   * banner, same as create and rename.
+   */
+  async moveEntry(from: string, kind: DraftKind, toParent: string): Promise<boolean> {
+    const root = this.root;
+    if (!root) return false;
+
+    const name = baseNameOf(from);
+    const check = planMove(this.tree, from, kind, toParent);
+    if (!check.ok) {
+      if (check.reason === "self") {
+        fileTree.failDraft("No se puede mover una carpeta dentro de sí misma");
+        return false;
+      }
+
+      if (check.reason === "exists") {
+        fileTree.failDraft(`\`${name}\` ya existe`);
+        return false;
+      }
+
+      return true;
+    }
+
+    try {
+      await invoke(kind === "file" ? "move_markdown" : "move_directory", {
+        root,
+        from,
+        to: check.to,
+      });
+      this.error = null;
+    } catch (error) {
+      fileTree.failDraft(messageFrom(error));
+      return false;
+    }
+
+    const fromParent = parentDirOf(from);
+    this.#remapOpenPaths(from, check.to);
+    fileTree.remapExpanded(from, check.to);
+    fileTree.clearError();
+
+    if (kind === "dir" && fromParent !== toParent) {
+      if (fromParent === "") {
+        this.childDirs = this.childDirs.filter((dir) => dir !== name);
+        const nextVisible = removeVisibleRootFolder(this.visibleFolders, name);
+        if (nextVisible !== this.visibleFolders) {
+          this.visibleFolders = nextVisible;
+          if (nextVisible !== null) {
+            await appConfig.saveVisibility(root, nextVisible);
+          }
+        }
+      } else if (toParent === "") {
+        if (!this.childDirs.includes(name)) {
+          this.childDirs = [...this.childDirs, name].sort((a, b) =>
+            a.localeCompare(b, undefined, { sensitivity: "base" }),
+          );
+        }
+
+        const nextVisible = includeCreatedRootFolder(this.visibleFolders, toParent, name);
+        if (nextVisible !== null && nextVisible !== this.visibleFolders) {
+          this.visibleFolders = nextVisible;
+          await appConfig.saveVisibility(root, nextVisible);
+        }
+      }
+    }
+
+    fileTree.revealFolder(toParent);
     await this.refreshTree();
     return true;
   }

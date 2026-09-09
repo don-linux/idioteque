@@ -1,6 +1,7 @@
 import { SvelteSet } from "svelte/reactivity";
 import {
   ancestorsOf,
+  canMoveEntry,
   pathIsUnder,
   remapPathPrefix,
   type DraftKind,
@@ -18,9 +19,36 @@ export interface TreeRename {
  */
 class FileTreeView {
   expanded = new SvelteSet<string>();
+  /** Tree row used for create and highlight; not the open editor tab. */
+  focusedPath = $state<string | null>(null);
+  drag = $state<{ path: string; kind: DraftKind } | null>(null);
+  hoverDrop = $state<string | null>(null);
   draft = $state<TreeDraft | null>(null);
   rename = $state<TreeRename | null>(null);
   draftError = $state<string | null>(null);
+
+  focus(path: string): void {
+    this.focusedPath = path;
+  }
+
+  beginDrag(path: string, kind: DraftKind): void {
+    this.drag = { path, kind };
+    this.hoverDrop = null;
+  }
+
+  hoverDropParent(parent: string | null): void {
+    this.hoverDrop = parent;
+  }
+
+  endDrag(): void {
+    this.drag = null;
+    this.hoverDrop = null;
+  }
+
+  canDropOn(toParent: string): boolean {
+    if (!this.drag) return false;
+    return canMoveEntry(this.drag.path, this.drag.kind, toParent).ok;
+  }
 
   isExpanded(path: string): boolean {
     return this.expanded.has(path);
@@ -78,6 +106,10 @@ class FileTreeView {
     const next = [...this.expanded].map((path) => remapPathPrefix(path, from, to));
     this.expanded.clear();
     for (const path of next) this.expanded.add(path);
+
+    if (this.focusedPath !== null) {
+      this.focusedPath = remapPathPrefix(this.focusedPath, from, to);
+    }
   }
 
   dropExpandedUnder(folder: string): void {
@@ -90,8 +122,15 @@ class FileTreeView {
     this.draftError = message;
   }
 
+  clearError(): void {
+    this.draftError = null;
+  }
+
   reset(): void {
     this.expanded.clear();
+    this.focusedPath = null;
+    this.drag = null;
+    this.hoverDrop = null;
     this.draft = null;
     this.rename = null;
     this.draftError = null;

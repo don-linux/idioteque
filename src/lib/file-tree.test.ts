@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   ancestorsOf,
   baseNameOf,
+  canMoveEntry,
   draftParentFor,
+  draftParentForCommand,
+  dropParentFor,
   flattenTree,
   folderNameOf,
   hasMarkdownExtension,
@@ -12,8 +15,10 @@ import {
   normalizeRenameName,
   parentDirOf,
   pathIsUnder,
+  planMove,
   remapPathPrefix,
   revealPath,
+  selectedTreePath,
   siblingExists,
   siblingExistsExcept,
   toggleExpanded,
@@ -257,6 +262,60 @@ describe("draftParentFor", () => {
     expect(draftParentFor("docs/guia.md", isDirectory)).toBe("docs");
     expect(draftParentFor("README.md", isDirectory)).toBe("");
   });
+
+  it("does not treat a longer name that starts the same as a folder", () => {
+    expect(draftParentFor("docs-viejos", isDirectory)).toBe("");
+    expect(draftParentFor("docs-viejos/guia.md", isDirectory)).toBe("docs-viejos");
+  });
+});
+
+describe("selectedTreePath", () => {
+  it("prefers the tree focus over the open editor file", () => {
+    expect(selectedTreePath("docs", "README.md")).toBe("docs");
+    expect(selectedTreePath("docs/guia.md", "src/otra.md")).toBe("docs/guia.md");
+  });
+
+  it("falls back to the open file, then to nothing", () => {
+    expect(selectedTreePath(null, "README.md")).toBe("README.md");
+    expect(selectedTreePath(null, null)).toBeNull();
+  });
+});
+
+describe("draftParentForCommand", () => {
+  const isDirectory = (path: string) => path === "docs" || path === "docs/sub";
+
+  it("creates inside a focused folder even if another file is open", () => {
+    expect(draftParentForCommand("toolbar", "docs", "README.md", isDirectory)).toBe("docs");
+    expect(draftParentForCommand("toolbar", "docs/sub", "docs/guia.md", isDirectory)).toBe(
+      "docs/sub",
+    );
+  });
+
+  it("creates next to a focused file even if another tab is active", () => {
+    expect(draftParentForCommand("toolbar", "docs/guia.md", "README.md", isDirectory)).toBe(
+      "docs",
+    );
+    expect(draftParentForCommand("toolbar", "README.md", "docs/guia.md", isDirectory)).toBe("");
+  });
+
+  it("falls back to the open file when the tree has no focus", () => {
+    expect(draftParentForCommand("toolbar", null, "docs/guia.md", isDirectory)).toBe("docs");
+    expect(draftParentForCommand("toolbar", null, "README.md", isDirectory)).toBe("");
+  });
+
+  it("uses the root when nothing is focused and nothing is open", () => {
+    expect(draftParentForCommand("toolbar", null, null, isDirectory)).toBe("");
+  });
+
+  it("creates at the root from the blank menu even with a folder focused", () => {
+    expect(draftParentForCommand("blank", "docs", "README.md", isDirectory)).toBe("");
+    expect(draftParentForCommand("blank", "docs/sub", "docs/guia.md", isDirectory)).toBe("");
+    expect(draftParentForCommand("blank", null, "docs/guia.md", isDirectory)).toBe("");
+  });
+
+  it("does not treat docs-viejos as docs just because the name starts the same", () => {
+    expect(draftParentForCommand("toolbar", "docs-viejos", "docs/guia.md", isDirectory)).toBe("");
+  });
 });
 
 describe("normalizeNewName", () => {
@@ -432,6 +491,15 @@ describe("remapPathPrefix", () => {
     expect(remapPathPrefix("docs-viejos/guia.md", "docs", "notas")).toBe("docs-viejos/guia.md");
     expect(remapPathPrefix("README.md", "docs", "notas")).toBe("README.md");
   });
+
+  it("rewrites open tabs and focus when a folder is moved, not a prefix sibling", () => {
+    const tabs = ["docs/guia.md", "docs-viejos/x.md", "README.md"];
+    const remapped = tabs.map((path) => remapPathPrefix(path, "docs", "src/docs"));
+
+    expect(remapped).toEqual(["src/docs/guia.md", "docs-viejos/x.md", "README.md"]);
+    expect(remapPathPrefix("docs", "docs", "src/docs")).toBe("src/docs");
+    expect(remapPathPrefix("docs/sub", "docs", "src/docs")).toBe("src/docs/sub");
+  });
 });
 
 describe("pathIsUnder", () => {
@@ -439,6 +507,124 @@ describe("pathIsUnder", () => {
     expect(pathIsUnder("docs", "docs")).toBe(true);
     expect(pathIsUnder("docs/guia.md", "docs")).toBe(true);
     expect(pathIsUnder("docs-viejos", "docs")).toBe(false);
+  });
+});
+
+describe("dropParentFor", () => {
+  it("drops into a folder, next to a file, or at the root", () => {
+    expect(dropParentFor({ kind: "dir", path: "docs" })).toBe("docs");
+    expect(dropParentFor({ kind: "dir", path: "docs/sub" })).toBe("docs/sub");
+    expect(dropParentFor({ kind: "file", path: "docs/guia.md" })).toBe("docs");
+    expect(dropParentFor({ kind: "file", path: "README.md" })).toBe("");
+    expect(dropParentFor({ kind: "root" })).toBe("");
+  });
+
+  it("uses the nested file's parent, not an ancestor further up", () => {
+    expect(dropParentFor({ kind: "file", path: "docs/sub/nota.md" })).toBe("docs/sub");
+    expect(dropParentFor({ kind: "file", path: "docs/sub/nota.md" })).not.toBe("docs");
+  });
+});
+
+describe("canMoveEntry", () => {
+  it("moves a file into another folder", () => {
+    expect(canMoveEntry("docs/guia.md", "file", "src")).toEqual({
+      ok: true,
+      to: "src/guia.md",
+    });
+  });
+
+  it("treats the same parent as a no-op", () => {
+    expect(canMoveEntry("docs/guia.md", "file", "docs")).toEqual({
+      ok: false,
+      reason: "noop",
+    });
+    expect(canMoveEntry("README.md", "file", "")).toEqual({ ok: false, reason: "noop" });
+    expect(canMoveEntry("docs/sub", "dir", "docs")).toEqual({ ok: false, reason: "noop" });
+  });
+
+  it("refuses to nest a folder inside itself", () => {
+    expect(canMoveEntry("docs", "dir", "docs")).toEqual({ ok: false, reason: "self" });
+    expect(canMoveEntry("docs", "dir", "docs/sub")).toEqual({ ok: false, reason: "self" });
+  });
+
+  it("does not treat a prefix sibling as nesting inside itself", () => {
+    expect(canMoveEntry("docs", "dir", "docs-viejos")).toEqual({
+      ok: true,
+      to: "docs-viejos/docs",
+    });
+  });
+
+  it("allows moving a folder to the root or a sibling", () => {
+    expect(canMoveEntry("docs/sub", "dir", "")).toEqual({ ok: true, to: "sub" });
+    expect(canMoveEntry("docs", "dir", "src")).toEqual({ ok: true, to: "src/docs" });
+  });
+});
+
+describe("planMove", () => {
+  it("moves a file when the destination name is free", () => {
+    expect(planMove(tree(), "docs/guia.md", "file", "src")).toEqual({
+      ok: true,
+      to: "src/guia.md",
+    });
+  });
+
+  it("reports a collision at the destination, including a different case", () => {
+    const nodes = [
+      dir("docs", "docs", [file("guia.md", "docs/guia.md")]),
+      dir("src", "src", [file("GUIA.md", "src/GUIA.md")]),
+      dir("other", "other", [file("readme.md", "other/readme.md")]),
+    ];
+
+    expect(planMove(nodes, "docs/guia.md", "file", "src")).toEqual({
+      ok: false,
+      reason: "exists",
+    });
+    expect(planMove([...tree(), ...nodes.slice(2)], "other/readme.md", "file", "")).toEqual({
+      ok: false,
+      reason: "exists",
+    });
+  });
+
+  it("keeps a same-folder drop as a no-op, not a collision with itself", () => {
+    expect(planMove(tree(), "README.md", "file", "")).toEqual({
+      ok: false,
+      reason: "noop",
+    });
+    expect(planMove(tree(), "docs/guia.md", "file", "docs")).toEqual({
+      ok: false,
+      reason: "noop",
+    });
+  });
+
+  it("still refuses to nest a folder inside itself", () => {
+    expect(planMove(tree(), "docs", "dir", "docs/sub")).toEqual({
+      ok: false,
+      reason: "self",
+    });
+  });
+
+  it("moves a folder into a prefix sibling, a real sibling, or the root", () => {
+    const nodes = [...tree(), dir("docs-viejos", "docs-viejos")];
+
+    expect(planMove(nodes, "docs", "dir", "docs-viejos")).toEqual({
+      ok: true,
+      to: "docs-viejos/docs",
+    });
+    expect(planMove(tree(), "docs", "dir", "src")).toEqual({
+      ok: true,
+      to: "src/docs",
+    });
+    expect(planMove(tree(), "docs/sub", "dir", "")).toEqual({
+      ok: true,
+      to: "sub",
+    });
+  });
+
+  it("moves a file to the root when the name is free", () => {
+    expect(planMove(tree(), "docs/guia.md", "file", "")).toEqual({
+      ok: true,
+      to: "guia.md",
+    });
   });
 });
 

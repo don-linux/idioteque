@@ -59,6 +59,7 @@
 
   header {
     display: flex;
+    flex-shrink: 0;
     align-items: stretch;
     gap: 1rem;
     min-height: 2.35rem;

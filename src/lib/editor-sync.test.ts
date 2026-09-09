@@ -147,6 +147,71 @@ describe("externalDocumentSpec", () => {
     }
   });
 
+  it("keeps a selected range when the file is reloaded", () => {
+    let state = load(createEditor(""), FILE);
+    state = apply(state, { selection: { anchor: 2, head: 7 } });
+
+    state = load(state, `${FILE}\nextra`);
+
+    expect(state.selection.main.anchor).toBe(2);
+    expect(state.selection.main.head).toBe(7);
+    expect(state.selection.main.empty).toBe(false);
+  });
+
+  it("clamps a selected range when the reloaded file is shorter", () => {
+    let state = load(createEditor(""), FILE);
+    state = apply(state, { selection: { anchor: 8, head: FILE.length } });
+
+    state = load(state, "# hi");
+
+    expect(state.selection.main.anchor).toBe(4);
+    expect(state.selection.main.head).toBe(4);
+  });
+
+  it("keeps a reversed selection when the file is reloaded", () => {
+    let state = load(createEditor(""), FILE);
+    state = apply(state, { selection: { anchor: 7, head: 2 } });
+
+    state = load(state, `${FILE}\nextra`);
+
+    expect(state.selection.main.anchor).toBe(7);
+    expect(state.selection.main.head).toBe(2);
+    expect(state.selection.main.empty).toBe(false);
+  });
+
+  it("keeps an empty cursor when the file grows", () => {
+    let state = load(createEditor(""), FILE);
+    state = apply(state, { selection: { anchor: 5, head: 5 } });
+
+    state = load(state, `${FILE}\nextra`);
+
+    expect(state.selection.main.anchor).toBe(5);
+    expect(state.selection.main.head).toBe(5);
+    expect(state.selection.main.empty).toBe(true);
+  });
+
+  it("clamps only the end that no longer fits, not the whole range", () => {
+    let state = load(createEditor(""), "abcdefghij");
+    state = apply(state, { selection: { anchor: 1, head: 10 } });
+
+    state = load(state, "abcd");
+
+    expect(state.selection.main.anchor).toBe(1);
+    expect(state.selection.main.head).toBe(4);
+    expect(state.selection.main.empty).toBe(false);
+  });
+
+  it("does not move a selection when the reloaded text is the same", () => {
+    let state = load(createEditor(""), FILE);
+    state = apply(state, { selection: { anchor: 2, head: 7 } });
+
+    state = load(state, FILE);
+
+    expect(state.selection.main.anchor).toBe(2);
+    expect(state.selection.main.head).toBe(7);
+    expect(state.selection.main.empty).toBe(false);
+  });
+
   it("undoes a user clear of a loaded file and does not clear again on extra undo", () => {
     let state = load(createEditor(""), FILE);
     expect(undoDepth(state)).toBe(0);
