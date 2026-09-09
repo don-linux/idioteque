@@ -4,7 +4,7 @@
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import FileTree from "./FileTree.svelte";
   import FileTreeContextMenu from "./FileTreeContextMenu.svelte";
-  import { draftParentForCommand, selectedTreePath, type DraftKind, type TreeRow } from "$lib/file-tree";
+  import { draftParentForCommand, type DraftKind, type TreeRow } from "$lib/file-tree";
   import { fileTree } from "$lib/file-tree.svelte";
   import { workspace } from "$lib/workspace.svelte";
 
@@ -22,7 +22,6 @@
     const parent = draftParentForCommand(
       "toolbar",
       fileTree.focusedPath,
-      workspace.currentPath,
       (path) => workspace.isDirectory(path),
     );
     fileTree.startDraft(kind, parent);
@@ -33,7 +32,6 @@
     const parent = draftParentForCommand(
       "blank",
       fileTree.focusedPath,
-      workspace.currentPath,
       (path) => workspace.isDirectory(path),
     );
     fileTree.startDraft(kind, parent);
@@ -54,9 +52,24 @@
     };
   }
 
+  function onBlankClick(event: MouseEvent): void {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest('[role="treeitem"]')) return;
+    fileTree.focusRoot();
+  }
+
+  function onBlankDblClick(event: MouseEvent): void {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest('[role="treeitem"]')) return;
+    event.preventDefault();
+  }
+
   function onBodyContextMenu(event: MouseEvent): void {
     event.preventDefault();
     event.stopPropagation();
+    fileTree.focusRoot();
     menu = { variant: "blank", x: event.clientX, y: event.clientY };
   }
 
@@ -161,11 +174,14 @@
     </button>
   </div>
 
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions (blank space focuses workspace root) -->
   <div
     class="body"
     class:drop-root={fileTree.hoverDrop === ""}
     role="group"
     aria-label="Área del árbol"
+    onclick={onBlankClick}
+    ondblclick={onBlankDblClick}
     oncontextmenu={onBodyContextMenu}
     ondragover={onBodyDragOver}
     ondrop={onBodyDrop}
@@ -174,7 +190,7 @@
     {#if workspace.hasEntries || fileTree.draft}
       <FileTree
         nodes={workspace.tree}
-        selected={selectedTreePath(fileTree.focusedPath, workspace.currentPath)}
+        selected={fileTree.focusedPath}
         onSelect={(path) => workspace.openFile(path)}
         onDelete={(path, kind) => deleteTarget(path, kind)}
         onCreate={(name) => {
@@ -299,6 +315,8 @@
     min-height: 0;
     overflow-x: hidden;
     overflow-y: auto;
+    -webkit-user-select: none;
+    user-select: none;
   }
 
   .body.drop-root {

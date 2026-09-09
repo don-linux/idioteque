@@ -270,51 +270,41 @@ describe("draftParentFor", () => {
 });
 
 describe("selectedTreePath", () => {
-  it("prefers the tree focus over the open editor file", () => {
-    expect(selectedTreePath("docs", "README.md")).toBe("docs");
-    expect(selectedTreePath("docs/guia.md", "src/otra.md")).toBe("docs/guia.md");
+  it("uses the tree focus and never the open editor file", () => {
+    expect(selectedTreePath("docs")).toBe("docs");
+    expect(selectedTreePath("docs/guia.md")).toBe("docs/guia.md");
   });
 
-  it("falls back to the open file, then to nothing", () => {
-    expect(selectedTreePath(null, "README.md")).toBe("README.md");
-    expect(selectedTreePath(null, null)).toBeNull();
+  it("is null when the root is focused", () => {
+    expect(selectedTreePath(null)).toBeNull();
   });
 });
 
 describe("draftParentForCommand", () => {
   const isDirectory = (path: string) => path === "docs" || path === "docs/sub";
 
-  it("creates inside a focused folder even if another file is open", () => {
-    expect(draftParentForCommand("toolbar", "docs", "README.md", isDirectory)).toBe("docs");
-    expect(draftParentForCommand("toolbar", "docs/sub", "docs/guia.md", isDirectory)).toBe(
-      "docs/sub",
-    );
+  it("creates inside a focused folder", () => {
+    expect(draftParentForCommand("toolbar", "docs", isDirectory)).toBe("docs");
+    expect(draftParentForCommand("toolbar", "docs/sub", isDirectory)).toBe("docs/sub");
   });
 
-  it("creates next to a focused file even if another tab is active", () => {
-    expect(draftParentForCommand("toolbar", "docs/guia.md", "README.md", isDirectory)).toBe(
-      "docs",
-    );
-    expect(draftParentForCommand("toolbar", "README.md", "docs/guia.md", isDirectory)).toBe("");
+  it("creates next to a focused file", () => {
+    expect(draftParentForCommand("toolbar", "docs/guia.md", isDirectory)).toBe("docs");
+    expect(draftParentForCommand("toolbar", "README.md", isDirectory)).toBe("");
   });
 
-  it("falls back to the open file when the tree has no focus", () => {
-    expect(draftParentForCommand("toolbar", null, "docs/guia.md", isDirectory)).toBe("docs");
-    expect(draftParentForCommand("toolbar", null, "README.md", isDirectory)).toBe("");
-  });
-
-  it("uses the root when nothing is focused and nothing is open", () => {
-    expect(draftParentForCommand("toolbar", null, null, isDirectory)).toBe("");
+  it("creates at the root when the tree focus is the root", () => {
+    expect(draftParentForCommand("toolbar", null, isDirectory)).toBe("");
   });
 
   it("creates at the root from the blank menu even with a folder focused", () => {
-    expect(draftParentForCommand("blank", "docs", "README.md", isDirectory)).toBe("");
-    expect(draftParentForCommand("blank", "docs/sub", "docs/guia.md", isDirectory)).toBe("");
-    expect(draftParentForCommand("blank", null, "docs/guia.md", isDirectory)).toBe("");
+    expect(draftParentForCommand("blank", "docs", isDirectory)).toBe("");
+    expect(draftParentForCommand("blank", "docs/sub", isDirectory)).toBe("");
+    expect(draftParentForCommand("blank", null, isDirectory)).toBe("");
   });
 
   it("does not treat docs-viejos as docs just because the name starts the same", () => {
-    expect(draftParentForCommand("toolbar", "docs-viejos", "docs/guia.md", isDirectory)).toBe("");
+    expect(draftParentForCommand("toolbar", "docs-viejos", isDirectory)).toBe("");
   });
 });
 

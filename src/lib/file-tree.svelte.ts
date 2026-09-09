@@ -31,6 +31,11 @@ class FileTreeView {
     this.focusedPath = path;
   }
 
+  /** Clear the row highlight; create and drop land at the workspace root. */
+  focusRoot(): void {
+    this.focusedPath = null;
+  }
+
   beginDrag(path: string, kind: DraftKind): void {
     this.drag = { path, kind };
     this.hoverDrop = null;

@@ -134,12 +134,9 @@ export function joinTreePath(parent: string, name: string): string {
   return parent ? `${parent}/${name}` : name;
 }
 
-/** Path the tree treats as selected: click focus first, else the open editor file. */
-export function selectedTreePath(
-  focused: string | null,
-  openFile: string | null,
-): string | null {
-  return focused ?? openFile;
+/** Path the tree treats as selected. `null` is root focus: no row is marked. */
+export function selectedTreePath(focused: string | null): string | null {
+  return focused;
 }
 
 /** Where a new entry lands when the user has a file or folder selected. */
@@ -156,16 +153,15 @@ export type DraftCommandSource = "toolbar" | "blank";
 
 /**
  * Create parent for a command. The blank context menu is always the root;
- * the toolbar follows the tree selection (focus, then the open file).
+ * the toolbar follows the tree focus (folder, file parent, or root).
  */
 export function draftParentForCommand(
   source: DraftCommandSource,
   focused: string | null,
-  openFile: string | null,
   isDirectory: (path: string) => boolean,
 ): string {
   if (source === "blank") return "";
-  return draftParentFor(selectedTreePath(focused, openFile), isDirectory);
+  return draftParentFor(selectedTreePath(focused), isDirectory);
 }
 
 export function hasMarkdownExtension(name: string): boolean {

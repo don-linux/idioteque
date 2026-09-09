@@ -16,7 +16,13 @@ Al hacer clic en el icono de git del footer, o usando el shortcut Ctrl + G
 
 Se muestra intercambia la vista del arbol de archivos, por la vista de la rama actual de Git, a manera de vista rapida
 
+Mostrando los commits, los nombres de los commits y permitiendonos ver una o mas ramas idealmente por defecto veremos la rama actual, pero se deben poder habilitar mas
 
+La segunda 
+
+Con el shortcut Ctrl + Shift + G, tendremos acceso a una vista dedicada tipo GitKraken
+
+Aqui si tendremos mas opciones para las ramas
 Desde la deteccion, si no hay un repo, dar la opcion de iniciarlo
 
 El manejo de ramas
@@ -24,4 +30,3 @@ El manejo de ramas
 Creacion, cambio y eliminacion de ramas
 
 
-Pero tambien tener la opcion de cambiar a una vista dedicada tipo GitKraken con un shortcut

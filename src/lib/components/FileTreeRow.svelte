@@ -392,6 +392,8 @@
     color: var(--text);
     font-family: var(--font-mono);
     font-size: 0.75rem;
+    -webkit-user-select: text;
+    user-select: text;
   }
 
   .field:focus {
