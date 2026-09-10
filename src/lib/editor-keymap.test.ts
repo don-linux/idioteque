@@ -1,4 +1,4 @@
-import { findNext } from "@codemirror/search";
+import { findNext, findPrevious, gotoLine, openSearchPanel } from "@codemirror/search";
 import { EditorState, type Extension } from "@codemirror/state";
 import { keymap, type KeyBinding } from "@codemirror/view";
 import { basicSetup } from "codemirror";
@@ -34,15 +34,45 @@ describe("editorKeymap", () => {
     expect(ctrl[0]?.run).toBe(swallowFindNext);
   });
 
-  it("does not steal find previous or go-to-line", () => {
+  it("does not steal find previous, find, or go-to-line", () => {
     const state = EditorState.create({
       doc: "hola",
       extensions: [basicSetup, editorKeymap()],
     });
-    const keys = state.facet(keymap).flat().map((binding) => binding.key);
+    const bindings = state.facet(keymap).flat();
+    const keys = bindings.map((binding) => binding.key);
 
     expect(keys).toContain("Mod-g");
     expect(keys).toContain("Mod-Alt-g");
     expect(keys).toContain("Mod-f");
+
+    // Presence of the search chords is not enough: a highest-precedence
+    // swallow on Mod-f / Mod-Alt-g / Shift-Mod-g would still leave those
+    // keys in the facet while stealing the commands.
+    const swallowed = bindings.filter(
+      (binding) => binding.run === swallowFindNext || binding.shift === swallowFindNext,
+    );
+    expect(swallowed.every((binding) => binding.key === "Mod-g" || binding.key === "Ctrl-g")).toBe(
+      true,
+    );
+    expect(swallowed.every((binding) => binding.shift !== swallowFindNext)).toBe(true);
+
+    expect(bindings.some((binding) => binding.key === "Mod-g" && binding.shift === findPrevious)).toBe(
+      true,
+    );
+    expect(bindings.some((binding) => binding.key === "Mod-Alt-g" && binding.run === gotoLine)).toBe(
+      true,
+    );
+    expect(bindings.some((binding) => binding.key === "Mod-f" && binding.run === openSearchPanel)).toBe(
+      true,
+    );
+
+    expect(bindingsFor("Mod-f", [basicSetup, editorKeymap()])[0]?.run).not.toBe(swallowFindNext);
+    expect(bindingsFor("Mod-Alt-g", [basicSetup, editorKeymap()])[0]?.run).not.toBe(swallowFindNext);
+    expect(
+      bindingsFor("Shift-Mod-g", [basicSetup, editorKeymap()]).every(
+        (binding) => binding.run !== swallowFindNext,
+      ),
+    ).toBe(true);
   });
 });

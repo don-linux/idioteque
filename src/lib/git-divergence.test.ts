@@ -51,6 +51,47 @@ describe("classifyDivergence", () => {
     ]);
     expect(marks.get("base")).toEqual({ kind: "base", bases: ["a", "b"] });
   });
+
+  it("keeps a distinct merge-base per compared branch", () => {
+    const wider = [
+      { hash: "c2", parents: ["c1"] },
+      { hash: "f2", parents: ["f1"] },
+      { hash: "f1", parents: ["c1"] },
+      { hash: "c1", parents: ["base"] },
+      { hash: "o1", parents: ["base"] },
+      { hash: "base", parents: ["root"] },
+      { hash: "root", parents: [] },
+    ];
+    const marks = classifyDivergence(wider, "c2", [
+      { name: "feat", mergeBase: "c1" },
+      { name: "old", mergeBase: "base" },
+    ]);
+
+    expect(marks.get("c1")).toEqual({ kind: "base", bases: ["feat"] });
+    expect(marks.get("base")).toEqual({ kind: "base", bases: ["old"] });
+    expect(marks.get("root")?.kind).toBe("shared");
+    expect(marks.get("f2")?.kind).toBe("other");
+    expect(marks.get("c2")?.kind).toBe("current");
+  });
+
+  it("does not invent a merge-base when the comparison has none", () => {
+    const marks = classifyDivergence(commits, "c2", [{ name: "orphan" }]);
+
+    expect([...marks.values()].some((mark) => mark.kind === "base")).toBe(false);
+    expect(marks.get("c2")?.kind).toBe("current");
+    expect(marks.get("base")?.kind).toBe("current");
+    expect(marks.get("root")?.kind).toBe("current");
+    expect(marks.get("o1")?.kind).toBe("other");
+  });
+
+  it("marks nothing as current when HEAD is unknown", () => {
+    const marks = classifyDivergence(commits, null, [{ name: "old", mergeBase: "base" }]);
+
+    expect(marks.get("base")).toEqual({ kind: "base", bases: ["old"] });
+    expect(marks.get("root")?.kind).toBe("shared");
+    expect(marks.get("c2")?.kind).toBe("other");
+    expect(marks.get("c1")?.kind).toBe("other");
+  });
 });
 
 describe("commitLabel", () => {
@@ -66,6 +107,9 @@ describe("branchPickerLabel", () => {
     expect(branchPickerLabel("main", ["feat"], false)).toBe("main + 1");
     expect(branchPickerLabel(null, ["feat", "old"], true)).toBe("HEAD + 2");
     expect(branchPickerLabel(null, [], false)).toBe("Ramas");
+    // Detached with nothing extra still names HEAD. Falling back to "Ramas"
+    // would look like no checkout.
+    expect(branchPickerLabel(null, [], true)).toBe("HEAD");
   });
 });
 
@@ -74,5 +118,6 @@ describe("coincidenceHint", () => {
     expect(coincidenceHint([])).toBe("Coinciden hasta aquí");
     expect(coincidenceHint(["feat"])).toBe("Coinciden con feat hasta aquí");
     expect(coincidenceHint(["a", "b"])).toBe("Coinciden con a, b hasta aquí");
+    expect(coincidenceHint(["a", "b", "c"])).toBe("Coinciden con a, b, c hasta aquí");
   });
 });

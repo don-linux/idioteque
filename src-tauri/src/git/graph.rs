@@ -594,6 +594,23 @@ mod tests {
     }
 
     #[test]
+    fn graph_without_git_binary_has_no_repository() {
+        let fixture = Fixture::new();
+        let _restore = EnvRestore::set("IDIOTEQUE_GIT", "/no/such-idioteque-git");
+        let snap = fixture.graph(&[]);
+        assert!(!snap.probe.available);
+        assert_eq!(snap.repository, None);
+    }
+
+    #[test]
+    fn graph_without_repo_is_empty() {
+        let fixture = Fixture::new();
+        let snap = fixture.graph(&[]);
+        assert!(snap.probe.available);
+        assert_eq!(snap.repository, None);
+    }
+
+    #[test]
     fn initial_repo_lists_main_without_commits() {
         let fixture = Fixture::new();
         fixture.init();
@@ -618,6 +635,8 @@ mod tests {
         fixture.commit("a.md", "First commit");
 
         let repo = fixture.graph(&[]).repository.expect("graph");
+        assert!(!repo.detached);
+        assert_eq!(repo.current.as_deref(), Some("main"));
         assert_eq!(repo.commits.len(), 1);
         let commit = &repo.commits[0];
         assert_eq!(commit.subject, "First commit");
@@ -640,9 +659,11 @@ mod tests {
 
         let refs = fixture.refs().repository.expect("refs");
         assert_eq!(refs.current.as_deref(), Some("main"));
+        assert!(!refs.detached);
         assert_eq!(refs.branches.len(), 2);
 
         let repo = fixture.graph(&["feat"]).repository.expect("graph");
+        assert!(!repo.detached);
         assert_eq!(repo.commits.len(), 3);
         assert_eq!(repo.comparisons.len(), 1);
         let comparison = &repo.comparisons[0];
@@ -691,6 +712,26 @@ mod tests {
     }
 
     #[test]
+    fn detached_head_lists_commits_without_current_branch() {
+        let fixture = Fixture::new();
+        fixture.init();
+        fixture.commit("a.md", "root");
+        fixture.git(&["checkout", "--detach", "HEAD"]);
+
+        let refs = fixture.refs().repository.expect("refs");
+        assert!(refs.detached);
+        assert_eq!(refs.current, None);
+        assert!(refs.oid.is_some());
+        assert!(refs.branches.iter().any(|branch| branch.name == "main" && !branch.current));
+
+        let repo = fixture.graph(&[]).repository.expect("graph");
+        assert!(repo.detached);
+        assert_eq!(repo.current, None);
+        assert_eq!(repo.commits.len(), 1);
+        assert_eq!(repo.commits[0].subject, "root");
+    }
+
+    #[test]
     fn unknown_and_unsafe_refs_are_ignored() {
         let fixture = Fixture::new();
         fixture.init();
@@ -718,6 +759,16 @@ mod tests {
             vec!["main".to_string(), "feat".to_string()]
         );
         assert_eq!(parse_decorate("HEAD"), vec!["HEAD".to_string()]);
+        assert_eq!(
+            parse_decorate("HEAD -> main, refs/remotes/origin/main"),
+            vec!["main".to_string(), "origin/main".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_log_rejects_an_incomplete_record() {
+        assert!(parse_log(b"").unwrap().is_empty());
+        assert!(parse_log(b"onlyhash\0short\0").is_err());
     }
 
     #[test]
@@ -727,5 +778,8 @@ mod tests {
         assert!(!is_safe_ref("-n"));
         assert!(!is_safe_ref("a..b"));
         assert!(!is_safe_ref(""));
+        assert!(!is_safe_ref("a\nb"));
+        assert!(!is_safe_ref("a\0b"));
+        assert!(!is_safe_ref("a\\b"));
     }
 }

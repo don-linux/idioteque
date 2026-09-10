@@ -215,6 +215,14 @@ describe("isGitToggleShortcut", () => {
     expect(isGitToggleShortcut(key({ code: "KeyG", ctrlKey: false }))).toBe(false);
   });
 
+  // Same trap as Ctrl+B: `includes("KeyG")` or `endsWith("G")` would accept
+  // unrelated physical keys.
+  it("compares the whole code, not part of it", () => {
+    for (const code of ["IntlG", "KeyGG", "Key", "G", "keyg", ""]) {
+      expect(isGitToggleShortcut(key({ code }))).toBe(false);
+    }
+  });
+
   it("does not overlap with the tree chords", () => {
     expect(isGitToggleShortcut(key())).toBe(false);
     expect(isTreeToggleShortcut(key({ code: "KeyG" }))).toBe(false);
@@ -260,6 +268,37 @@ describe("handleGitToggleShortcut", () => {
     const toggleGit = vi.fn();
 
     handleGitToggleShortcut(event, { hasWorkspace: true, insideTerminal: false, toggleGit });
+
+    expect(toggleGit).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("ignores Shift/Alt/Meta on G without touching the event", () => {
+    for (const partial of [
+      { code: "KeyG", shiftKey: true },
+      { code: "KeyG", altKey: true },
+      { code: "KeyG", metaKey: true },
+    ] as const) {
+      const event = key(partial);
+      const toggleGit = vi.fn();
+
+      handleGitToggleShortcut(event, { hasWorkspace: true, insideTerminal: false, toggleGit });
+
+      expect(toggleGit).not.toHaveBeenCalled();
+      expect(event.preventDefault).not.toHaveBeenCalled();
+    }
+  });
+
+  it("lets the terminal keep Ctrl+G when the event came from an xterm surface", () => {
+    const target = { closest: (selector: string) => (selector === ".xterm" ? {} : null) };
+    const event = key({ code: "KeyG" });
+    const toggleGit = vi.fn();
+
+    handleGitToggleShortcut(event, {
+      hasWorkspace: true,
+      insideTerminal: isTerminalTarget(target as unknown as EventTarget),
+      toggleGit,
+    });
 
     expect(toggleGit).not.toHaveBeenCalled();
     expect(event.preventDefault).not.toHaveBeenCalled();

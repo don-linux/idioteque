@@ -80,6 +80,7 @@ describe("sidebar predicates", () => {
     const tree = state({ visible: true, view: "tree" });
     const git = state({ visible: true, view: "git" });
     const hiddenGit = state({ visible: false, view: "git" });
+    const hiddenTree = state({ visible: false, view: "tree" });
 
     expect(isTreeSidebar(tree)).toBe(true);
     expect(isGitSidebar(tree)).toBe(false);
@@ -87,6 +88,10 @@ describe("sidebar predicates", () => {
     expect(isGitSidebar(git)).toBe(true);
     expect(isGitSidebar(hiddenGit)).toBe(false);
     expect(isTreeSidebar(hiddenGit)).toBe(false);
+    // Hidden + view "tree" is not the file-tree sidebar. Checking only `view`
+    // would treat a closed panel as if the tree were showing.
+    expect(isTreeSidebar(hiddenTree)).toBe(false);
+    expect(isGitSidebar(hiddenTree)).toBe(false);
   });
 
   it("resets the git selection only when leaving the file tree view", () => {
