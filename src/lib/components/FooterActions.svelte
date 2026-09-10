@@ -13,9 +13,9 @@
   } from "$lib/footer-actions";
   import { gitStatus } from "$lib/git";
   import {
+    gitFooterButtonTitle,
     gitFooterStateFromError,
     gitFooterStateFromSnapshot,
-    gitFooterTitle,
     type GitFooterState,
   } from "$lib/git-footer";
   import { dockFromAlt } from "$lib/terminal-dock";
@@ -28,7 +28,7 @@
     folder: "Cambiar",
     settings: "Configuración",
     terminal: "Terminal",
-    git: "Git",
+    git: "Git (Ctrl+G)",
   };
 
   const titles: Record<FooterActionId, string> = {
@@ -36,7 +36,7 @@
     folder: "Cambiar carpeta",
     settings: "Configuración",
     terminal: "Terminal (Ctrl+J) · a la derecha (Ctrl+Alt+J) · pantalla (Ctrl+Shift+J)",
-    git: "Git",
+    git: "Git (Ctrl+G)",
   };
 
   let gitState = $state.raw<GitFooterState>({ kind: "loading" });
@@ -63,7 +63,7 @@
     void refreshGit(root);
   });
 
-  let gitTitle = $derived(gitFooterTitle(gitState));
+  let gitTitle = $derived(gitFooterButtonTitle(gitState));
 
   function onActionClick(id: FooterActionId, event: MouseEvent): void {
     runFooterAction(id, {
@@ -77,6 +77,9 @@
       },
       terminal: () => {
         panels.toggleTerminal(dockFromAlt(event.altKey));
+      },
+      git: () => {
+        panels.toggleGit();
       },
     });
   }
@@ -102,13 +105,16 @@
           class={[
             "action",
             {
-              active: id === "terminal" && (terminal.open || terminal.surface === "terminals"),
-              idle: id === "git",
+              active:
+                (id === "terminal" && (terminal.open || terminal.surface === "terminals")) ||
+                (id === "git" && panels.gitVisible),
             },
           ]}
           aria-pressed={id === "terminal"
             ? terminal.open || terminal.surface === "terminals"
-            : undefined}
+            : id === "git"
+              ? panels.gitVisible
+              : undefined}
           aria-label={labels[id]}
           title={id === "git" ? gitTitle : titles[id]}
           onpointerenter={() => {
@@ -158,10 +164,6 @@
     color: var(--text-muted);
     text-decoration: none;
     cursor: pointer;
-  }
-
-  .action.idle {
-    cursor: default;
   }
 
   .action:hover {

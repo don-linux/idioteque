@@ -4,6 +4,7 @@
   import { languages } from "@codemirror/language-data";
   import { EditorState } from "@codemirror/state";
   import { EditorView, basicSetup } from "codemirror";
+  import { editorKeymap } from "$lib/editor-keymap";
   import { editorHighlight } from "$lib/editor-theme";
   import { editorSession } from "$lib/editor-session.svelte";
   import { externalDocumentSpec } from "$lib/editor-sync";
@@ -29,6 +30,7 @@
   function extensions() {
     return [
       basicSetup,
+      editorKeymap(),
       markdown({ codeLanguages: languages }),
       editorHighlight(),
       EditorView.lineWrapping,

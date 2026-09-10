@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  handleGitToggleShortcut,
   handleTreeToggleShortcut,
+  isGitToggleShortcut,
   isTerminalTarget,
   isTreeToggleAnywhereShortcut,
   isTreeToggleShortcut,
@@ -200,5 +202,66 @@ describe("isTerminalTarget", () => {
     const target = { closest: () => undefined } as unknown as EventTarget;
 
     expect(isTerminalTarget(target)).toBe(false);
+  });
+});
+
+describe("isGitToggleShortcut", () => {
+  it("matches only plain Ctrl+G", () => {
+    expect(isGitToggleShortcut(key({ code: "KeyG" }))).toBe(true);
+    expect(isGitToggleShortcut(key())).toBe(false);
+    expect(isGitToggleShortcut(key({ code: "KeyG", shiftKey: true }))).toBe(false);
+    expect(isGitToggleShortcut(key({ code: "KeyG", altKey: true }))).toBe(false);
+    expect(isGitToggleShortcut(key({ code: "KeyG", metaKey: true }))).toBe(false);
+    expect(isGitToggleShortcut(key({ code: "KeyG", ctrlKey: false }))).toBe(false);
+  });
+
+  it("does not overlap with the tree chords", () => {
+    expect(isGitToggleShortcut(key())).toBe(false);
+    expect(isTreeToggleShortcut(key({ code: "KeyG" }))).toBe(false);
+    expect(isTreeToggleAnywhereShortcut(key({ code: "KeyG", shiftKey: true }))).toBe(false);
+  });
+});
+
+describe("handleGitToggleShortcut", () => {
+  it("toggles git and swallows the chord", () => {
+    const event = key({ code: "KeyG" });
+    const toggleGit = vi.fn();
+
+    handleGitToggleShortcut(event, { hasWorkspace: true, insideTerminal: false, toggleGit });
+
+    expect(toggleGit).toHaveBeenCalledTimes(1);
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(event.stopPropagation).toHaveBeenCalledTimes(1);
+    expect(event.stopImmediatePropagation).toHaveBeenCalledTimes(1);
+  });
+
+  it("is a no-op without a workspace", () => {
+    const event = key({ code: "KeyG" });
+    const toggleGit = vi.fn();
+
+    handleGitToggleShortcut(event, { hasWorkspace: false, insideTerminal: false, toggleGit });
+
+    expect(toggleGit).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("leaves Ctrl+G alone inside the terminal", () => {
+    const event = key({ code: "KeyG" });
+    const toggleGit = vi.fn();
+
+    handleGitToggleShortcut(event, { hasWorkspace: true, insideTerminal: true, toggleGit });
+
+    expect(toggleGit).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("does not steal Ctrl+B", () => {
+    const event = key();
+    const toggleGit = vi.fn();
+
+    handleGitToggleShortcut(event, { hasWorkspace: true, insideTerminal: false, toggleGit });
+
+    expect(toggleGit).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
   });
 });

@@ -1,10 +1,20 @@
 import { appConfig, type LayoutSettings } from "$lib/app-config.svelte";
+import { gitGraph } from "$lib/git-graph.svelte";
 import {
   clampPanelSize,
   DEFAULT_TREE_WIDTH,
   MIN_TREE_WIDTH,
   treeReserve,
 } from "$lib/panel-resize";
+import {
+  applyGitToggle,
+  applyShowGit,
+  applyShowTree,
+  applyTreeToggle,
+  gitOpensFromTree,
+  isGitSidebar,
+  type SidebarView,
+} from "$lib/sidebar-view";
 import type { TerminalDock } from "$lib/terminal-dock";
 import { terminal } from "$lib/terminal.svelte";
 
@@ -15,6 +25,8 @@ import { terminal } from "$lib/terminal.svelte";
 class WorkspacePanels {
   treeVisible = $state(true);
   treeWidth = $state(DEFAULT_TREE_WIDTH);
+  /** Which left-panel body is mounted. Session-only: a reload always starts on the tree. */
+  sidebarView = $state<SidebarView>("tree");
 
   #hydrated = false;
 
@@ -47,15 +59,42 @@ class WorkspacePanels {
     terminal.fit(width, height, this.treeSpace);
   }
 
+  get gitVisible(): boolean {
+    return isGitSidebar({ visible: this.treeVisible, view: this.sidebarView });
+  }
+
+  #applySidebar(
+    next: { visible: boolean; view: SidebarView },
+    resetGitSelection: boolean,
+  ): void {
+    const becameVisible = next.visible && !this.treeVisible;
+    const visibilityChanged = next.visible !== this.treeVisible;
+
+    this.treeVisible = next.visible;
+    this.sidebarView = next.view;
+
+    if (resetGitSelection) gitGraph.resetSelection();
+    if (becameVisible) this.fit(window.innerWidth, window.innerHeight);
+    if (visibilityChanged) this.persist();
+  }
+
   toggleTree(): void {
-    this.treeVisible = !this.treeVisible;
-    if (this.treeVisible) this.fit(window.innerWidth, window.innerHeight);
-    this.persist();
+    const current = { visible: this.treeVisible, view: this.sidebarView };
+    this.#applySidebar(applyTreeToggle(current), false);
   }
 
   showTree(): void {
-    if (this.treeVisible) return;
-    this.toggleTree();
+    this.#applySidebar(applyShowTree(), false);
+  }
+
+  toggleGit(): void {
+    const current = { visible: this.treeVisible, view: this.sidebarView };
+    this.#applySidebar(applyGitToggle(current), gitOpensFromTree(current));
+  }
+
+  showGit(): void {
+    const current = { visible: this.treeVisible, view: this.sidebarView };
+    this.#applySidebar(applyShowGit(), gitOpensFromTree(current));
   }
 
   /** Toggling the terminal can move its dock, so the pair is stored together. */
