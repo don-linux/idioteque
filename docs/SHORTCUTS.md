@@ -9,6 +9,7 @@ Ctrl + Z - Deshacer
 
 Ctrl + B - Árbol
 Ctrl + Shift + B - Árbol (desde la terminal)
+Ctrl + G - Grafo de ramas Git
 Ctrl + J - Terminal abajo
 Ctrl + Alt + J - Terminal a la derecha
 Ctrl + Shift + J - Superficie de terminales
