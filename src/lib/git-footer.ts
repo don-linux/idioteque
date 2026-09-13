@@ -35,6 +35,10 @@ export function gitFooterStateFromSnapshot(snapshot: GitSnapshot): GitFooterStat
   return { kind: "repo", name, branch: repository.branch.trim(), detached: false };
 }
 
+export function gitFooterButtonTitle(state: GitFooterState): string {
+  return `${gitFooterTitle(state)} (Ctrl+G)`;
+}
+
 export function gitFooterTitle(state: GitFooterState): string {
   switch (state.kind) {
     case "loading":

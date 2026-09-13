@@ -17,6 +17,17 @@ interface Chord {
   altKey: boolean;
 }
 
+/** Ctrl+G. Not delivered while the terminal has focus. */
+export function isGitToggleShortcut(event: Chord): boolean {
+  return (
+    event.code === "KeyG" &&
+    event.ctrlKey &&
+    !event.metaKey &&
+    !event.shiftKey &&
+    !event.altKey
+  );
+}
+
 /** Ctrl+B, like Visual Studio Code. Not delivered while the terminal has focus. */
 export function isTreeToggleShortcut(event: Chord): boolean {
   return (
@@ -59,6 +70,24 @@ export function handleTreeToggleShortcut(
   event.stopPropagation();
   event.stopImmediatePropagation?.();
   ctx.toggleTree();
+}
+
+export function handleGitToggleShortcut(
+  event: TreeToggleEvent,
+  ctx: {
+    hasWorkspace: boolean;
+    insideTerminal: boolean;
+    toggleGit: () => void;
+  },
+): void {
+  if (!isGitToggleShortcut(event)) return;
+  if (!ctx.hasWorkspace) return;
+  if (ctx.insideTerminal) return;
+
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation?.();
+  ctx.toggleGit();
 }
 
 /**

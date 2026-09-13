@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { GitSnapshot } from "./git";
 import {
+  gitFooterButtonTitle,
   gitFooterStateFromError,
   gitFooterStateFromSnapshot,
   gitFooterTitle,
@@ -146,6 +147,26 @@ describe("gitFooterStateFromSnapshot", () => {
 describe("gitFooterTitle", () => {
   it("uses a generic label while loading", () => {
     expect(gitFooterTitle({ kind: "loading" })).toBe("Git");
+  });
+
+  it("announces Ctrl+G on the footer button without changing the live text", () => {
+    const live = gitFooterTitle({ kind: "repo", name: "idioteque", branch: "main", detached: false });
+    expect(live).toBe("idioteque · main");
+    expect(gitFooterButtonTitle({ kind: "repo", name: "idioteque", branch: "main", detached: false })).toBe(
+      "idioteque · main (Ctrl+G)",
+    );
+    expect(gitFooterButtonTitle({ kind: "empty" })).toBe("Sin repositorio Git (Ctrl+G)");
+    expect(gitFooterTitle({ kind: "empty" })).toBe("Sin repositorio Git");
+    expect(gitFooterButtonTitle({ kind: "loading" })).toBe("Git (Ctrl+G)");
+    expect(gitFooterButtonTitle({ kind: "unavailable" })).toBe("Git no está disponible (Ctrl+G)");
+    expect(gitFooterButtonTitle({ kind: "error" })).toBe("Git no responde (Ctrl+G)");
+    expect(gitFooterButtonTitle({ kind: "repo", name: "scratch", detached: true })).toBe(
+      "scratch · HEAD separado (Ctrl+G)",
+    );
+    expect(gitFooterTitle({ kind: "loading" })).toBe("Git");
+    expect(gitFooterTitle({ kind: "unavailable" })).toBe("Git no está disponible");
+    expect(gitFooterTitle({ kind: "error" })).toBe("Git no responde");
+    expect(gitFooterTitle({ kind: "loading" })).not.toContain("Ctrl+G");
   });
 
   it("does not dress an invoke error as 'no repo'", () => {

@@ -114,7 +114,7 @@ impl GitRepository {
     }
 }
 
-fn discover_repo(git: &Git, root: &Path) -> Result<Option<(String, String)>, String> {
+pub(super) fn discover_repo(git: &Git, root: &Path) -> Result<Option<(String, String)>, String> {
     let output = git.run(
         root,
         &["rev-parse", "--show-toplevel", "--absolute-git-dir"],
@@ -140,7 +140,7 @@ fn discover_repo(git: &Git, root: &Path) -> Result<Option<(String, String)>, Str
     Ok(Some((toplevel.to_string(), git_dir.to_string())))
 }
 
-fn require_directory(root: &str) -> Result<PathBuf, String> {
+pub(super) fn require_directory(root: &str) -> Result<PathBuf, String> {
     let path = Path::new(root);
 
     if !path.is_dir() {

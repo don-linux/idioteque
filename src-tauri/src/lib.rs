@@ -36,6 +36,8 @@ pub fn run() {
             workspace::unwatch_workspace,
             git::git_probe,
             git::git_status,
+            git::git_refs,
+            git::git_graph,
             pty::pty_spawn,
             pty::pty_write,
             pty::pty_resize,

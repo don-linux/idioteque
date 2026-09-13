@@ -151,6 +151,6 @@ leemos es porcelain v2; VS Code todavía usa v1.
 Si la carpeta no es un repo, o no hay Git, el snapshot viene vacío.
 No es un error. El panel podrá esconderse.
 
-Aún no hay panel. El footer tiene un icono de Git solo para ver si el
-canal responde: hover con el nombre del repo y la rama, o “sin
-repositorio”. El clic no abre nada.
+El icono de Git del footer (y Ctrl+G) abre el grafo de ramas en el
+mismo hueco del árbol de archivos. Ctrl+B vuelve al árbol. El hover
+sigue mostrando el nombre del repo y la rama.

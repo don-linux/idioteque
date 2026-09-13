@@ -1,6 +1,7 @@
 <script lang="ts">
   import EditorPane from "$lib/components/EditorPane.svelte";
   import FileTreePanel from "$lib/components/FileTreePanel.svelte";
+  import GitGraphPanel from "$lib/components/GitGraphPanel.svelte";
   import PanelSplitter from "$lib/components/PanelSplitter.svelte";
   import TerminalHost from "$lib/components/TerminalHost.svelte";
   import { appConfig } from "$lib/app-config.svelte";
@@ -32,14 +33,20 @@
     style:--park-height="{terminal.parkHeight}px"
   >
     {#if showTree}
-      <FileTreePanel parked={terminals} />
+      {#if panels.sidebarView === "git"}
+        <GitGraphPanel parked={terminals} />
+      {:else}
+        <FileTreePanel parked={terminals} />
+      {/if}
       {#if !terminals}
         <div class="sash">
           <PanelSplitter
             axis="x"
             grow="forward"
             size={panels.treeWidth}
-            label="Redimensionar el árbol de archivos"
+            label={panels.sidebarView === "git"
+              ? "Redimensionar el grafo de Git"
+              : "Redimensionar el árbol de archivos"}
             onSize={(pixels) => panels.setTreeWidth(pixels, window.innerWidth)}
             onCommit={() => panels.commitResize()}
           />

@@ -14,9 +14,11 @@
 //! No libgit2 / gitoxide. Writes (stage, commit, push) will reuse `Git::run`.
 
 mod exec;
+mod graph;
 mod porcelain;
 mod status;
 
+pub use graph::{GitGraphSnapshot, GitRefsSnapshot};
 pub use status::{GitProbe, GitSnapshot};
 
 #[tauri::command]
@@ -27,4 +29,14 @@ pub fn git_probe() -> GitProbe {
 #[tauri::command]
 pub fn git_status(root: String) -> Result<GitSnapshot, String> {
     status::snapshot(&root)
+}
+
+#[tauri::command]
+pub fn git_refs(root: String) -> Result<GitRefsSnapshot, String> {
+    graph::refs(&root)
+}
+
+#[tauri::command]
+pub fn git_graph(root: String, selected: Vec<String>) -> Result<GitGraphSnapshot, String> {
+    graph::graph(&root, &selected)
 }

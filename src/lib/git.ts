@@ -40,12 +40,68 @@ export interface GitSnapshot {
   repository?: GitRepository;
 }
 
+export interface GitRef {
+  name: string;
+  hash?: string;
+  current: boolean;
+}
+
+export interface GitRefRepository {
+  current?: string;
+  oid?: string;
+  detached: boolean;
+  initial: boolean;
+  branches: GitRef[];
+}
+
+export interface GitRefsSnapshot {
+  probe: GitProbe;
+  repository?: GitRefRepository;
+}
+
+export interface GitCommit {
+  hash: string;
+  short: string;
+  parents: string[];
+  subject: string;
+  refs: string[];
+}
+
+export interface GitComparison {
+  name: string;
+  mergeBase?: string;
+  ahead: number;
+  behind: number;
+}
+
+export interface GitGraphRepository {
+  current?: string;
+  oid?: string;
+  detached: boolean;
+  initial: boolean;
+  commits: GitCommit[];
+  comparisons: GitComparison[];
+}
+
+export interface GitGraphSnapshot {
+  probe: GitProbe;
+  repository?: GitGraphRepository;
+}
+
 export function probeGit(): Promise<GitProbe> {
   return invoke("git_probe");
 }
 
 export function gitStatus(root: string): Promise<GitSnapshot> {
   return invoke("git_status", { root });
+}
+
+export function gitRefs(root: string): Promise<GitRefsSnapshot> {
+  return invoke("git_refs", { root });
+}
+
+export function gitGraphLog(root: string, selected: string[]): Promise<GitGraphSnapshot> {
+  return invoke("git_graph", { root, selected });
 }
 
 export function isUntracked(file: GitFile): boolean {

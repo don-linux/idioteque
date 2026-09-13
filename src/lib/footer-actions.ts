@@ -12,9 +12,7 @@ export const DEFAULT_FOOTER_ACTION_ORDER: FooterActionId[] = [...FOOTER_ACTION_I
 
 export type FooterActionIntent = FooterActionId | "idle";
 
-/** Git is a liveness icon only. Click must not navigate or toggle anything. */
 export function footerActionIntent(id: FooterActionId): FooterActionIntent {
-  if (id === "git") return "idle";
   return id;
 }
 
@@ -24,6 +22,7 @@ export function runFooterAction(
     home: () => void;
     folder: () => void;
     terminal: () => void;
+    git: () => void;
   },
 ): void {
   switch (footerActionIntent(id)) {
@@ -35,6 +34,9 @@ export function runFooterAction(
       return;
     case "terminal":
       actions.terminal();
+      return;
+    case "git":
+      actions.git();
       return;
     case "idle":
     case "settings":

@@ -1,0 +1,160 @@
+export const LANE_WIDTH = 11;
+export const LANE_HEIGHT = 22;
+export const NODE_RADIUS = 4;
+
+export interface LaneCommit {
+  hash: string;
+  parents: string[];
+}
+
+export interface LaneSlot {
+  column: number;
+  id: string;
+  color: number;
+}
+
+export interface LaneRow {
+  hash: string;
+  column: number;
+  color: number;
+  merge: boolean;
+  head: boolean;
+  input: LaneSlot[];
+  output: LaneSlot[];
+}
+
+export interface LaneEdge {
+  d: string;
+  color: number;
+}
+
+interface OpenLane {
+  id: string;
+  color: number;
+}
+
+const PALETTE = 5;
+
+export function assignLanes(commits: readonly LaneCommit[], headHash?: string | null): LaneRow[] {
+  const rows: LaneRow[] = [];
+  let lanes: Array<OpenLane | null> = [];
+  let nextColor = 1;
+
+  const takeColor = (preferred?: number): number => {
+    if (preferred !== undefined) return preferred;
+    const color = nextColor;
+    nextColor = nextColor === PALETTE ? 1 : nextColor + 1;
+    return color;
+  };
+
+  for (const commit of commits) {
+    const input = lanes.map((lane, column) =>
+      lane ? { column, id: lane.id, color: lane.color } : null,
+    );
+
+    let column = input.findIndex((lane) => lane?.id === commit.hash);
+    const incoming = column >= 0 ? input[column]?.color : undefined;
+
+    if (column < 0) {
+      column = lanes.findIndex((lane) => lane === null);
+      if (column < 0) column = lanes.length;
+    }
+
+    const isHead = Boolean(headHash && commit.hash === headHash);
+    const color = isHead ? 0 : takeColor(incoming);
+
+    const next: Array<OpenLane | null> = lanes.map((lane) =>
+      lane && lane.id === commit.hash ? null : lane,
+    );
+    while (next.length <= column) next.push(null);
+
+    const first = commit.parents[0];
+    next[column] = first ? { id: first, color } : null;
+
+    for (const parent of commit.parents.slice(1)) {
+      if (next.some((lane) => lane?.id === parent)) continue;
+      let slot = next.findIndex((lane) => lane === null);
+      if (slot < 0) {
+        slot = next.length;
+        next.push(null);
+      }
+      next[slot] = { id: parent, color: takeColor() };
+    }
+
+    while (next.length > 0 && next[next.length - 1] === null) next.pop();
+
+    rows.push({
+      hash: commit.hash,
+      column,
+      color,
+      merge: commit.parents.length > 1,
+      head: isHead,
+      input: slotsOf(input),
+      output: slotsOf(next.map((lane, index) => (lane ? { column: index, ...lane } : null))),
+    });
+
+    lanes = next;
+  }
+
+  return rows;
+}
+
+export function graphWidth(rows: readonly LaneRow[]): number {
+  let columns = 1;
+  for (const row of rows) {
+    columns = Math.max(columns, row.column + 1, row.input.length, row.output.length);
+    for (const slot of row.input) columns = Math.max(columns, slot.column + 1);
+    for (const slot of row.output) columns = Math.max(columns, slot.column + 1);
+  }
+  return columns * LANE_WIDTH;
+}
+
+export function rowEdges(row: LaneRow): LaneEdge[] {
+  const edges: LaneEdge[] = [];
+  const nodeX = laneCenter(row.column);
+  const mid = LANE_HEIGHT / 2;
+
+  for (const slot of row.input) {
+    const startX = laneCenter(slot.column);
+    if (slot.id === row.hash) {
+      edges.push({
+        d: slot.column === row.column ? vertical(startX, 0, mid) : curve(startX, 0, nodeX, mid),
+        color: slot.color,
+      });
+    } else {
+      edges.push({ d: vertical(startX, 0, LANE_HEIGHT), color: slot.color });
+    }
+  }
+
+  for (const slot of row.output) {
+    const passthrough = row.input.some(
+      (incoming) => incoming.column === slot.column && incoming.id === slot.id,
+    );
+    if (passthrough) continue;
+
+    const endX = laneCenter(slot.column);
+    edges.push({
+      d: slot.column === row.column ? vertical(nodeX, mid, LANE_HEIGHT) : curve(nodeX, mid, endX, LANE_HEIGHT),
+      color: slot.color,
+    });
+  }
+
+  return edges;
+}
+
+export function laneCenter(column: number): number {
+  return column * LANE_WIDTH + LANE_WIDTH / 2;
+}
+
+function slotsOf(lanes: Array<LaneSlot | null>): LaneSlot[] {
+  return lanes.filter((lane): lane is LaneSlot => lane !== null);
+}
+
+function vertical(x: number, y1: number, y2: number): string {
+  return `M ${x} ${y1} L ${x} ${y2}`;
+}
+
+function curve(x1: number, y1: number, x2: number, y2: number): string {
+  const mid = (y1 + y2) / 2;
+  return `M ${x1} ${y1} C ${x1} ${mid}, ${x2} ${mid}, ${x2} ${y2}`;
+}
