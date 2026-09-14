@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { assignLanes, graphWidth, LANE_HEIGHT, LANE_WIDTH, laneCenter, rowEdges } from "./git-lanes";
+import {
+  assignLanes,
+  graphWidth,
+  GRAPH_PAD,
+  LANE_HEIGHT,
+  LANE_WIDTH,
+  laneCenter,
+  NODE_RADIUS,
+  rowEdges,
+} from "./git-lanes";
+
+// GitGraphRow dibuja el anillo del merge con este radio.
+const RING_RADIUS = NODE_RADIUS + 2;
 
 describe("assignLanes", () => {
   it("keeps a linear history on a single column", () => {
@@ -114,7 +126,7 @@ describe("assignLanes", () => {
     ]);
 
     expect(rows.map((row) => row.column)).toEqual([0, 1, 2, 0, 0]);
-    expect(graphWidth(rows)).toBe(3 * LANE_WIDTH);
+    expect(graphWidth(rows)).toBe(3 * LANE_WIDTH + 2 * GRAPH_PAD);
   });
 });
 
@@ -131,7 +143,26 @@ describe("graphWidth", () => {
       { hash: "a", parents: [] },
     ]);
 
-    expect(graphWidth(linear)).toBe(LANE_WIDTH);
+    expect(graphWidth(linear)).toBe(LANE_WIDTH + 2 * GRAPH_PAD);
     expect(graphWidth(forked)).toBeGreaterThan(graphWidth(linear));
+  });
+
+  it("leaves room for the merge ring on both edges of the gutter", () => {
+    const merge = assignLanes([
+      { hash: "m", parents: ["c", "d"] },
+      { hash: "c", parents: ["a"] },
+      { hash: "d", parents: ["a"] },
+      { hash: "a", parents: [] },
+    ]);
+    const linear = assignLanes([
+      { hash: "b", parents: ["a"] },
+      { hash: "a", parents: [] },
+    ]);
+
+    for (const rows of [merge, linear]) {
+      const last = Math.max(...rows.map((row) => row.column));
+      expect(laneCenter(0) - RING_RADIUS).toBeGreaterThan(0);
+      expect(laneCenter(last) + RING_RADIUS).toBeLessThan(graphWidth(rows));
+    }
   });
 });

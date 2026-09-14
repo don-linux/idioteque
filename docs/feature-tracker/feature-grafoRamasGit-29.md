@@ -40,6 +40,12 @@ Se ven las líneas de cada rama, los merges y el punto hasta donde
 coinciden con la actual. Cada commit se lee como
 “First commit (d454323)”: el mensaje y un trozo del hash.
 
+**5. El grafo no toca el borde**
+
+El dibujo deja aire a los lados. Antes el anillo de los merges, que
+es más ancho que el punto de un commit normal, se salía del SVG y se
+veía cortado contra el borde del panel.
+
 ## NO se pudo implementar
 
 Quedó fuera de esta entrega, no son fallas del grafo:

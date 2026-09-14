@@ -1,6 +1,9 @@
 export const LANE_WIDTH = 11;
 export const LANE_HEIGHT = 22;
 export const NODE_RADIUS = 4;
+// Aire a los lados del carril: el anillo de merge es más ancho que el
+// nodo y sin este margen se sale del SVG.
+export const GRAPH_PAD = 6;
 
 export interface LaneCommit {
   hash: string;
@@ -106,7 +109,7 @@ export function graphWidth(rows: readonly LaneRow[]): number {
     for (const slot of row.input) columns = Math.max(columns, slot.column + 1);
     for (const slot of row.output) columns = Math.max(columns, slot.column + 1);
   }
-  return columns * LANE_WIDTH;
+  return columns * LANE_WIDTH + GRAPH_PAD * 2;
 }
 
 export function rowEdges(row: LaneRow): LaneEdge[] {
@@ -143,7 +146,7 @@ export function rowEdges(row: LaneRow): LaneEdge[] {
 }
 
 export function laneCenter(column: number): number {
-  return column * LANE_WIDTH + LANE_WIDTH / 2;
+  return GRAPH_PAD + column * LANE_WIDTH + LANE_WIDTH / 2;
 }
 
 function slotsOf(lanes: Array<LaneSlot | null>): LaneSlot[] {
