@@ -6,6 +6,7 @@
   import FileTreeContextMenu from "./FileTreeContextMenu.svelte";
   import { draftParentForCommand, type DraftKind, type TreeRow } from "$lib/file-tree";
   import { fileTree } from "$lib/file-tree.svelte";
+  import { SPIN_TURN_MS, spinHoldMs } from "$lib/refresh-spin";
   import { workspace } from "$lib/workspace.svelte";
 
   let { parked = false }: { parked?: boolean } = $props();
@@ -107,10 +108,14 @@
   }
 
   async function refresh(): Promise<void> {
+    if (refreshing) return;
     refreshing = true;
+    const started = Date.now();
     try {
       await workspace.refreshTree();
     } finally {
+      const hold = spinHoldMs(Date.now() - started);
+      if (hold > 0) await new Promise((resolve) => setTimeout(resolve, hold));
       refreshing = false;
     }
   }
@@ -166,6 +171,7 @@
       type="button"
       class="tool"
       class:spinning={refreshing}
+      style="--spin-turn: {SPIN_TURN_MS}ms"
       aria-label="Refrescar"
       title="Refrescar"
       onclick={() => void refresh()}
@@ -308,6 +314,23 @@
 
   .tool.spinning {
     color: var(--accent);
+  }
+
+  .tool.spinning :global(svg) {
+    transform-origin: 50% 50%;
+    animation: spin var(--spin-turn, 800ms) linear infinite;
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(1turn);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tool.spinning :global(svg) {
+      animation: none;
+    }
   }
 
   .body {
