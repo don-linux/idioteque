@@ -76,6 +76,14 @@
     --syntax-operator: #8f96a1;
     --syntax-tag: #e08b99;
     --syntax-invalid: #e08b99;
+    --graph-lane-0: #7b9ee8;
+    --graph-lane-1: #8ec4c4;
+    --graph-lane-2: #e8b17b;
+    --graph-lane-3: #b79ee8;
+    --graph-lane-4: #c4a882;
+    --graph-lane-5: #9ec48b;
+    --graph-lane-6: #c48bb7;
+    --graph-lane-7: #e08b99;
     --font-ui: Inter, system-ui, -apple-system, sans-serif;
     --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, monospace;
     --footer-height: 2.75rem;

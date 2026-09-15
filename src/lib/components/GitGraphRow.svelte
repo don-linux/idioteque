@@ -7,22 +7,27 @@
     rowEdges,
     type LaneRow,
   } from "$lib/git-lanes";
+  import { graphLaneVar } from "$lib/ui-theme";
 
   let {
     label,
     row,
     width,
+    laneCount,
     mark,
   }: {
     label: string;
     row: LaneRow;
     width: number;
+    /** Carriles del tema activo: el acento más sus secundarios. */
+    laneCount: number;
     mark: DivergenceMark | undefined;
   } = $props();
 
   let edges = $derived(rowEdges(row));
   let cx = $derived(laneCenter(row.column));
   let cy = $derived(LANE_HEIGHT / 2);
+  let lane = $derived(graphLaneVar(row.color, laneCount));
   let kind = $derived(mark?.kind ?? "current");
   let hint = $derived(kind === "base" ? coincidenceHint(mark?.bases ?? []) : "");
 </script>
@@ -36,12 +41,19 @@
     aria-hidden="true"
   >
     {#each edges as edge, index (index)}
-      <path class="lane lane-{edge.color}" d={edge.d} />
+      <path class="lane" style:--lane={graphLaneVar(edge.color, laneCount)} d={edge.d} />
     {/each}
     {#if row.merge}
-      <circle class="ring lane-{row.color}" cx={cx} cy={cy} r={NODE_RADIUS + 2} />
+      <circle class="ring" style:--lane={lane} cx={cx} cy={cy} r={NODE_RADIUS + 2} />
     {/if}
-    <circle class="node node-{row.color}" class:head={row.head} cx={cx} cy={cy} r={NODE_RADIUS} />
+    <circle
+      class="node"
+      class:head={row.head}
+      style:--lane={lane}
+      cx={cx}
+      cy={cy}
+      r={NODE_RADIUS}
+    />
   </svg>
   <div class="meta">
     <span class="label">{label}</span>
@@ -74,72 +86,22 @@
     display: block;
   }
 
+  /* El color del carril llega por --lane, que apunta a la paleta del tema. */
   .lane {
     fill: none;
+    stroke: var(--lane);
     stroke-width: 1.6;
   }
 
   .node,
   .ring {
+    fill: var(--lane);
+    stroke: var(--lane);
     stroke-width: 1.5;
   }
 
   .ring {
     fill: none;
-  }
-
-  .lane-0,
-  .node-0 {
-    stroke: var(--accent);
-  }
-
-  .node-0 {
-    fill: var(--accent);
-  }
-
-  .lane-1,
-  .node-1 {
-    stroke: var(--syntax-function, #7aa2f7);
-  }
-
-  .node-1 {
-    fill: var(--syntax-function, #7aa2f7);
-  }
-
-  .lane-2,
-  .node-2 {
-    stroke: var(--syntax-string, #9ece6a);
-  }
-
-  .node-2 {
-    fill: var(--syntax-string, #9ece6a);
-  }
-
-  .lane-3,
-  .node-3 {
-    stroke: var(--syntax-keyword, #bb9af7);
-  }
-
-  .node-3 {
-    fill: var(--syntax-keyword, #bb9af7);
-  }
-
-  .lane-4,
-  .node-4 {
-    stroke: var(--syntax-number, #ff9e64);
-  }
-
-  .node-4 {
-    fill: var(--syntax-number, #ff9e64);
-  }
-
-  .lane-5,
-  .node-5 {
-    stroke: var(--syntax-type, #2ac3de);
-  }
-
-  .node-5 {
-    fill: var(--syntax-type, #2ac3de);
   }
 
   .node.head {

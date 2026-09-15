@@ -1,3 +1,5 @@
+import { CURRENT_BRANCH_LANE } from "$lib/git-branch-colors";
+
 export const LANE_WIDTH = 11;
 export const LANE_HEIGHT = 22;
 export const NODE_RADIUS = 4;
@@ -36,18 +38,38 @@ interface OpenLane {
   color: number;
 }
 
-const PALETTE = 5;
-
-export function assignLanes(commits: readonly LaneCommit[], headHash?: string | null): LaneRow[] {
+/**
+ * El color de un carril sale, en este orden, de la rama que reclama el commit
+ * (`colors`), del carril que entra, o de una rotación de reserva que esquiva
+ * los colores que ya están en pantalla.
+ *
+ * `secondaries` es cuántos colores tiene la paleta del tema activo. Llega como
+ * argumento y no importado: así esta función reparte ordinales sin saber de
+ * temas, y la reserva nunca inventa un carril que el tema no puede pintar.
+ */
+export function assignLanes(
+  commits: readonly LaneCommit[],
+  secondaries: number,
+  headHash?: string | null,
+  colors?: ReadonlyMap<string, number>,
+): LaneRow[] {
   const rows: LaneRow[] = [];
+  const total = Math.max(1, Math.trunc(secondaries));
   let lanes: Array<OpenLane | null> = [];
   let nextColor = 1;
 
-  const takeColor = (preferred?: number): number => {
-    if (preferred !== undefined) return preferred;
+  const rotate = (): number => {
     const color = nextColor;
-    nextColor = nextColor === PALETTE ? 1 : nextColor + 1;
+    nextColor = nextColor === total ? 1 : nextColor + 1;
     return color;
+  };
+
+  const takeColor = (used: ReadonlySet<number>): number => {
+    for (let step = 0; step < total; step += 1) {
+      const color = rotate();
+      if (!used.has(color)) return color;
+    }
+    return rotate();
   };
 
   for (const commit of commits) {
@@ -63,8 +85,15 @@ export function assignLanes(commits: readonly LaneCommit[], headHash?: string | 
       if (column < 0) column = lanes.length;
     }
 
+    const used = new Set<number>();
+    for (const lane of input) {
+      if (lane) used.add(lane.color);
+    }
+
     const isHead = Boolean(headHash && commit.hash === headHash);
-    const color = isHead ? 0 : takeColor(incoming);
+    const owned = colors?.get(commit.hash);
+    const color = isHead ? CURRENT_BRANCH_LANE : (owned ?? incoming ?? takeColor(used));
+    used.add(color);
 
     const next: Array<OpenLane | null> = lanes.map((lane) =>
       lane && lane.id === commit.hash ? null : lane,
@@ -81,7 +110,9 @@ export function assignLanes(commits: readonly LaneCommit[], headHash?: string | 
         slot = next.length;
         next.push(null);
       }
-      next[slot] = { id: parent, color: takeColor() };
+      const branch = colors?.get(parent) ?? takeColor(used);
+      used.add(branch);
+      next[slot] = { id: parent, color: branch };
     }
 
     while (next.length > 0 && next[next.length - 1] === null) next.pop();

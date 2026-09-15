@@ -24,6 +24,8 @@ Los colores viven como tokens. Se pueden cambiar en Configuración → Temas. El
 
 También hay paletas oficiales importadas (HEX publicados, no aproximaciones): Platzi (Green Mode de `platzi/platzi-theme`), Tokyo Night, Catppuccin Mocha, Nord, Gruvbox Dark, Everforest Dark Medium, One Dark y Solarized Dark. La terminal sigue su catálogo aparte.
 
+Un tema es también un código de color para el grafo de Git (ver `Git`): cambiar de tema cambia el código completo, y ningún tema comparte su paleta con otro. No son un catálogo aparte: viven dentro del tema, así que un tema nuevo llega con sus colores del grafo y un tema borrado se los lleva.
+
 Inter para la interfaz. JetBrains Mono para rutas, editor y terminal.
 
 Botones e iconos son chicos, sin relleno fuerte. El acento aparece al pasar el mouse o cuando algo está activo (por ejemplo, la terminal abierta).
@@ -154,3 +156,53 @@ No es un error. El panel podrá esconderse.
 El icono de Git del footer (y Ctrl+G) abre el grafo de ramas en el
 mismo hueco del árbol de archivos. Ctrl+B vuelve al árbol. El hover
 sigue mostrando el nombre del repo y la rama.
+
+### Colores de las ramas
+
+Cada rama tiene un color, y ese color lo decide el tema. Son el acento
+más cuatro a siete secundarios. El acento no se escribe en la paleta
+del grafo, se deriva del tema, porque su lugar está reservado: lo usa
+la rama actual y nadie más. Los secundarios salen de la paleta
+publicada del propio tema, elegidos para contrastar contra el fondo y
+entre ellos. Viven dentro de la definición del tema, no en una tabla
+aparte: así un tema nuevo llega con sus colores y uno borrado se los
+lleva.
+
+El largo varía porque las paletas oficiales no son igual de ricas. Una
+con muchos tonos usables da siete; una estrecha da cuatro, y estirarla
+pediría colores que no son suyos. Ese largo es parte de la firma del
+tema, porque marca cada cuántas ramas se repite un color.
+
+Dos temas nunca se ven igual en el grafo, y eso no depende del criterio
+de quien escriba el siguiente: está afirmado por tests. Uno compara la
+paleta completa de cada tema contra la de todos los demás; el otro
+compara solo el primer secundario, que es el color que más cae al lado
+de la rama actual y por eso el que identifica al tema. La regla vieja
+pedía el mismo orden de tonos para todos los temas y el resultado eran
+once paletas iguales con distinto HEX.
+
+Al elegir tema, el pie de la vista previa de Configuración → Temas
+muestra la tira de carriles. Sin ella, la paleta solo se vería en un
+repositorio con muchas ramas.
+
+En el selector de ramas cada fila es un cuadrito de color y el nombre.
+Ese cuadrito es también la marca de comparación: con contorno si la
+rama no está comparada, relleno si lo está. Es un solo control porque
+la fila mide 0.7rem de alto y dos cuadritos se leen como ruido. La
+rama actual siempre aparece rellena, en acento.
+
+Las ramas toman color en el orden en que Git las lista, dando la
+vuelta a los secundarios del tema. Dos ramas vecinas de la lista nunca
+comparten color, y la repetición aparece a tantas ramas como colores
+tenga el tema: a la octava con siete, a la quinta con cuatro. Que se
+repita está bien: los colores son finitos y las ramas de un proyecto
+no. Lo que no se repite nunca es el acento. El color tampoco depende de
+la selección: marcar o desmarcar una rama no repinta las demás.
+
+En el grafo, cada commit se queda con el color de la primera rama que
+lo reclama: primero la actual, después las comparadas, al final el
+resto. Por eso el tronco entero de la rama actual queda en acento y la
+historia propia de otra rama en el color de esa rama. Lo que no cuelga
+de ninguna rama listada —una rama borrada ya fusionada, por ejemplo—
+toma un color libre, nunca uno que ya esté en pantalla. El nodo de
+HEAD se dibuja hueco.

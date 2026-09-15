@@ -1,9 +1,16 @@
 <script lang="ts">
   import GitBranchPicker from "./GitBranchPicker.svelte";
   import GitGraphRow from "./GitGraphRow.svelte";
+  import {
+    branchLaneColors,
+    branchPriority,
+    commitLaneColors,
+  } from "$lib/git-branch-colors";
   import { classifyDivergence, commitLabel } from "$lib/git-divergence";
   import { gitGraph } from "$lib/git-graph.svelte";
   import { assignLanes, graphWidth } from "$lib/git-lanes";
+  import { settingsEditor } from "$lib/settings-editor.svelte";
+  import { graphSecondaryCount } from "$lib/ui-theme";
   import { panels } from "$lib/workspace-panels.svelte";
   import { workspace } from "$lib/workspace.svelte";
 
@@ -14,7 +21,20 @@
     void gitGraph.setRoot(workspace.root);
   });
 
-  let rows = $derived(assignLanes(gitGraph.commits, gitGraph.oid));
+  // El tema activo decide cuántos colores hay. Se lee de la misma fuente que
+  // usa applyTheme, así que el reparto de carriles y las variables CSS que los
+  // pintan nunca hablan de paletas distintas.
+  let secondaries = $derived(graphSecondaryCount(settingsEditor.uiTheme));
+  let branchColors = $derived(branchLaneColors(gitGraph.branches, gitGraph.current, secondaries));
+  let commitColors = $derived(
+    commitLaneColors(
+      gitGraph.commits,
+      branchColors,
+      branchPriority(gitGraph.branches, gitGraph.current, gitGraph.selected),
+      gitGraph.oid,
+    ),
+  );
+  let rows = $derived(assignLanes(gitGraph.commits, secondaries, gitGraph.oid, commitColors));
   let marks = $derived(classifyDivergence(gitGraph.commits, gitGraph.oid, gitGraph.comparisons));
   let width = $derived(graphWidth(rows));
   let labels = $derived(
@@ -52,6 +72,8 @@
       current={gitGraph.current}
       selected={gitGraph.selected}
       detached={gitGraph.detached}
+      colors={branchColors}
+      laneCount={secondaries + 1}
       disabled={pickerDisabled}
       onToggle={(name) => gitGraph.toggleBranch(name)}
     />
@@ -67,6 +89,7 @@
             label={labels.get(row.hash) ?? row.hash}
             {row}
             {width}
+            laneCount={secondaries + 1}
             mark={marks.get(row.hash)}
           />
         {/each}

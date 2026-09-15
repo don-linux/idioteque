@@ -3,13 +3,19 @@
   import { EditorState } from "@codemirror/state";
   import { EditorView, basicSetup } from "codemirror";
   import { editorHighlight } from "$lib/editor-theme";
+  import { settingsEditor } from "$lib/settings-editor.svelte";
   import {
     THEME_PREVIEW_DIR,
     THEME_PREVIEW_FILES,
     THEME_PREVIEW_MARKDOWN,
     THEME_PREVIEW_ROOT,
     THEME_PREVIEW_STATUS,
+    previewLanes,
   } from "$lib/theme-preview";
+
+  // El tema ya está aplicado al documento, así que la tira lee las variables
+  // del grafo. Del id solo se saca cuántos carriles trae este tema.
+  let lanes = $derived(previewLanes(settingsEditor.uiTheme));
 
   function attachPreview(node: HTMLElement): () => void {
     const editor = new EditorView({
@@ -57,6 +63,14 @@
     </div>
     <footer>
       <span class="brand">idioteque</span>
+      <ul class="lanes" aria-label="Colores de las ramas en el grafo de Git">
+        {#each lanes as entry (entry.label)}
+          <li class="lane" class:current={entry.current} style:--lane={entry.lane}>
+            <span class="dot" aria-hidden="true"></span>
+            <span class="tag">{entry.label}</span>
+          </li>
+        {/each}
+      </ul>
     </footer>
   </div>
 </div>
@@ -227,6 +241,7 @@
     display: flex;
     flex-shrink: 0;
     align-items: center;
+    gap: 0.7rem;
     height: 2.1rem;
     padding: 0 0.7rem;
     border-top: 1px solid var(--border);
@@ -234,9 +249,48 @@
   }
 
   .brand {
+    flex-shrink: 0;
     color: var(--text-faint);
     font-weight: 600;
     letter-spacing: 0.14em;
     text-transform: lowercase;
+  }
+
+  /* Un carril por color del tema: cuántos hay ya es parte de la paleta. */
+  .lanes {
+    display: flex;
+    min-width: 0;
+    margin: 0 0 0 auto;
+    padding: 0;
+    align-items: center;
+    gap: 0.45rem;
+    overflow: hidden;
+    list-style: none;
+  }
+
+  .lane {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 0.22rem;
+  }
+
+  .dot {
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 50%;
+    background: var(--lane);
+  }
+
+  /* La rama actual va hueca, igual que el nodo de HEAD en el grafo real. */
+  .lane.current .dot {
+    background: var(--bg);
+    box-shadow: inset 0 0 0 1.5px var(--lane);
+  }
+
+  .tag {
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
   }
 </style>

@@ -2,14 +2,18 @@
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import { tick } from "svelte";
   import { filterComboItems } from "$lib/combobox";
+  import { CURRENT_BRANCH_LANE } from "$lib/git-branch-colors";
   import { branchPickerLabel } from "$lib/git-divergence";
   import type { GitRef } from "$lib/git";
+  import { graphLaneVar } from "$lib/ui-theme";
 
   let {
     branches,
     current,
     selected,
     detached,
+    colors,
+    laneCount,
     disabled = false,
     onToggle,
   }: {
@@ -17,6 +21,9 @@
     current: string | null;
     selected: string[];
     detached: boolean;
+    colors: ReadonlyMap<string, number>;
+    /** Carriles del tema activo: el acento más sus secundarios. */
+    laneCount: number;
     disabled?: boolean;
     onToggle: (name: string) => void;
   } = $props();
@@ -42,6 +49,10 @@
 
   function isChecked(name: string): boolean {
     return isCurrent(name) || selected.includes(name);
+  }
+
+  function swatch(name: string): string {
+    return graphLaneVar(colors.get(name) ?? CURRENT_BRANCH_LANE, laneCount);
   }
 
   async function openList(): Promise<void> {
@@ -156,7 +167,12 @@
                 onclick={() => choose(name)}
                 onpointerenter={() => (highlight = index)}
               >
-                <span class="box" class:on={isChecked(name)} aria-hidden="true"></span>
+                <span
+                  class="box"
+                  class:on={isChecked(name)}
+                  style:--swatch={swatch(name)}
+                  aria-hidden="true"
+                ></span>
                 <span class="name">{item.label}</span>
               </button>
             </li>
@@ -268,18 +284,19 @@
     color: var(--text-muted);
   }
 
+  /* El cuadrito es el código de color de la rama y a la vez la marca de
+     selección: contorno si no está comparada, relleno si sí. */
   .box {
     width: 0.7rem;
     height: 0.7rem;
     flex-shrink: 0;
-    border: 1px solid var(--border);
+    border: 1px solid var(--swatch);
     border-radius: 2px;
     background: transparent;
   }
 
   .box.on {
-    border-color: var(--accent);
-    background: var(--accent);
+    background: var(--swatch);
   }
 
   .name {
