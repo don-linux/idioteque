@@ -11,7 +11,11 @@ export const UI_THEME_IDS = [
   "gruvbox-dark",
   "everforest-dark",
   "one-dark",
+  "one-half-dark",
+  "one-dark-pro",
   "solarized-dark",
+  "dracula",
+  "campbell",
 ] as const;
 
 export type UiThemeId = (typeof UI_THEME_IDS)[number];
@@ -125,8 +129,10 @@ function lightTheme(seed: ThemeSeed): UiThemeDefinition {
 
 /**
  * Cada tema es una entrada autocontenida: chrome, sintaxis y carriles del
- * grafo en el mismo bloque. Para quitar un tema se borra su bloque, su id en
- * `UI_THEME_IDS` y su id en `KNOWN_UI_THEMES` (`src-tauri/src/app_config.rs`).
+ * grafo en el mismo bloque. El mismo id tiene que existir en
+ * `terminal-theme.ts`. Para quitar un tema se borra su bloque, su id en
+ * `UI_THEME_IDS`, su cara de terminal y los ids en `KNOWN_UI_THEMES` y
+ * `KNOWN_THEMES` (`src-tauri/src/app_config.rs`).
  */
 export const UI_THEMES: readonly UiThemeDefinition[] = [
   /** Product default. Original lifted palette, not a third-party port. */
@@ -483,6 +489,80 @@ export const UI_THEMES: readonly UiThemeDefinition[] = [
   }),
 
   /**
+   * Windows Terminal built-in "One Half Dark" (defaults.json).
+   * Chrome and syntax from that ANSI palette. Foreground #dcdfe4 is what
+   * separates it from Atom One Dark (#abb2bf).
+   */
+  darkTheme({
+    id: "one-half-dark",
+    label: "One Half Dark",
+    tokens: {
+      "--bg": "#282c34",
+      "--surface": "#282c34",
+      "--surface-hover": "#5a6374",
+      "--border": "#5a6374",
+      "--text": "#dcdfe4",
+      "--text-muted": "#5a6374",
+      "--text-faint": "#5a6374",
+      "--accent": "#61afef",
+      "--danger": "#e06c75",
+      "--syntax-heading": "#e06c75",
+      "--syntax-comment": "#5a6374",
+      "--syntax-link": "#61afef",
+      "--syntax-code": "#98c379",
+      "--syntax-keyword": "#c678dd",
+      "--syntax-string": "#98c379",
+      "--syntax-number": "#e5c07b",
+      "--syntax-function": "#61afef",
+      "--syntax-type": "#e5c07b",
+      "--syntax-variable": "#dcdfe4",
+      "--syntax-operator": "#56b6c2",
+      "--syntax-tag": "#e06c75",
+      "--syntax-invalid": "#e06c75",
+    },
+    // Cuatro del ANSI de WT, sin el azul del acento ni el rojo de danger.
+    // Abre en magenta: One Dark ya se queda el naranja.
+    graph: ["#c678dd", "#e5c07b", "#98c379", "#56b6c2"],
+  }),
+
+  /**
+   * Binaryify/OneDark-Pro themes/OneDark-Pro.json.
+   * https://github.com/Binaryify/OneDark-Pro
+   * Chrome from `colors`. Syntax from `tokenColors` scopes.
+   */
+  darkTheme({
+    id: "one-dark-pro",
+    label: "One Dark Pro",
+    tokens: {
+      "--bg": "#282c34",
+      "--surface": "#21252b",
+      "--surface-hover": "#2c313a",
+      "--border": "#3e4452",
+      "--text": "#abb2bf",
+      "--text-muted": "#9da5b4",
+      "--text-faint": "#495162",
+      "--accent": "#4d78cc",
+      "--danger": "#c24038",
+      "--syntax-heading": "#e06c75",
+      "--syntax-comment": "#5c6370",
+      "--syntax-link": "#61afef",
+      "--syntax-code": "#98c379",
+      "--syntax-keyword": "#c678dd",
+      "--syntax-string": "#98c379",
+      "--syntax-number": "#d19a66",
+      "--syntax-function": "#61afef",
+      "--syntax-type": "#e5c07b",
+      "--syntax-variable": "#abb2bf",
+      "--syntax-operator": "#56b6c2",
+      "--syntax-tag": "#e06c75",
+      "--syntax-invalid": "#e06c75",
+    },
+    // scmGraph.foreground* del mismo JSON. Abre en el verde: el naranja
+    // #d18f52 se parece al de One Dark y el magenta al de One Half Dark.
+    graph: ["#8cc265", "#c162de", "#d18f52", "#42b3c2", "#4aa5f0"],
+  }),
+
+  /**
    * Solarized Dark, Ethan Schoonover.
    * https://ethanschoonover.com/solarized/
    */
@@ -516,6 +596,78 @@ export const UI_THEMES: readonly UiThemeDefinition[] = [
     // Seis de los ocho accent colors publicados: fuera el azul, que es el
     // acento, y fuera el rojo, que es `--danger` y quedaba pegado al naranja.
     graph: ["#b58900", "#6c71c4", "#859900", "#cb4b16", "#2aa198", "#d33682"],
+  }),
+
+  /**
+   * Dracula Classic from the official spec.
+   * https://draculatheme.com/spec
+   */
+  darkTheme({
+    id: "dracula",
+    label: "Dracula",
+    tokens: {
+      "--bg": "#282A36",
+      "--surface": "#21222C",
+      "--surface-hover": "#44475A",
+      "--border": "#6272A4",
+      "--text": "#F8F8F2",
+      "--text-muted": "#6272A4",
+      "--text-faint": "#6272A4",
+      "--accent": "#BD93F9",
+      "--danger": "#FF5555",
+      "--syntax-heading": "#BD93F9",
+      "--syntax-comment": "#6272A4",
+      "--syntax-link": "#8BE9FD",
+      "--syntax-code": "#50FA7B",
+      "--syntax-keyword": "#FF79C6",
+      "--syntax-string": "#F1FA8C",
+      "--syntax-number": "#BD93F9",
+      "--syntax-function": "#50FA7B",
+      "--syntax-type": "#8BE9FD",
+      "--syntax-variable": "#F8F8F2",
+      "--syntax-operator": "#FF79C6",
+      "--syntax-tag": "#FF79C6",
+      "--syntax-invalid": "#FF5555",
+    },
+    // Cinco de la spec, sin purple (acento) ni red (danger). Abre en lima.
+    graph: ["#50FA7B", "#FF79C6", "#FFB86C", "#8BE9FD", "#F1FA8C"],
+  }),
+
+  /**
+   * Windows Terminal built-in "Campbell" (defaults.json).
+   * Chrome and syntax from that ANSI palette. Accent is brightBlue: #0037da
+   * does not hold contrast on #0c0c0c.
+   */
+  darkTheme({
+    id: "campbell",
+    label: "Campbell",
+    tokens: {
+      "--bg": "#0c0c0c",
+      "--surface": "#0c0c0c",
+      "--surface-hover": "#767676",
+      "--border": "#767676",
+      "--text": "#cccccc",
+      "--text-muted": "#767676",
+      "--text-faint": "#767676",
+      "--accent": "#3b78ff",
+      "--danger": "#e74856",
+      "--syntax-heading": "#3b78ff",
+      "--syntax-comment": "#767676",
+      "--syntax-link": "#3a96dd",
+      "--syntax-code": "#16c60c",
+      "--syntax-keyword": "#b4009e",
+      "--syntax-string": "#16c60c",
+      "--syntax-number": "#c19c00",
+      "--syntax-function": "#3b78ff",
+      "--syntax-type": "#61d6d6",
+      "--syntax-variable": "#cccccc",
+      "--syntax-operator": "#f9f1a5",
+      "--syntax-tag": "#e74856",
+      "--syntax-invalid": "#e74856",
+    },
+    // Cuatro brights, sin el azul del acento ni el rojo de danger. Abre en
+    // magenta: es el tono que ningún otro tema usa de firma.
+    graph: ["#b4009e", "#16c60c", "#f9f1a5", "#61d6d6"],
   }),
 ];
 

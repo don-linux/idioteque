@@ -22,9 +22,9 @@ Los colores viven como tokens. Se pueden cambiar en Configuración → Temas. El
 
 **Idioteque Light** usa blancos rotos neutros (no `#fff`): fondo `#f2f3f5`, texto `#2c3038`, acento `#3d6ec9`.
 
-También hay paletas oficiales importadas (HEX publicados, no aproximaciones): Platzi (Green Mode de `platzi/platzi-theme`), Tokyo Night, Catppuccin Mocha, Nord, Gruvbox Dark, Everforest Dark Medium, One Dark y Solarized Dark. La terminal sigue su catálogo aparte.
+También hay paletas oficiales importadas (HEX publicados, no aproximaciones): Platzi (Green Mode de `platzi/platzi-theme`), Tokyo Night, Catppuccin Mocha, Nord, Gruvbox Dark, Everforest Dark Medium, One Dark, One Half Dark, One Dark Pro, Solarized Dark, Dracula y Campbell. Los mismos nombres están en Temas y en Terminal. Cada cara usa su fuente (chrome/sintaxis/grafo frente a ANSI); la elección sigue siendo independiente: se puede poner el mismo tema en ambos lados o uno distinto en cada uno.
 
-Un tema es también un código de color para el grafo de Git (ver `Git`): cambiar de tema cambia el código completo, y ningún tema comparte su paleta con otro. No son un catálogo aparte: viven dentro del tema, así que un tema nuevo llega con sus colores del grafo y un tema borrado se los lleva.
+Un tema es también un código de color para el grafo de Git (ver `Git`): cambiar de tema cambia el código completo, y ningún tema comparte su paleta con otro. No son un catálogo aparte: viven dentro del tema de UI, así que un tema nuevo llega con sus colores del grafo y un tema borrado se los lleva.
 
 Inter para la interfaz. JetBrains Mono para rutas, editor y terminal.
 

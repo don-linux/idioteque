@@ -17,13 +17,20 @@ const HEX = /^#[0-9a-f]{6}$/;
 describe("TERMINAL_THEMES catalog", () => {
   it("lists the closed set of official themes", () => {
     expect(TERMINAL_THEME_IDS).toEqual([
+      "idioteque-dark",
+      "idioteque-night",
+      "idioteque-light",
+      "platzi",
       "tokyo-night",
-      "dracula",
+      "catppuccin-mocha",
       "nord",
       "gruvbox-dark",
-      "catppuccin-mocha",
+      "everforest-dark",
+      "one-dark",
       "one-half-dark",
+      "one-dark-pro",
       "solarized-dark",
+      "dracula",
       "campbell",
     ]);
     expect(TERMINAL_THEMES.map((entry) => entry.id)).toEqual([...TERMINAL_THEME_IDS]);
@@ -81,6 +88,10 @@ describe("resolveTerminalThemeId / resolveTerminalTheme", () => {
     expect(resolveTerminalThemeId("dracula")).toBe("dracula");
     expect(resolveTerminalTheme("nord").background).toBe("#2e3440");
     expect(resolveTerminalTheme("campbell").background).toBe("#0c0c0c");
+    expect(resolveTerminalTheme("one-dark").background).toBe("#282c34");
+    expect(resolveTerminalTheme("one-dark-pro").red).toBe("#e05561");
+    expect(resolveTerminalTheme("idioteque-dark").background).toBe("#1c1e22");
+    expect(resolveTerminalTheme("everforest-dark").background).toBe("#2d353b");
   });
 
   it("falls back to tokyo-night for empty or unknown ids", () => {

@@ -15,14 +15,21 @@ const CONFIG_DIR_NAME: &str = ".idioteque";
 const CONFIG_FILE_NAME: &str = "config.json";
 const CONFIG_TMP_NAME: &str = ".config.json.idioteque.tmp";
 const DEFAULT_THEME: &str = "tokyo-night";
-const KNOWN_THEMES: [&str; 8] = [
+const KNOWN_THEMES: [&str; 15] = [
+    "idioteque-dark",
+    "idioteque-night",
+    "idioteque-light",
+    "platzi",
     "tokyo-night",
-    "dracula",
+    "catppuccin-mocha",
     "nord",
     "gruvbox-dark",
-    "catppuccin-mocha",
+    "everforest-dark",
+    "one-dark",
     "one-half-dark",
+    "one-dark-pro",
     "solarized-dark",
+    "dracula",
     "campbell",
 ];
 const DEFAULT_TREE_WIDTH: u32 = 260;
@@ -36,7 +43,7 @@ const MAX_PANEL_SIZE: u32 = 4000;
 const DEFAULT_TERMINAL_DOCK: &str = "bottom";
 const KNOWN_TERMINAL_DOCKS: [&str; 2] = ["bottom", "right"];
 const DEFAULT_UI_THEME: &str = "idioteque-dark";
-const KNOWN_UI_THEMES: [&str; 11] = [
+const KNOWN_UI_THEMES: [&str; 15] = [
     "idioteque-dark",
     "idioteque-night",
     "idioteque-light",
@@ -47,7 +54,11 @@ const KNOWN_UI_THEMES: [&str; 11] = [
     "gruvbox-dark",
     "everforest-dark",
     "one-dark",
+    "one-half-dark",
+    "one-dark-pro",
     "solarized-dark",
+    "dracula",
+    "campbell",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1158,6 +1169,18 @@ mod tests {
     }
 
     #[test]
+    fn apply_terminal_keeps_parity_theme_ids() {
+        let one_dark = apply_terminal(default_config(), None, 13, "one-dark".into());
+        assert_eq!(one_dark.terminal.theme, "one-dark");
+
+        let one_dark_pro = apply_terminal(default_config(), None, 13, "one-dark-pro".into());
+        assert_eq!(one_dark_pro.terminal.theme, "one-dark-pro");
+
+        let idioteque = apply_terminal(default_config(), None, 13, "idioteque-dark".into());
+        assert_eq!(idioteque.terminal.theme, "idioteque-dark");
+    }
+
+    #[test]
     fn annotate_clamps_terminal_font_size() {
         let mut config = default_config();
         config.terminal.font_family = Some("  ".into());
@@ -1252,6 +1275,12 @@ mod tests {
 
         let tokyo_night = apply_appearance(default_config(), "tokyo-night".into());
         assert_eq!(tokyo_night.appearance.theme, "tokyo-night");
+
+        let one_dark_pro = apply_appearance(default_config(), "one-dark-pro".into());
+        assert_eq!(one_dark_pro.appearance.theme, "one-dark-pro");
+
+        let dracula = apply_appearance(default_config(), "dracula".into());
+        assert_eq!(dracula.appearance.theme, "dracula");
 
         let unknown = apply_appearance(default_config(), "ghost".into());
         assert_eq!(unknown.appearance.theme, "idioteque-dark");

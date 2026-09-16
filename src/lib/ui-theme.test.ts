@@ -69,7 +69,11 @@ describe("UI_THEMES", () => {
       "gruvbox-dark",
       "everforest-dark",
       "one-dark",
+      "one-half-dark",
+      "one-dark-pro",
       "solarized-dark",
+      "dracula",
+      "campbell",
     ]);
   });
 
@@ -96,7 +100,11 @@ describe("UI_THEMES", () => {
       "Gruvbox Dark",
       "Everforest Dark",
       "One Dark",
+      "One Half Dark",
+      "One Dark Pro",
       "Solarized Dark",
+      "Dracula",
+      "Campbell",
     ]);
   });
 
@@ -157,6 +165,15 @@ describe("UI_THEMES", () => {
     expect(resolveUiTheme("everforest-dark").tokens["--bg"]).toBe("#2D353B");
     expect(resolveUiTheme("one-dark").tokens["--bg"]).toBe("#282c34");
     expect(resolveUiTheme("one-dark").tokens["--syntax-keyword"]).toBe("#c678dd");
+    expect(resolveUiTheme("one-half-dark").tokens["--bg"]).toBe("#282c34");
+    expect(resolveUiTheme("one-half-dark").tokens["--text"]).toBe("#dcdfe4");
+    expect(resolveUiTheme("one-dark-pro").tokens["--bg"]).toBe("#282c34");
+    expect(resolveUiTheme("one-dark-pro").tokens["--accent"]).toBe("#4d78cc");
+    expect(resolveUiTheme("one-dark-pro").tokens["--danger"]).toBe("#c24038");
+    expect(resolveUiTheme("dracula").tokens["--bg"]).toBe("#282A36");
+    expect(resolveUiTheme("dracula").tokens["--accent"]).toBe("#BD93F9");
+    expect(resolveUiTheme("campbell").tokens["--bg"]).toBe("#0c0c0c");
+    expect(resolveUiTheme("campbell").tokens["--accent"]).toBe("#3b78ff");
     expect(resolveUiTheme("solarized-dark").tokens["--bg"]).toBe("#002b36");
     expect(resolveUiTheme("solarized-dark").tokens["--text"]).toBe("#839496");
   });
