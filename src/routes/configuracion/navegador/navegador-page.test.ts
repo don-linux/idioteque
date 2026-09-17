@@ -1,5 +1,6 @@
+// svelte-check has no @types/node; the test runner provides node:fs at runtime.
+// @ts-expect-error Node built-in used only in this guard test.
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { formatCheckedAt, type CefRuntimeInfo } from "$lib/cef-runtime";
 import {
@@ -362,10 +363,7 @@ describe("createNavegadorPage — update check errors", () => {
 });
 
 describe("+page.svelte wiring", () => {
-  const source = readFileSync(
-    fileURLToPath(new URL("./+page.svelte", import.meta.url)),
-    "utf8",
-  );
+  const source = readFileSync(new URL("./+page.svelte", import.meta.url), "utf8");
 
   it("renders through the extracted session and copy helpers", () => {
     expect(source).toContain("createNavegadorPage");
