@@ -122,3 +122,50 @@ pub fn reparent(child: u64, parent: u64, x: i32, y: i32) {
 pub fn xid_from_handle(handle: cef::sys::cef_window_handle_t) -> u64 {
     handle as u64
 }
+
+/// Ventana intermedia con el visual por defecto del servidor.
+///
+/// El hueco que crea GTK lleva el visual GL que GDK elige para su toplevel;
+/// Chromium crea su ventana con el visual por defecto y colormap
+/// `CopyFromParent`, y con visuales distintos `CreateWindow` falla con
+/// `BadMatch`. Este hijo declara colormap y border pixel explícitos, así que
+/// puede colgar del hueco, y CEF cuelga de él sin conflicto.
+pub fn create_default_visual_child(parent: u64, w: i32, h: i32) -> u64 {
+    if parent == 0 {
+        return 0;
+    }
+    let dpy = dpy();
+    if dpy.is_null() {
+        return 0;
+    }
+    let x = xlib();
+    unsafe {
+        let screen = (x.XDefaultScreen)(dpy);
+        let visual = (x.XDefaultVisual)(dpy, screen);
+        let depth = (x.XDefaultDepth)(dpy, screen);
+        let mut attrs: xlib::XSetWindowAttributes = std::mem::zeroed();
+        attrs.colormap = (x.XDefaultColormap)(dpy, screen);
+        attrs.border_pixel = 0;
+        attrs.background_pixel = (x.XBlackPixel)(dpy, screen);
+        let window = (x.XCreateWindow)(
+            dpy,
+            parent as xlib::Window,
+            0,
+            0,
+            w.max(1) as u32,
+            h.max(1) as u32,
+            0,
+            depth,
+            xlib::InputOutput as u32,
+            visual,
+            xlib::CWColormap | xlib::CWBorderPixel | xlib::CWBackPixel,
+            &mut attrs,
+        );
+        if window == 0 {
+            return 0;
+        }
+        (x.XMapWindow)(dpy, window);
+        (x.XFlush)(dpy);
+        window as u64
+    }
+}

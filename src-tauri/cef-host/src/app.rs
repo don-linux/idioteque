@@ -1,6 +1,6 @@
 //! CEF App / Client / handlers and UI-thread command dispatch.
 
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use cef::sys::cef_event_flags_t;
@@ -44,6 +44,8 @@ pub struct AppState {
     pub health_emitted: AtomicBool,
     pub closing: AtomicBool,
     pub health_cancel: Mutex<Option<Arc<AtomicBool>>>,
+    /// Ventana X intermedia (visual por defecto) entre el hueco del ADE y CEF.
+    pub shim_xid: AtomicU64,
 }
 
 impl AppState {
@@ -57,6 +59,7 @@ impl AppState {
             health_emitted: AtomicBool::new(false),
             closing: AtomicBool::new(false),
             health_cancel: Mutex::new(None),
+            shim_xid: AtomicU64::new(0),
         })
     }
 
@@ -203,17 +206,28 @@ pub fn dispatch(cmd: &HostCommand) {
         }
         HostCommand::SetBounds { x, y, w, h } => {
             let xid = state.xid();
+            let shim = state.shim_xid.load(Ordering::SeqCst);
+            let (cx, cy) = if shim != 0 {
+                platform::move_resize(shim, *x, *y, *w, *h);
+                (0, 0)
+            } else {
+                (*x, *y)
+            };
             if let Some(browser) = state.lock_browser() {
                 if let Some(host) = browser.host() {
                     host.notify_move_or_resize_started();
-                    platform::move_resize(xid, *x, *y, *w, *h);
+                    platform::move_resize(xid, cx, cy, *w, *h);
                     host.was_resized();
                 }
             } else {
-                platform::move_resize(xid, *x, *y, *w, *h);
+                platform::move_resize(xid, cx, cy, *w, *h);
             }
         }
         HostCommand::Show => {
+            let shim = state.shim_xid.load(Ordering::SeqCst);
+            if shim != 0 {
+                platform::map_window(shim);
+            }
             platform::map_window(state.xid());
             if let Some(browser) = state.lock_browser() {
                 if let Some(host) = browser.host() {
@@ -223,6 +237,10 @@ pub fn dispatch(cmd: &HostCommand) {
         }
         HostCommand::Hide => {
             platform::unmap_window(state.xid());
+            let shim = state.shim_xid.load(Ordering::SeqCst);
+            if shim != 0 {
+                platform::unmap_window(shim);
+            }
             if let Some(browser) = state.lock_browser() {
                 if let Some(host) = browser.host() {
                     host.was_hidden(1);
@@ -321,7 +339,8 @@ fn apply_switches(state: &AppState, command_line: &mut CommandLine) {
     }
 }
 
-fn window_info_for(args: &HostArgs) -> WindowInfo {
+fn window_info_for(state: &AppState) -> WindowInfo {
+    let args = &state.args;
     if args.health_check {
         return crate::health::window_info();
     }
@@ -338,7 +357,18 @@ fn window_info_for(args: &HostArgs) -> WindowInfo {
         ..Default::default()
     };
     if let Some(parent) = args.parent {
-        base.set_as_child(parent as cef::sys::cef_window_handle_t, &bounds)
+        let shim = platform::create_default_visual_child(parent, bounds.width, bounds.height);
+        if shim == 0 {
+            fatal(exit::NO_X11, "no se pudo crear la ventana intermedia X11");
+        }
+        state.shim_xid.store(shim, Ordering::SeqCst);
+        let inner = Rect {
+            x: 0,
+            y: 0,
+            width: bounds.width,
+            height: bounds.height,
+        };
+        base.set_as_child(shim as cef::sys::cef_window_handle_t, &inner)
     } else {
         base
     }
@@ -410,7 +440,7 @@ wrap_browser_process_handler! {
             }
 
             let url = cef_str(&self.state.args.url);
-            let window_info = window_info_for(&self.state.args);
+            let window_info = window_info_for(&self.state);
             let mut settings = BrowserSettings::default();
             if self.state.args.health_check {
                 settings.windowless_frame_rate = 1;
@@ -536,10 +566,11 @@ wrap_life_span_handler! {
                 .host()
                 .map(|h| platform::xid_from_handle(h.window_handle()))
                 .unwrap_or(0);
-            if let Some(parent) = self.state.args.parent {
+            if self.state.args.parent.is_some() {
                 let b = &self.state.args.bounds;
-                platform::reparent(xid, parent, b.x, b.y);
-                platform::move_resize(xid, b.x, b.y, b.w, b.h);
+                let shim = self.state.shim_xid.load(Ordering::SeqCst);
+                platform::reparent(xid, shim, 0, 0);
+                platform::move_resize(xid, 0, 0, b.w, b.h);
                 platform::map_window(xid);
                 if let Some(host) = browser.host() {
                     host.notify_move_or_resize_started();

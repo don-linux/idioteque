@@ -206,6 +206,15 @@ class BrowserState {
     await this.#command({ cmd: "focus" });
   }
 
+  /** Devuelve el foco X11 a la ventana de idioteque (la barra Svelte, el editor). */
+  async focusApp(): Promise<void> {
+    try {
+      await invoke("browser_focus_app");
+    } catch {
+      // Fuera de Tauri o sin X11: no hay foco que devolver.
+    }
+  }
+
   async teardown(): Promise<void> {
     await this.#shutdown({ restoreSurface: true });
   }
@@ -298,6 +307,7 @@ class BrowserState {
   #onShortcut(chord: string): void {
     if (chord === "ctrl+b" || chord === "ctrl+shift+b") {
       this.leave();
+      void this.focusApp();
       return;
     }
     if (chord === "ctrl+l") {

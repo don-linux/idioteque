@@ -12,9 +12,16 @@
     $effect(() => {
       void browser.focusUrlRequested;
       if (surface.current !== "browser") return;
+      // The CEF child may hold the X11 focus: reclaim it before focusing the field.
+      void browser.focusApp();
       node.focus();
       node.select();
     });
+  }
+
+  // Any interaction with the Svelte toolbar takes the X11 focus back from CEF.
+  function onToolbarPointerDown(): void {
+    void browser.focusApp();
   }
 
   function onUrlKeydown(event: KeyboardEvent): void {
@@ -34,7 +41,7 @@
   }
 </script>
 
-<div class="toolbar">
+<div class="toolbar" onpointerdowncapture={onToolbarPointerDown}>
   <div class="row">
     <button
       type="button"
@@ -89,6 +96,7 @@
       bind:value={browser.inputUrl}
       {@attach attachUrl}
       onkeydown={onUrlKeydown}
+      onfocus={() => void browser.focusApp()}
     />
     <button
       type="button"

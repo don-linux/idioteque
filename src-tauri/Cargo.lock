@@ -2104,6 +2104,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "tempfile",
+ "x11",
 ]
 
 [[package]]

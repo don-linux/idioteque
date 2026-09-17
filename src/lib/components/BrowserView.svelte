@@ -4,6 +4,11 @@
   import BrowserToolbar from "$lib/components/BrowserToolbar.svelte";
 
   let lastPhysical: ReturnType<typeof physicalBounds> | null = null;
+  let lastCss: ReturnType<typeof cssBoundsOf> | null = null;
+
+  function sameCss(a: typeof lastCss, b: NonNullable<typeof lastCss>): boolean {
+    return a !== null && a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+  }
 
   function attachHost(node: HTMLElement): () => void {
     let frame = 0;
@@ -18,13 +23,17 @@
 
       if (forceSpawn || (!browser.alive && !browser.booting)) {
         lastPhysical = physical;
+        lastCss = css;
         void browser.spawn(css, scale);
         return;
       }
 
       if (!browser.alive) return;
-      if (!boundsChanged(lastPhysical, physical)) return;
+      // Parked off-screen: never push that rect, the real one comes when shown.
+      if (!browser.visible) return;
+      if (!boundsChanged(lastPhysical, physical) && sameCss(lastCss, css)) return;
       lastPhysical = physical;
+      lastCss = css;
       void browser.setBounds(css, scale);
     }
 
@@ -57,6 +66,11 @@
     $effect(() => {
       const visible = browser.visible;
       if (!browser.alive) return;
+      if (visible) {
+        // The slot was just un-parked: place the hole before showing it.
+        lastCss = null;
+        publish(false);
+      }
       void browser.setVisible(visible);
       if (!visible) return;
 

@@ -44,6 +44,8 @@ fs2 = "0.4"
 gtk = "0.18"
 gdk = "0.18"
 gdkx11 = "0.18"
+# XSetInputFocus para devolver el foco X11 del hijo CEF al toplevel.
+x11 = { version = "2", features = ["xlib"] }
 
 [dev-dependencies]
 tempfile = "3"

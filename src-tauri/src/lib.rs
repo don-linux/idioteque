@@ -5,6 +5,8 @@ mod git;
 mod pty;
 mod workspace;
 
+use tauri::Manager;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -12,6 +14,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(pty::PtyState::default())
         .manage(workspace::WatchState::default())
+        .manage(cef::host::CefState::default())
         .invoke_handler(tauri::generate_handler![
             app_config::load_app_config,
             app_config::record_recent_folder,
@@ -43,8 +46,19 @@ pub fn run() {
             pty::pty_write,
             pty::pty_resize,
             pty::pty_kill,
-            pty::pty_kill_all
+            pty::pty_kill_all,
+            cef::host::browser_spawn,
+            cef::host::browser_command,
+            cef::host::browser_set_bounds,
+            cef::host::browser_set_visible,
+            cef::host::browser_focus_app,
+            cef::host::browser_kill
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                cef::host::kill_on_exit(&app.state::<cef::host::CefState>());
+            }
+        });
 }

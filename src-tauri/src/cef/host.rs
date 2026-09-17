@@ -363,6 +363,12 @@ pub fn browser_set_visible(state: State<CefState>, visible: bool) -> Result<(), 
     with_host(&state, |host| host.send(&cmd))
 }
 
+/// El usuario pulsó en la UI Svelte (barra de URL, botones): el foco X11 vuelve al toplevel.
+#[tauri::command]
+pub fn browser_focus_app(window: tauri::Window) -> Result<(), String> {
+    hole::focus_toplevel(&window)
+}
+
 #[tauri::command]
 pub fn browser_kill(state: State<CefState>) -> Result<(), String> {
     let result = take_and_kill(&state);
@@ -535,6 +541,10 @@ mod hole {
             return Err(X11_REQUIRED.to_string());
         }
 
+        // Visual por defecto de la pantalla, no el visual GL que GTK elige para
+        // su toplevel: Chromium crea su ventana con el visual por defecto y
+        // colormap `CopyFromParent`, y con otro visual el servidor devuelve
+        // `BadMatch` en `CreateWindow`.
         let attrs = gdk::WindowAttr {
             window_type: gdk::WindowType::Child,
             wclass: gdk::WindowWindowClass::InputOutput,
@@ -542,7 +552,7 @@ mod hole {
             y: Some(y),
             width: w.max(1),
             height: h.max(1),
-            visual: Some(parent.visual()),
+            visual: parent.screen().system_visual(),
             event_mask: gdk::EventMask::empty(),
             ..Default::default()
         };
@@ -584,6 +594,36 @@ mod hole {
             hole.destroy();
         }
     }
+
+    /// Devuelve el foco X11 al toplevel de idioteque. Mientras la ventana de
+    /// CEF tiene el foco, el servidor X le entrega a ella todas las teclas y
+    /// el webview no ve nada; al pulsar en la barra Svelte hay que recuperarlo.
+    pub fn focus_toplevel(window: &tauri::Window) -> Result<(), String> {
+        let gtk_window = window
+            .gtk_window()
+            .map_err(|_| X11_REQUIRED.to_string())?;
+        let gdk_window = gtk_window
+            .window()
+            .ok_or_else(|| "La ventana de idioteque aún no está realizada".to_string())?;
+        let x11_window = gdk_window
+            .downcast_ref::<gdkx11::X11Window>()
+            .ok_or_else(|| X11_REQUIRED.to_string())?;
+        let xid = x11_window.xid();
+        unsafe {
+            let xdisplay = gdkx11::ffi::gdk_x11_get_default_xdisplay();
+            if xdisplay.is_null() {
+                return Err(X11_REQUIRED.to_string());
+            }
+            x11::xlib::XSetInputFocus(
+                xdisplay,
+                xid as x11::xlib::Window,
+                x11::xlib::RevertToParent,
+                x11::xlib::CurrentTime,
+            );
+            x11::xlib::XFlush(xdisplay);
+        }
+        Ok(())
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -594,6 +634,9 @@ mod hole {
     pub fn move_resize(_xid: u64, _x: i32, _y: i32, _w: i32, _h: i32) {}
     pub fn set_visible(_xid: u64, _visible: bool) {}
     pub fn destroy(_xid: u64) {}
+    pub fn focus_toplevel(_window: &tauri::Window) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 fn logical_bounds(x: f64, y: f64, w: f64, h: f64) -> (i32, i32, i32, i32) {
