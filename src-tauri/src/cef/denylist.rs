@@ -12,6 +12,7 @@ use super::paths::CefPaths;
 
 const SCHEMA: u32 = 1;
 /// Nombre legado de un único tmp compartido. Ya no se escribe; `load` no lo lee.
+#[cfg(test)]
 const DENYLIST_TMP_NAME: &str = ".denylist.json.idioteque.tmp";
 static TMP_SEQ: AtomicU64 = AtomicU64::new(1);
 
