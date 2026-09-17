@@ -315,10 +315,8 @@ fn apply_switches(state: &AppState, command_line: &mut CommandLine) {
     // when `/dev/shm` is unusable (permissions, ENOSPC, EDQUOT) or when
     // `IDIOTEQUE_CEF_ARGS` forces the flag. Docker's 64 MiB default is one
     // failure case, not product policy. Never tied to the sandbox: see shm.rs.
-    if crate::shm::command_line_disables_dev_shm(
-        state.disable_dev_shm,
-        &state.args.extra_switches,
-    ) {
+    if crate::shm::command_line_disables_dev_shm(state.disable_dev_shm, &state.args.extra_switches)
+    {
         add_switch(command_line, crate::shm::DISABLE_DEV_SHM_USAGE);
     }
     // Software GL for X servers without DRI3 (the dev VM). A user machine that
