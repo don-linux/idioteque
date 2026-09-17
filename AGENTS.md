@@ -9,7 +9,7 @@ Standard commands live in `package.json` scripts (`dev`, `build`, `check`, `taur
 Services / how to run, test, lint, build:
 
 - Frontend dev server: `bun run dev` (Vite on port **1420**, `strictPort: true`). Serving the page in a plain browser at `localhost:1420` will render the UI but `invoke`/dialog calls fail — they only work inside the Tauri runtime.
-- Full desktop app: `bun run tauri dev`. This runs `beforeDevCommand` (`bun run dev`) itself, so do **not** run a standalone `bun run dev` on port 1420 at the same time (the strict port would clash).
+- Full desktop app: `bun run tauri dev`. This runs `beforeDevCommand` (`bun run cef:prepare && bun run dev`) itself, so do **not** run a standalone `bun run dev` on port 1420 at the same time (the strict port would clash).
 - Type/lint check: `bun run check` (`svelte-check`).
 - Rust tests: `cargo test --manifest-path src-tauri/Cargo.toml`.
 
@@ -19,3 +19,4 @@ Non-obvious caveats:
 - **Rust must be a modern stable toolchain (≥ 1.85).** A transitive dependency (`dlopen2`) requires `edition2024`. The base image pinned the rustup default to `1.83.0`, which fails to build; the default has been switched to `stable` (currently 1.97.x). If a fresh environment ever reverts to 1.83, run `rustup default stable`.
 - **Running the GUI needs a display.** Use `DISPLAY=:1` (the computer-use Desktop). Rendering falls back to software; `libEGL warning: DRI3 ...` messages are harmless. `WEBKIT_DISABLE_COMPOSITING_MODE=1` can help avoid GPU-compositing issues.
 - The first `cargo`/`tauri dev` build compiles the whole Tauri/wry/webkit dependency tree (~1 min) and is cached afterward in `src-tauri/target`.
+- `ninja-build` and `cmake` are required for `cef-host`; first build downloads ~320 MB to `src-tauri/.cef-sdk` and compiles `libcef_dll_wrapper` (~2–5 min); `bun run cef:prepare` produces `src-tauri/binaries/` and `src-tauri/cef-base/` (both gitignored); the deb/AppImage grows by ~350 MB; for running the browser in this VM use `IDIOTEQUE_CEF_NO_SANDBOX=1` and `IDIOTEQUE_CEF_ARGS="--disable-gpu"`; `LD_LIBRARY_PATH` is not needed for the app (the app sets it for the host).
