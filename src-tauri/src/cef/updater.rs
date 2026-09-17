@@ -206,6 +206,23 @@ fn continue_with_index(
         return CycleOutcome::NoNewer;
     };
 
+    // Host vivo + el mismo candidate ya verificado: no llamar a
+    // `discard_candidate` (borraría el slot pendiente) ni re-bajar.
+    // El motor efectivo sigue siendo el actual/bundle; sin esto cada
+    // ciclo (deb/rpm/AppImage) repetiría health del mismo tarball.
+    if let Some(pending) = &state.pending_promotion {
+        if pending.cef_version == candidate.version.cef_version && host_alive() {
+            log_step(
+                &ctx.paths,
+                "candidato ya pendiente de promoción; se omite la descarga",
+            );
+            return CycleOutcome::Deferred {
+                cef: pending.cef_version.clone(),
+                chromium: pending.chromium_version.clone(),
+            };
+        }
+    }
+
     let cand_cef = candidate.version.cef_version.clone();
     let cand_chromium = candidate.version.chromium_version.clone();
     log_step(
@@ -579,9 +596,10 @@ fn unix_from_civil(year: i32, month: u32, day: u32, hour: u32, minute: u32, seco
 fn resolve_urls() -> (String, String) {
     let (file_index, file_download) = urls_from_base_json();
     if let Ok(index) = std::env::var("IDIOTEQUE_CEF_INDEX_URL") {
-        if !index.trim().is_empty() {
-            let download = download_base_from_index(&index);
-            return (index, download);
+        let index = index.trim();
+        if !index.is_empty() {
+            let download = download_base_from_index(index);
+            return (index.to_string(), download);
         }
     }
     let index = file_index.unwrap_or_else(|| DEFAULT_INDEX_URL.to_string());
@@ -618,7 +636,7 @@ fn download_base_from_index(index_url: &str) -> String {
 fn env_u64(name: &str, default: u64) -> u64 {
     std::env::var(name)
         .ok()
-        .and_then(|value| value.parse().ok())
+        .and_then(|value| value.trim().parse().ok())
         .unwrap_or(default)
 }
 
@@ -1500,7 +1518,7 @@ exit 0
 
     #[cfg(unix)]
     #[test]
-    fn run_cycle_deferred_then_304_keeps_pending_promotion() {
+    fn run_cycle_deferred_second_cycle_does_not_redownload() {
         let tmp = TempDir::new().unwrap();
         let tarball_path = tmp.path().join(ARCHIVE_NAME);
         build_runtime_tarball(&tarball_path, 13300, 15200, NEWER, NEWER_CHROMIUM);
@@ -1517,6 +1535,7 @@ exit 0
             tmp.path(),
             "ok-host-defer",
             r#"#!/bin/sh
+echo x >> "$(dirname "$0")/health-runs"
 printf '%s\n' '{"event":"health","ok":true,"cef":"153.0.1+gabc+chromium-153.0.8000.10","chromium":"153.0.8000.10","apiVersion":15200}'
 exit 0
 "#,
@@ -1539,14 +1558,31 @@ exit 0
             etag.is_none(),
             "spawn_http no envía ETag; el persist no debe inventar uno"
         );
+        let runs = tmp.path().join("health-runs");
+        assert_eq!(fs::read_to_string(&runs).unwrap().matches('x').count(), 1);
 
-        // Segundo ciclo: índice 304-equivalente (mismo body, no newer) con host vivo.
+        // Mismo índice + host vivo: no re-bajar ni discard del candidate verificado.
         // c2a16b5: finish() no puede reescribir pendingPromotion a null.
         let again = run_cycle(&ctx, &|| true, emit.as_ref());
-        assert_eq!(again, CycleOutcome::NoNewer);
+        match again {
+            CycleOutcome::Deferred { cef, chromium } => {
+                assert_eq!(cef, NEWER);
+                assert_eq!(chromium, NEWER_CHROMIUM);
+            }
+            other => panic!("expected Deferred (no re-download), got {other:?}"),
+        }
+        assert_eq!(
+            state::load(&ctx.paths).last_outcome.as_deref(),
+            Some("deferred")
+        );
         assert_pending_kept(&ctx.paths);
         assert!(ctx.paths.candidate().exists());
         assert!(manifest::load(&ctx.paths.candidate()).unwrap().verified);
+        assert_eq!(
+            fs::read_to_string(&runs).unwrap().matches('x').count(),
+            1,
+            "segundo ciclo no debe repetir el health check"
+        );
         assert!(events.lock().unwrap().is_empty());
     }
 
