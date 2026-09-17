@@ -426,4 +426,193 @@ mod tests {
         let error = fetch_index(&url, None).unwrap_err();
         assert!(error.contains("500"));
     }
+
+    fn assert_unparseable(json: &str) {
+        let error = parse_index(json).expect_err(json);
+        assert!(
+            error.contains("No se pudo parsear el índice CEF"),
+            "{error}"
+        );
+    }
+
+    fn wrap_linux(versions_inner: &str) -> String {
+        format!(r#"{{"linux64":{{"versions":[{versions_inner}]}}}}"#)
+    }
+
+    fn stable_minimal(cef: &str, name: &str, sha1: &str) -> String {
+        format!(
+            r#"{{"cef_version":"{cef}","chromium_version":"0.0.0.0","channel":"stable","files":[{{"type":"minimal","name":"{name}","sha1":"{sha1}","size":1}}]}}"#
+        )
+    }
+
+    /// JSON cortado a medias no puede parecer un índice vacío ni parcial.
+    #[test]
+    fn parse_index_rejects_truncated_json() {
+        let complete = r#"{"linux64":{"versions":[{"cef_version":"153.0.1+gabc+chromium-153.0.8000.10","chromium_version":"153.0.8000.10","channel":"stable","files":[{"type":"minimal","name":"ok.tar.bz2","sha1":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","size":2}]}]},"windows64":{"versions":[]}}"#;
+        parse_index(complete).expect("complete control");
+
+        assert_unparseable("");
+        assert_unparseable("{");
+        assert_unparseable(r#"{"linux64":"#);
+        assert_unparseable(r#"{"linux64":{"versions":"#);
+        assert_unparseable(r#"{"linux64":{"versions":["#);
+        assert_unparseable(&complete[..complete.len() - 1]);
+        assert_unparseable(&complete[..complete.find("windows64").expect("windows64")]);
+        assert_unparseable(&format!("{complete} trailing-garbage"));
+
+        let url = serve_once(
+            "HTTP/1.1 200 OK",
+            "Content-Type: application/json\r\n",
+            br#"{"linux64":{"versions":["#,
+        );
+        match fetch_index(&url, None).expect("fetch truncated") {
+            IndexFetch::Fetched { body, .. } => assert_unparseable(&body),
+            IndexFetch::NotModified => panic!("expected body"),
+        }
+    }
+
+    /// Dos entradas con la misma `cef_version`: gana la primera con `minimal`.
+    /// Un duplicado posterior no pisa un candidato ya mayor.
+    #[test]
+    fn select_candidate_duplicate_versions_first_minimal_wins() {
+        let first = stable_minimal(
+            "153.0.1+gabc+chromium-153.0.8000.10",
+            "first.tar.bz2",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        );
+        let second = stable_minimal(
+            "153.0.1+gabc+chromium-153.0.8000.10",
+            "second.tar.bz2",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        );
+        let without_minimal = r#"{"cef_version":"153.0.1+gabc+chromium-153.0.8000.10","chromium_version":"153.0.8000.10","channel":"stable","files":[{"type":"standard","name":"std.tar.bz2","sha1":"cccccccccccccccccccccccccccccccccccccccc","size":1}]}"#;
+        let newer = stable_minimal(
+            "154.0.0+gnew+chromium-154.0.1.1",
+            "newer.tar.bz2",
+            "dddddddddddddddddddddddddddddddddddddddd",
+        );
+
+        let dupes = parse_index(&wrap_linux(&format!("{first},{second}"))).unwrap();
+        let chosen =
+            select_candidate(&dupes, "linux64", &current(), &|_| false).expect("duplicate");
+        assert_eq!(chosen.file.name, "first.tar.bz2");
+        assert_eq!(chosen.file.sha1, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+
+        let skip_then_keep =
+            parse_index(&wrap_linux(&format!("{without_minimal},{second}"))).unwrap();
+        let chosen = select_candidate(&skip_then_keep, "linux64", &current(), &|_| false)
+            .expect("second after standard-only");
+        assert_eq!(chosen.file.name, "second.tar.bz2");
+
+        let later_dupe_of_older =
+            parse_index(&wrap_linux(&format!("{newer},{first},{second}"))).unwrap();
+        let chosen = select_candidate(&later_dupe_of_older, "linux64", &current(), &|_| false)
+            .expect("newer stays");
+        assert_eq!(chosen.file.name, "newer.tar.bz2");
+
+        let lying_chromium = r#"{"cef_version":"153.0.1+gabc+chromium-153.0.8000.10","chromium_version":"199.0.0.0","channel":"stable","files":[{"type":"minimal","name":"lie.tar.bz2","sha1":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","size":1}]}"#;
+        let mixed = parse_index(&wrap_linux(&format!("{first},{lying_chromium}"))).unwrap();
+        let chosen =
+            select_candidate(&mixed, "linux64", &current(), &|_| false).expect("ignore field");
+        assert_eq!(
+            chosen.version.cef_version,
+            "153.0.1+gabc+chromium-153.0.8000.10"
+        );
+        assert_eq!(chosen.file.name, "first.tar.bz2");
+    }
+
+    /// Sin clave de plataforma no se toma prestada otra (ni `linux64` ni Windows).
+    #[test]
+    fn select_candidate_missing_platform_does_not_fallback() {
+        let linux = stable_minimal(
+            "200.0.0+gx+chromium-200.0.0.0",
+            "linux.tar.bz2",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        );
+        let windows = stable_minimal(
+            "201.0.0+gy+chromium-201.0.0.0",
+            "win.tar.bz2",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        );
+
+        let only_windows =
+            parse_index(&format!(r#"{{"windows64":{{"versions":[{windows}]}}}}"#)).unwrap();
+        assert!(only_windows.versions_for("linux64").is_empty());
+        assert!(select_candidate(&only_windows, "linux64", &current(), &|_| false).is_none());
+        assert_eq!(
+            select_candidate(&only_windows, "windows64", &current(), &|_| false)
+                .expect("windows")
+                .file
+                .name,
+            "win.tar.bz2"
+        );
+
+        let only_linux = parse_index(&wrap_linux(&linux)).unwrap();
+        for missing in ["linuxarm64", "macosx64", "macosarm64", "Linux64", "LINUX64"] {
+            assert!(
+                only_linux.versions_for(missing).is_empty(),
+                "{missing} must stay empty"
+            );
+            assert!(
+                select_candidate(&only_linux, missing, &current(), &|_| false).is_none(),
+                "{missing} must not borrow linux64"
+            );
+        }
+
+        let no_versions_key = parse_index(r#"{"linux64":{"channel":"stable"}}"#).unwrap();
+        assert!(no_versions_key.versions_for("linux64").is_empty());
+        assert!(select_candidate(&no_versions_key, "linux64", &current(), &|_| false).is_none());
+
+        let versions_not_array = parse_index(
+            r#"{"linux64":{"versions":{"cef_version":"200.0.0+gx+chromium-200.0.0.0"}}}"#,
+        )
+        .unwrap();
+        assert!(versions_not_array.versions_for("linux64").is_empty());
+        assert!(select_candidate(&versions_not_array, "linux64", &current(), &|_| false).is_none());
+
+        let linux_null = parse_index(r#"{"linux64":null,"windows64":{"versions":[]}}"#).unwrap();
+        assert!(linux_null.versions_for("linux64").is_empty());
+        assert!(select_candidate(&linux_null, "linux64", &current(), &|_| false).is_none());
+
+        let empty_object = parse_index("{}").unwrap();
+        assert!(select_candidate(&empty_object, "linux64", &current(), &|_| false).is_none());
+    }
+
+    /// Contrato 3.5: mismo MAJOR.MINOR.PATCH → gana el Chromium mayor (numérico).
+    #[test]
+    fn select_candidate_uses_chromium_when_cef_triple_ties() {
+        let older_chromium = stable_minimal(
+            "152.0.6+gold+chromium-152.0.7977.9",
+            "old-cr.tar.bz2",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        );
+        let newer_chromium = stable_minimal(
+            "152.0.6+gnew+chromium-152.0.7977.83",
+            "new-cr.tar.bz2",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        );
+        let higher_patch_tiny_chromium = stable_minimal(
+            "152.0.7+gpatch+chromium-1.0.0.0",
+            "patch.tar.bz2",
+            "cccccccccccccccccccccccccccccccccccccccc",
+        );
+
+        let tied = parse_index(&wrap_linux(&format!("{newer_chromium},{older_chromium}"))).unwrap();
+        let older_than_both = CefVersion::parse("152.0.6+gcur+chromium-152.0.7977.8").unwrap();
+        let chosen =
+            select_candidate(&tied, "linux64", &older_than_both, &|_| false).expect("chromium");
+        assert_eq!(chosen.file.name, "new-cr.tar.bz2");
+
+        let current_already_newer =
+            CefVersion::parse("152.0.6+gcur+chromium-152.0.7977.83").unwrap();
+        assert!(select_candidate(&tied, "linux64", &current_already_newer, &|_| false).is_none());
+
+        let patch_beats_chromium = parse_index(&wrap_linux(&format!(
+            "{higher_patch_tiny_chromium},{newer_chromium}"
+        )))
+        .unwrap();
+        let chosen = select_candidate(&patch_beats_chromium, "linux64", &current(), &|_| false)
+            .expect("triple");
+        assert_eq!(chosen.file.name, "patch.tar.bz2");
+    }
 }
