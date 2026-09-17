@@ -358,7 +358,8 @@ describe("AppImage: inyectar CEF DESPUÉS de linuxdeploy", () => {
       "--target",
       "aarch64-unknown-linux-gnu",
     ]);
-    expect(args.join(" ")).not.toMatch(/cef-base|libcef|externalBin/);
+    expect(args.join(" ")).not.toMatch(/cef-base|libcef/);
+    expect(JSON.parse(APPIMAGE_OVERRIDE_CONFIG).bundle).toEqual({ resources: [], externalBin: [] });
   });
 
   it("el plugin usa el arch de linuxdeploy (x86_64), no el amd64 de Debian/AppImage", () => {
