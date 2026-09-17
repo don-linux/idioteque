@@ -464,21 +464,22 @@ mod tests {
     }
 
     #[test]
-    fn download_verified_truncated_body_is_size_mismatch_and_cleans() {
+    fn download_verified_truncated_body_is_network_and_cleans() {
         let tmp = TempDir::new().unwrap();
         let dest = tmp.path().join("download.tar.bz2");
         let body = b"only-four";
         let url = serve_truncated(100, body);
         let error = download_verified(&url, &dest, 100, &sha1_hex(body)).unwrap_err();
-        match error {
-            DownloadError::SizeMismatch {
-                expected: 100,
-                actual,
-            } => {
-                assert_eq!(actual, body.len() as u64);
+        match &error {
+            DownloadError::Network(msg) => {
+                assert!(
+                    msg.contains("interrumpida") || msg.to_ascii_lowercase().contains("body"),
+                    "{msg}"
+                );
             }
-            other => panic!("unexpected {other:?}"),
+            other => panic!("truncated Content-Length is a body error, got {other:?}"),
         }
+        assert!(error.message().contains("No se pudo descargar"));
         assert_no_dest_or_parts(&dest);
     }
 
