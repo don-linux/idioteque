@@ -70,7 +70,7 @@ El ancho lo decide el usuario, arrastrando el borde derecho. No hay scroll later
 
 El editor nunca queda sin espacio: el árbol deja de crecer antes de aplastarlo, con la terminal a la derecha o sin ella. Y si abres la terminal a la derecha y ya no cabe todo, el árbol cede y se queda con ese ancho; no rebota al cerrar la terminal.
 
-El árbol se esconde con `Ctrl+B`. Cuando está oculto, junto a la palabra “idioteque” aparece el icono de panel izquierdo para volver a mostrarlo. Con el foco dentro de la terminal, `Ctrl+B` es de la terminal (es el prefijo de tmux) y el atajo pasa a ser `Ctrl+Shift+B`, que funciona en cualquier lado.
+El árbol se esconde con `Ctrl+T`. Cuando está oculto, junto a la palabra “idioteque” aparece el icono de panel izquierdo para volver a mostrarlo. Con el foco dentro de la terminal, `Ctrl+T` es de la terminal y el atajo pasa a ser `Ctrl+Shift+T`, que funciona en cualquier lado. (`Ctrl+B` fue del árbol hasta que llegó el navegador.)
 
 Si la carpeta abierta tiene subcarpetas, el árbol solo muestra las que el usuario marcó en “Carpetas visibles”. Los `.md` de la raíz siempre aparecen. Sin esa selección, se pinta el árbol completo.
 
@@ -90,6 +90,20 @@ Ocultarla no corta lo que esté corriendo. Volver a Inicio o cambiar de carpeta 
 
 Una sola terminal, sin pestañas. Se redimensiona arrastrando su borde, igual que el árbol.
 
+### Navegador
+
+Es la tercera superficie del IDE, junto al editor y al canvas de terminales. Se abre con `Ctrl+B` (desde la terminal, `Ctrl+Shift+B`, porque `Ctrl+B` es el prefijo de tmux) o con el globo del footer, y ocupa todo el cuerpo de la ventana; el footer se queda. Otro `Ctrl+B` vuelve a la superficie anterior, sea el editor o las terminales.
+
+Es Chromium de verdad, no el webview de la app: animaciones, JavaScript, GPU y DevTools tal cual. Lo hace un proceso aparte (`cef-host`) que carga CEF y se dibuja como ventana hija dentro de la ventana de idioteque. Si ese proceso muere, la app sigue: el navegador muestra el error y ofrece reintentar.
+
+Arriba va una barra propia de idioteque, no el chrome de Chromium: atrás, adelante, recargar o detener, la URL, DevTools y una cruz para cerrar. `Ctrl+L` enfoca la URL. Lo que se escribe sin esquema se completa con `https://`; no hay buscador. DevTools abre en su ventana (F12 o `Ctrl+Shift+I`, o “Inspeccionar” en el menú contextual). Los popups se abren en la misma pestaña: hay una sola.
+
+Ocultar el navegador no mata el proceso ni la página. Volver a Inicio sí. Empieza en `about:blank` con la URL enfocada.
+
+El motor viene de fábrica en cada instalador y se actualiza solo, sin intervención del mantenedor, mientras las CEF nuevas sigan siendo compatibles con la app. Cuando una no lo es, la app lo dice, no se rompe, y se queda con la última que funcionó. Ver [`CEF-RUNTIME.md`](CEF-RUNTIME.md).
+
+Necesita X11. En Wayland idioteque se lanza sobre XWayland (`GDK_BACKEND=x11`).
+
 ### Lo que el layout recuerda
 
 El ancho del árbol, si el árbol está visible, el lado que usó la terminal la última vez y su tamaño en cada lado (uno para abajo, otro para la derecha) se guardan en `~/.idioteque/config.json` y vuelven al reiniciar. Se escriben al soltar el arrastre o al alternar un panel, no en cada pixel del movimiento. Las carpetas visibles de cada workspace (`workspaceViews`) también se recuerdan.
@@ -104,7 +118,7 @@ El tema por defecto es Tokyo Night Night (el de Ghostty/WezTerm, extras de folke
 
 Solo en la vista IDE. No aparece en la selección de carpetas ni en Configuración.
 
-A la izquierda, la palabra “idioteque”, así escrita, en minúsculas. Si el árbol está oculto, al lado va el icono de panel izquierdo para volver a mostrarlo (también `Ctrl+B`, o `Ctrl+Shift+B` con el foco en la terminal). Si la carpeta abierta tiene subcarpetas, después va el icono de carpeta con + (“Carpetas visibles”) para elegir cuáles se ven en el árbol. Se queda pegada abajo.
+A la izquierda, la palabra “idioteque”, así escrita, en minúsculas. Si el árbol está oculto, al lado va el icono de panel izquierdo para volver a mostrarlo (también `Ctrl+T`, o `Ctrl+Shift+T` con el foco en la terminal). Si la carpeta abierta tiene subcarpetas, después va el icono de carpeta con + (“Carpetas visibles”) para elegir cuáles se ven en el árbol. Se queda pegada abajo.
 
 A la derecha, una barra de iconos. Sin texto. Cada uno tiene tooltip.
 
@@ -114,12 +128,14 @@ Orden fijo, definido en código (no en la UI ni en la config):
 2. Carpeta — Cambiar. Abre el selector nativo para otra carpeta.
 3. Engrane — Configuración. Va a la página de ajustes. El workspace no se cierra, así la terminal no se apaga.
 4. Terminal — Muestra u oculta el panel. Queda marcado si está visible.
-5. Git — Icono de vida. Al pasar el mouse dice si no hay repo o el nombre
+5. Globo — Navegador. Abre o cierra la superficie del navegador (`Ctrl+B`).
+   Queda marcado mientras está abierta.
+6. Git — Icono de vida. Al pasar el mouse dice si no hay repo o el nombre
    de la carpeta y la rama. El clic no hace nada. No es un panel.
 
 El usuario no reordena. No hay arrastre ni orden guardado. Si se suma un icono, se mete en esa lista de código.
 
-Al pasar el mouse, Casa, Carpeta, Engrane y Terminal muestran el cursor de clic. Git no es accionable, así que el cursor se queda normal. El clic corre siempre: no hay umbral ni “¿era un arrastre?”.
+Al pasar el mouse, Casa, Carpeta, Engrane, Terminal y Globo muestran el cursor de clic. Git no es accionable, así que el cursor se queda normal. El clic corre siempre: no hay umbral ni “¿era un arrastre?”.
 
 ## Configuración
 
@@ -127,9 +143,11 @@ Es una página completa (`/configuracion`), no un panel encima del IDE. Flecha a
 
 A la izquierda, un menú con las secciones. A la derecha, el contenido de la que elegiste. Si no hay ninguna, el centro dice “Elige una opción para empezar a configurar”. Volver al engrane no recuerda la última sección.
 
-Cada sección es su propia página. Hoy hay Terminal y Temas.
+Cada sección es su propia página. Hoy hay Terminal, Temas y Navegador.
 
 Terminal (`/configuracion/terminal`): fuente del sistema (dropdown; se filtra escribiendo en el panel abierto), tamaño de 10 a 24 píxeles con +/−, un selector de tema (Tokyo Night y otras paletas oficiales), y una vista previa con la paleta ANSI más una terminal xterm de solo lectura (prompt idle) para ver el tema y el tamaño aplicados.
+
+Navegador (`/configuracion/navegador`): la versión de Chromium que abre hoy, la del base de fábrica, cuándo se buscó actualización por última vez, las versiones descartadas y un botón para buscar ahora. No hay nada que guardar aquí: es información y un botón.
 
 Temas (`/configuracion/temas`): dropdown de la paleta de la interfaz (Idioteque Dark, Idioteque Night, Idioteque Light y las paletas oficiales); se filtra escribiendo en el panel abierto. Abajo hay una vista previa del IDE con markdown de ejemplo. Al elegir se ve el cambio; hay que guardar para que quede.
 
@@ -154,7 +172,7 @@ Si la carpeta no es un repo, o no hay Git, el snapshot viene vacío.
 No es un error. El panel podrá esconderse.
 
 El icono de Git del footer (y Ctrl+G) abre el grafo de ramas en el
-mismo hueco del árbol de archivos. Ctrl+B vuelve al árbol. El hover
+mismo hueco del árbol de archivos. Ctrl+T vuelve al árbol. El hover
 sigue mostrando el nombre del repo y la rama.
 
 ### Colores de las ramas
