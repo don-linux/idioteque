@@ -80,4 +80,50 @@ describe("issueUrl", () => {
       ].join("\n"),
     );
   });
+
+  it("percent-encodes plus signs in CEF versions so GitHub does not treat them as spaces", () => {
+    const href = issueUrl(incompatible, ctx);
+    expect(href).toContain("153.0.1%2Bgabc");
+    expect(href).toContain("152.0.6%2Bgdef");
+    expect(href.includes("153.0.1+gabc")).toBe(false);
+  });
+
+  it("does not let &, = or extra query keys in the reason split the issue URL", () => {
+    const href = issueUrl(
+      {
+        ...incompatible,
+        reason: "health-exit-10&injected=1#frag",
+      },
+      ctx,
+    );
+    const url = new URL(href);
+
+    expect(url.searchParams.get("injected")).toBeNull();
+    expect(url.hash).toBe("");
+    expect(url.searchParams.get("body")).toContain("reason: health-exit-10&injected=1#frag");
+  });
+
+  it("still builds an issue URL when versions, reason or platform are empty", () => {
+    const href = issueUrl(
+      {
+        kind: "incompatible",
+        candidateChromium: "",
+        candidateCef: "",
+        currentChromium: "",
+        currentCef: "",
+        reason: "",
+      },
+      { idiotequeVersion: "", hostApiVersion: 0, platform: "" },
+    );
+    const url = new URL(href);
+
+    expect(`${url.origin}${url.pathname}`).toBe(ISSUES_URL);
+    expect(url.searchParams.get("title")).toBe("CEF  no compatible con idioteque ");
+    expect(url.searchParams.get("body")).toContain("hostApiVersion: 0");
+  });
+
+  it("never says the candidate failed to compile in the issue text", () => {
+    const href = issueUrl(incompatible, ctx).toLowerCase();
+    expect(href).not.toContain("compil");
+  });
 });
