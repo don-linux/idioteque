@@ -197,7 +197,7 @@ enum RenderTerm {
     Abnormal,
     Oom,
     LaunchFailed,
-    Other(i32),
+    Other(u32),
 }
 
 fn render_term_from_status(status: TerminationStatus) -> RenderTerm {
