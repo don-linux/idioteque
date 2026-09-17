@@ -297,8 +297,21 @@ mod tests {
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+    fn scratch_root() -> PathBuf {
+        // Never `std::env::temp_dir()`: `apply_env` may point TMPDIR at a
+        // CacheDir that another test deletes (POSIX `/tmp`, not Ubuntu-only).
+        #[cfg(unix)]
+        {
+            PathBuf::from("/tmp")
+        }
+        #[cfg(not(unix))]
+        {
+            std::env::temp_dir()
+        }
+    }
+
     fn temp_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
+        let dir = scratch_root().join(format!(
             "idq-shm-test-{tag}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
