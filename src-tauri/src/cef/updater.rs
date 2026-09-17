@@ -171,7 +171,7 @@ fn continue_with_index(
     ctx: &UpdaterContext,
     host_alive: &dyn Fn() -> bool,
     emit: &dyn Fn(UpdateEvent),
-    _state: &mut UpdaterState,
+    state: &mut UpdaterState,
     denylist: &mut denylist::Denylist,
     body: &str,
 ) -> CycleOutcome {
@@ -393,6 +393,7 @@ fn continue_with_index(
             }
             match promote_candidate(&ctx.paths, host_alive()) {
                 Ok(PromoteResult::Promoted(promoted)) => {
+                    state.pending_promotion = None;
                     emit(UpdateEvent::Updated {
                         chromium: promoted.chromium_version.clone(),
                         cef: promoted.cef_version.clone(),
@@ -408,6 +409,7 @@ fn continue_with_index(
                 }
                 Ok(PromoteResult::Deferred(pending)) => {
                     log_step(&ctx.paths, "promoción diferida: cef-host vivo");
+                    state.pending_promotion = Some(pending.clone());
                     CycleOutcome::Deferred {
                         cef: pending.cef_version,
                         chromium: pending.chromium_version,
@@ -1017,6 +1019,42 @@ exit 0
             }
             other => panic!("bad event {other:?}"),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_cycle_health_ok_defers_when_host_alive() {
+        let tmp = TempDir::new().unwrap();
+        let tarball_path = tmp.path().join(ARCHIVE_NAME);
+        build_runtime_tarball(&tarball_path, 13300, 15200, NEWER, NEWER_CHROMIUM);
+        let bytes = fs::read(&tarball_path).unwrap();
+        let sha = sha1_file(&tarball_path).unwrap();
+        let index = index_json(ARCHIVE_NAME, &sha, bytes.len() as u64, NEWER, NEWER_CHROMIUM);
+        let host = write_script(
+            tmp.path(),
+            "ok-host",
+            r#"#!/bin/sh
+printf '%s\n' '{"event":"health","ok":true,"cef":"153.0.1+gabc+chromium-153.0.8000.10","chromium":"153.0.8000.10","apiVersion":15200}'
+exit 0
+"#,
+        );
+        let ctx = setup_ctx(&tmp, index, Some((ARCHIVE_NAME, bytes)), host, true);
+        let (events, emit) = collect_events();
+        let outcome = run_cycle(&ctx, &|| true, emit.as_ref());
+        match outcome {
+            CycleOutcome::Deferred { cef, chromium } => {
+                assert_eq!(cef, NEWER);
+                assert_eq!(chromium, NEWER_CHROMIUM);
+            }
+            other => panic!("expected Deferred, got {other:?}"),
+        }
+        assert!(ctx.paths.candidate().exists());
+        assert!(!ctx.paths.current().exists());
+        assert!(manifest::load(&ctx.paths.candidate()).unwrap().verified);
+        let pending = state::load(&ctx.paths).pending_promotion.expect("pending");
+        assert_eq!(pending.cef_version, NEWER);
+        assert_eq!(state::load(&ctx.paths).last_outcome.as_deref(), Some("deferred"));
+        assert!(events.lock().unwrap().is_empty());
     }
 
     #[test]

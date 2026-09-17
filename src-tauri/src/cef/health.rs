@@ -253,6 +253,52 @@ exit 0
 
     #[cfg(unix)]
     #[test]
+    fn health_ok_then_nonzero_exit_is_failure() {
+        let tmp = TempDir::new().unwrap();
+        let (slot, cache) = setup_dirs(&tmp);
+        let binary = write_script(
+            tmp.path(),
+            "ok-then-10",
+            r#"#!/bin/sh
+printf '%s\n' '{"event":"health","ok":true,"cef":"152.0.6+g708dc14+chromium-152.0.7977.83","chromium":"152.0.7977.83","apiVersion":15200}'
+exit 10
+"#,
+        );
+        let outcome = run_with(&binary, &slot, &cache, Duration::from_secs(3));
+        match &outcome {
+            HealthOutcome::Failed(failure @ HealthFailure::Exit(10)) => {
+                assert_eq!(failure.denylist_reason(), "health-exit-10");
+            }
+            other => panic!("expected Exit(10), got {other:?}"),
+        }
+        assert_cache_gone(&cache);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn health_ok_false_and_exit_zero_is_no_handshake() {
+        let tmp = TempDir::new().unwrap();
+        let (slot, cache) = setup_dirs(&tmp);
+        let binary = write_script(
+            tmp.path(),
+            "ok-false-host",
+            r#"#!/bin/sh
+printf '%s\n' '{"event":"health","ok":false,"cef":"x","chromium":"y","apiVersion":15200}'
+exit 0
+"#,
+        );
+        let outcome = run_with(&binary, &slot, &cache, Duration::from_secs(3));
+        match &outcome {
+            HealthOutcome::Failed(failure @ HealthFailure::NoHandshake) => {
+                assert_eq!(failure.denylist_reason(), "health-no-handshake");
+            }
+            other => panic!("expected NoHandshake, got {other:?}"),
+        }
+        assert_cache_gone(&cache);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn fatal_then_exit_10_is_exit_failure() {
         let tmp = TempDir::new().unwrap();
         let (slot, cache) = setup_dirs(&tmp);

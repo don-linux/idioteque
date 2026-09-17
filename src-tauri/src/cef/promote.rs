@@ -404,6 +404,25 @@ mod tests {
     }
 
     #[test]
+    fn recover_defers_verified_candidate_when_host_alive() {
+        let tmp = TempDir::new().unwrap();
+        let paths = setup(&tmp);
+        write_slot(&paths.current(), BUNDLED, SlotSource::Downloaded, false);
+        write_slot(&paths.candidate(), NEWER, SlotSource::Downloaded, true);
+
+        let promoted = recover_at_startup(&paths, true).unwrap();
+        assert_eq!(promoted, None);
+        assert!(paths.candidate().exists());
+        assert_eq!(
+            manifest::load(&paths.current()).unwrap().cef_version,
+            BUNDLED
+        );
+        let pending = state::load(&paths).pending_promotion.expect("pending");
+        assert_eq!(pending.cef_version, NEWER);
+        assert!(manifest::load(&paths.candidate()).unwrap().verified);
+    }
+
+    #[test]
     fn recover_drops_stray_health_cache() {
         let tmp = TempDir::new().unwrap();
         let paths = setup(&tmp);

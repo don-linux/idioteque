@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   formatCheckedAt,
   formatDenyEntry,
@@ -39,6 +39,20 @@ describe("formatCheckedAt", () => {
         String(date.getMinutes()).padStart(2, "0"),
       ].join(":");
     expect(formatCheckedAt(iso)).toBe(expected);
+  });
+
+  it("uses local getters, not UTC", () => {
+    vi.spyOn(Date.prototype, "getHours").mockReturnValue(1);
+    vi.spyOn(Date.prototype, "getUTCHours").mockReturnValue(11);
+    vi.spyOn(Date.prototype, "getMinutes").mockReturnValue(5);
+    vi.spyOn(Date.prototype, "getUTCMinutes").mockReturnValue(5);
+    try {
+      expect(formatCheckedAt("2026-09-16T11:05:00.000Z").endsWith(" 01:05")).toBe(
+        true,
+      );
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 });
 

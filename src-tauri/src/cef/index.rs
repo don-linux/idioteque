@@ -353,6 +353,13 @@ mod tests {
     }
 
     #[test]
+    fn select_candidate_none_when_equal_to_newest_stable() {
+        let index = parse_index(SAMPLE).unwrap();
+        let current = CefVersion::parse("155.0.0+ggg+chromium-155.0.1.1").unwrap();
+        assert!(select_candidate(&index, "linux64", &current, &|_| false).is_none());
+    }
+
+    #[test]
     fn select_candidate_none_when_no_newer() {
         let index = parse_index(SAMPLE).unwrap();
         let newest = CefVersion::parse("200.0.0+g+chromium-200.0.0.0").unwrap();

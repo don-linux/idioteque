@@ -43,6 +43,8 @@ describe("boundsChanged", () => {
 
   it("is true when any field differs", () => {
     expect(boundsChanged({ ...box, x: 0 }, box)).toBe(true);
+    expect(boundsChanged({ ...box, y: 0 }, box)).toBe(true);
+    expect(boundsChanged({ ...box, w: 9 }, box)).toBe(true);
     expect(boundsChanged({ ...box, h: 5 }, box)).toBe(true);
   });
 });

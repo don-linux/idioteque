@@ -341,6 +341,19 @@ mod tests {
     }
 
     #[test]
+    fn installed_same_version_falls_back_and_deletes_current() {
+        let tmp = TempDir::new().unwrap();
+        let paths = paths_in(&tmp);
+        write_slot(&paths.bundled_base, BUNDLED, SlotSource::Bundled, true);
+        write_slot(&paths.current(), BUNDLED, SlotSource::Downloaded, true);
+
+        let slot = resolve_effective(&paths).unwrap();
+        assert_eq!(slot.source, EffectiveSource::Bundled);
+        assert_eq!(slot.dir, paths.bundled_base);
+        assert!(!paths.current().exists());
+    }
+
+    #[test]
     fn installed_corrupt_missing_file_falls_back() {
         let tmp = TempDir::new().unwrap();
         let paths = paths_in(&tmp);
@@ -364,6 +377,30 @@ mod tests {
         save(&paths.current(), &manifest).unwrap();
 
         assert!(validate(&paths.current(), &manifest).is_err());
+        let slot = resolve_effective(&paths).unwrap();
+        assert_eq!(slot.source, EffectiveSource::Bundled);
+        assert!(!paths.current().exists());
+    }
+
+    #[test]
+    fn validate_rejects_missing_required_file_even_if_files_list_is_empty() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("slot");
+        let manifest = write_slot(&dir, BUNDLED, SlotSource::Bundled, false);
+        fs::remove_file(dir.join("libcef.so")).unwrap();
+        assert!(manifest.files.is_empty());
+        let error = validate(&dir, &manifest).unwrap_err();
+        assert!(error.contains("libcef.so"), "{error}");
+    }
+
+    #[test]
+    fn installed_newer_with_empty_files_list_still_requires_mandatory_files() {
+        let tmp = TempDir::new().unwrap();
+        let paths = paths_in(&tmp);
+        write_slot(&paths.bundled_base, BUNDLED, SlotSource::Bundled, true);
+        write_slot(&paths.current(), NEWER, SlotSource::Downloaded, false);
+        fs::remove_file(paths.current().join("chrome-sandbox")).unwrap();
+
         let slot = resolve_effective(&paths).unwrap();
         assert_eq!(slot.source, EffectiveSource::Bundled);
         assert!(!paths.current().exists());

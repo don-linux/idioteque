@@ -334,10 +334,14 @@ mod tests {
         let cache_a = paths.home.join("health-cache-1");
         let cache_b = paths.home.join("health-cache-123");
         let other_dir = paths.home.join("not-a-cache");
+        let cache_lookalike = paths.home.join("health-cache");
+        let cache_suffix = paths.home.join("health-caches");
         let other_file = paths.home.join("health-cache-note.txt");
         fs::create_dir_all(&cache_a).unwrap();
         fs::create_dir_all(&cache_b).unwrap();
         fs::create_dir_all(&other_dir).unwrap();
+        fs::create_dir_all(&cache_lookalike).unwrap();
+        fs::create_dir_all(&cache_suffix).unwrap();
         fs::write(cache_a.join("x"), b"1").unwrap();
         fs::write(&other_file, b"keep").unwrap();
         fs::write(paths.home.join("state.json"), b"{}").unwrap();
@@ -347,6 +351,8 @@ mod tests {
         assert!(!cache_a.exists());
         assert!(!cache_b.exists());
         assert!(other_dir.is_dir());
+        assert!(cache_lookalike.is_dir());
+        assert!(cache_suffix.is_dir());
         assert!(other_file.is_file());
         assert!(paths.profile().is_dir());
         assert!(paths.state_file().is_file());
