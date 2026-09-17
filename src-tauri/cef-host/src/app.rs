@@ -212,7 +212,7 @@ fn render_term_from_status(status: TerminationStatus) -> RenderTerm {
     } else if status == TerminationStatus::LAUNCH_FAILED {
         RenderTerm::LaunchFailed
     } else {
-        RenderTerm::Other(status.get_raw())
+        RenderTerm::Other(status.get_raw() as i32)
     }
 }
 
