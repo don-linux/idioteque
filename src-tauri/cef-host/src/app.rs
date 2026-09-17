@@ -33,6 +33,202 @@ const FLAG_SHIFT: u32 = cef_event_flags_t::EVENTFLAG_SHIFT_DOWN.0;
 const FLAG_CTRL: u32 = cef_event_flags_t::EVENTFLAG_CONTROL_DOWN.0;
 const FLAG_ALT: u32 = cef_event_flags_t::EVENTFLAG_ALT_DOWN.0;
 
+/// Chromium `net::ERR_ABORTED`. Contract §4.3: do not emit `load-error` for it.
+const ERR_ABORTED: i32 = -3;
+
+/// Embed stays Ozone X11 (XWayland). Health is windowless and must not open
+/// an X11 Ozone window. Native Wayland is not the embed path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OzoneMode {
+    platform: &'static str,
+    disable_gpu: bool,
+    use_gl: Option<&'static str>,
+    use_angle: Option<&'static str>,
+}
+
+fn ozone_mode(health_check: bool) -> OzoneMode {
+    if health_check {
+        OzoneMode {
+            platform: "headless",
+            disable_gpu: true,
+            use_gl: Some("angle"),
+            use_angle: Some("swiftshader"),
+        }
+    } else {
+        OzoneMode {
+            platform: "x11",
+            disable_gpu: false,
+            use_gl: None,
+            use_angle: None,
+        }
+    }
+}
+
+fn ozone_platform(health_check: bool) -> &'static str {
+    ozone_mode(health_check).platform
+}
+
+/// `IDIOTEQUE_CEF_ARGS` cannot flip embed to Wayland or health to ozone-x11.
+/// Windowless health + `--ozone-platform=x11` is the combo that fails this
+/// CEF; native Wayland embed is not supported.
+fn effective_ozone_platform(health_check: bool, extra_switches: &[String]) -> &'static str {
+    let _ = extra_switches;
+    ozone_platform(health_check)
+}
+
+fn required_alloy_native_switches() -> &'static [&'static str] {
+    &["use-alloy-style", "use-native"]
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PopupDisposition {
+    /// CEF: non-zero cancels the new window.
+    cancel: bool,
+    load_in_main: Option<String>,
+}
+
+fn popup_disposition(target_url: Option<&str>) -> PopupDisposition {
+    PopupDisposition {
+        cancel: true,
+        load_in_main: target_url.map(str::to_string),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ClosePlan {
+    close_browser: bool,
+    quit_loop: bool,
+}
+
+/// First `close`: `close_browser` if we have one, then always quit.
+/// Already closing: quit again. Ozone X11 children often never fire
+/// `on_before_close` (software presenter errors), so waiting on that
+/// callback alone would hang the host.
+fn close_plan(already_closing: bool, has_browser: bool) -> ClosePlan {
+    ClosePlan {
+        close_browser: !already_closing && has_browser,
+        quit_loop: true,
+    }
+}
+
+fn should_quit_on_before_close(browser_id: i32, main_id: i32) -> bool {
+    main_id == 0 || browser_id == main_id
+}
+
+/// Health success: emit `health` and quit the loop. Do not `close_browser`
+/// — windowless/headless teardown via that path SIGTRAPs on this CEF.
+fn health_success_teardown() -> ClosePlan {
+    ClosePlan {
+        close_browser: false,
+        quit_loop: true,
+    }
+}
+
+fn take_main_browser(is_popup: bool, ready_already_sent: bool) -> bool {
+    !is_popup && !ready_already_sent
+}
+
+fn emit_ready_event(health_check: bool) -> bool {
+    !health_check
+}
+
+fn is_main_browser(main_id: i32, browser_id: i32) -> bool {
+    main_id == 0 || browser_id == main_id
+}
+
+fn emit_chrome_ui_event(health_check: bool, is_main: bool) -> bool {
+    !health_check && is_main
+}
+
+fn emit_load_error(
+    health_check: bool,
+    is_main: bool,
+    is_main_frame: bool,
+    error_code: i32,
+) -> bool {
+    !health_check && is_main && is_main_frame && error_code != ERR_ABORTED
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreKeyAction {
+    Ignore,
+    Shortcut(&'static str),
+    ToggleDevtools,
+    Reload { ignore_cache: bool },
+    Back,
+    Forward,
+    Stop,
+}
+
+fn pre_key_action(raw_keydown: bool, key: i32, ctrl: bool, shift: bool, alt: bool) -> PreKeyAction {
+    if !raw_keydown {
+        return PreKeyAction::Ignore;
+    }
+    if ctrl && !alt && key == VK_B {
+        return PreKeyAction::Shortcut(if shift { "ctrl+shift+b" } else { "ctrl+b" });
+    }
+    if ctrl && !alt && !shift && key == VK_L {
+        return PreKeyAction::Shortcut("ctrl+l");
+    }
+    if key == VK_F12 || (ctrl && shift && !alt && key == VK_I) {
+        return PreKeyAction::ToggleDevtools;
+    }
+    if key == VK_F5 || (ctrl && !alt && key == VK_R) {
+        return PreKeyAction::Reload {
+            ignore_cache: ctrl && shift && key == VK_R,
+        };
+    }
+    if alt && !ctrl && key == VK_LEFT {
+        return PreKeyAction::Back;
+    }
+    if alt && !ctrl && key == VK_RIGHT {
+        return PreKeyAction::Forward;
+    }
+    if key == VK_ESCAPE {
+        return PreKeyAction::Stop;
+    }
+    PreKeyAction::Ignore
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RenderTerm {
+    Crashed,
+    Killed,
+    Abnormal,
+    Oom,
+    LaunchFailed,
+    Other(i32),
+}
+
+fn render_term_from_status(status: TerminationStatus) -> RenderTerm {
+    if status == TerminationStatus::PROCESS_CRASHED {
+        RenderTerm::Crashed
+    } else if status == TerminationStatus::PROCESS_WAS_KILLED {
+        RenderTerm::Killed
+    } else if status == TerminationStatus::ABNORMAL_TERMINATION {
+        RenderTerm::Abnormal
+    } else if status == TerminationStatus::PROCESS_OOM {
+        RenderTerm::Oom
+    } else if status == TerminationStatus::LAUNCH_FAILED {
+        RenderTerm::LaunchFailed
+    } else {
+        RenderTerm::Other(status.get_raw())
+    }
+}
+
+fn render_crash_status(kind: RenderTerm, error_string: Option<&str>) -> String {
+    match kind {
+        RenderTerm::Crashed => "crashed".to_string(),
+        RenderTerm::Killed => "killed".to_string(),
+        RenderTerm::Abnormal => "abnormal".to_string(),
+        RenderTerm::Oom => "oom".to_string(),
+        RenderTerm::LaunchFailed => "launch-failed".to_string(),
+        RenderTerm::Other(raw) => error_string
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("{raw}")),
+    }
+}
+
 static STATE: OnceLock<Arc<AppState>> = OnceLock::new();
 
 pub struct AppState {
@@ -91,12 +287,11 @@ impl AppState {
 
     /// Solo el browser principal alimenta la barra: DevTools y otros popups no.
     fn is_main(&self, browser: &Browser) -> bool {
-        let main = self.main_id.load(Ordering::SeqCst);
-        main == 0 || browser.identifier() == main
+        is_main_browser(self.main_id.load(Ordering::SeqCst), browser.identifier())
     }
 
     fn emit_nav(&self, browser: &Browser, url: Option<String>) {
-        if self.args.health_check || !self.is_main(browser) {
+        if !emit_chrome_ui_event(self.args.health_check, self.is_main(browser)) {
             return;
         }
         let url = url.unwrap_or_else(|| frame_url(browser));
@@ -133,22 +328,23 @@ impl AppState {
     }
 
     fn request_close(&self) {
-        if self
+        let already_closing = self
             .closing
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
-            quit_message_loop();
-            return;
-        }
-        if let Some(browser) = self.lock_browser() {
-            if let Some(host) = browser.host() {
-                host.close_browser(1);
+            .is_err();
+        let plan = close_plan(already_closing, self.lock_browser().is_some());
+        if plan.close_browser {
+            if let Some(browser) = self.lock_browser() {
+                if let Some(host) = browser.host() {
+                    host.close_browser(1);
+                }
             }
         }
         // Do not wait only on on_before_close: Ozone X11 child windows
         // sometimes never deliver it (software presenter errors).
-        quit_message_loop();
+        if plan.quit_loop {
+            quit_message_loop();
+        }
     }
 }
 
@@ -288,8 +484,9 @@ fn add_switch_value(command_line: &mut CommandLine, name: &str, value: &str) {
 fn apply_switches(state: &AppState, command_line: &mut CommandLine) {
     // Native windows, not Chrome-runtime Views (Views needs a GPU compositor
     // that deadlocks on this Xvnc without DRI3 during CefInitialize).
-    add_switch(command_line, "use-alloy-style");
-    add_switch(command_line, "use-native");
+    for name in required_alloy_native_switches() {
+        add_switch(command_line, name);
+    }
     add_switch(command_line, "no-first-run");
     add_switch(command_line, "disable-background-networking");
     add_switch(command_line, "disable-component-update");
@@ -298,13 +495,16 @@ fn apply_switches(state: &AppState, command_line: &mut CommandLine) {
     add_switch(command_line, "disable-crash-reporter");
     add_switch(command_line, "disable-breakpad");
 
-    if state.args.health_check {
-        add_switch_value(command_line, "ozone-platform", "headless");
+    let ozone = ozone_mode(state.args.health_check);
+    add_switch_value(command_line, "ozone-platform", ozone.platform);
+    if ozone.disable_gpu {
         add_switch(command_line, "disable-gpu");
-        add_switch_value(command_line, "use-gl", "angle");
-        add_switch_value(command_line, "use-angle", "swiftshader");
-    } else {
-        add_switch_value(command_line, "ozone-platform", "x11");
+    }
+    if let Some(use_gl) = ozone.use_gl {
+        add_switch_value(command_line, "use-gl", use_gl);
+    }
+    if let Some(use_angle) = ozone.use_angle {
+        add_switch_value(command_line, "use-angle", use_angle);
     }
 
     if state.args.no_sandbox {
@@ -351,6 +551,15 @@ fn apply_switches(state: &AppState, command_line: &mut CommandLine) {
             command_line.append_switch(Some(&cef_str(s)));
         }
     }
+    // After extras: lock ozone so IDIOTEQUE_CEF_ARGS cannot move embed to
+    // Wayland or health to ozone-x11. Chromium's switch map keeps last write.
+    command_line.append_switch_with_value(
+        Some(&cef_str("ozone-platform")),
+        Some(&cef_str(effective_ozone_platform(
+            state.args.health_check,
+            &state.args.extra_switches,
+        ))),
+    );
 }
 
 fn window_info_for(state: &AppState) -> WindowInfo {
@@ -545,19 +754,25 @@ wrap_life_span_handler! {
             _extra_info: Option<&mut Option<DictionaryValue>>,
             _no_javascript_access: Option<&mut ::std::os::raw::c_int>,
         ) -> ::std::os::raw::c_int {
-            if let (Some(browser), Some(url)) = (browser, target_url) {
+            let url = target_url.map(|u| u.to_string());
+            let disposition = popup_disposition(url.as_deref());
+            if let (Some(browser), Some(url)) = (browser, disposition.load_in_main.as_deref()) {
                 if let Some(frame) = browser.main_frame() {
-                    frame.load_url(Some(url));
+                    frame.load_url(Some(&cef_str(url)));
                 }
             }
-            1
+            if disposition.cancel {
+                1
+            } else {
+                0
+            }
         }
 
         fn on_after_created(&self, browser: Option<&mut Browser>) {
             let Some(browser) = browser else {
                 return;
             };
-            if browser.is_popup() != 0 {
+            if !take_main_browser(browser.is_popup() != 0, false) {
                 return;
             }
             if self
@@ -573,7 +788,7 @@ wrap_life_span_handler! {
             if let Ok(mut slot) = self.state.browser.lock() {
                 *slot = Some(stored);
             }
-            if self.state.args.health_check {
+            if !emit_ready_event(self.state.args.health_check) {
                 return;
             }
             let xid = browser
@@ -606,7 +821,7 @@ wrap_life_span_handler! {
                 return;
             };
             let main = self.state.main_id.load(Ordering::SeqCst);
-            if browser.identifier() == main || main == 0 {
+            if should_quit_on_before_close(browser.identifier(), main) {
                 if let Ok(mut slot) = self.state.browser.lock() {
                     *slot = None;
                 }
@@ -674,7 +889,17 @@ wrap_load_handler! {
                     // Windowless/headless teardown via close_browser often SIGTRAPs
                     // on this CEF/X11 combo. Quitting the loop is enough; main
                     // then shuts down and exits 0.
-                    quit_message_loop();
+                    let plan = health_success_teardown();
+                    if plan.close_browser {
+                        if let Some(browser) = browser {
+                            if let Some(host) = browser.host() {
+                                host.close_browser(1);
+                            }
+                        }
+                    }
+                    if plan.quit_loop {
+                        quit_message_loop();
+                    }
                 }
                 return;
             }
@@ -692,20 +917,17 @@ wrap_load_handler! {
             error_text: Option<&CefString>,
             failed_url: Option<&CefString>,
         ) {
-            if self.state.args.health_check {
-                return;
-            }
-            if let Some(browser) = browser {
-                if !self.state.is_main(browser) {
-                    return;
-                }
-            }
-            if let Some(frame) = frame {
-                if frame.is_main() == 0 {
-                    return;
-                }
-            }
-            if error_code == Errorcode::ABORTED {
+            let is_main = browser
+                .as_ref()
+                .map(|b| self.state.is_main(b))
+                .unwrap_or(true);
+            let is_main_frame = frame.as_ref().map(|f| f.is_main() != 0).unwrap_or(true);
+            if !emit_load_error(
+                self.state.args.health_check,
+                is_main,
+                is_main_frame,
+                error_code.get_raw(),
+            ) {
                 return;
             }
             protocol::emit(&HostEvent::LoadError {
@@ -737,13 +959,12 @@ wrap_display_handler! {
         }
 
         fn on_title_change(&self, browser: Option<&mut Browser>, title: Option<&CefString>) {
-            if self.state.args.health_check {
+            let is_main = browser
+                .as_ref()
+                .map(|b| self.state.is_main(b))
+                .unwrap_or(true);
+            if !emit_chrome_ui_event(self.state.args.health_check, is_main) {
                 return;
-            }
-            if let Some(browser) = browser {
-                if !self.state.is_main(browser) {
-                    return;
-                }
             }
             protocol::emit(&HostEvent::Title {
                 title: title.map(|t| t.to_string()).unwrap_or_default(),
@@ -768,61 +989,55 @@ wrap_keyboard_handler! {
             let Some(event) = event else {
                 return 0;
             };
-            if event.type_ != KeyEventType::RAWKEYDOWN {
-                return 0;
-            }
             let mods = event.modifiers;
-            let ctrl = mods & FLAG_CTRL != 0;
-            let shift = mods & FLAG_SHIFT != 0;
-            let alt = mods & FLAG_ALT != 0;
-            let key = event.windows_key_code;
-
-            if ctrl && !alt && key == VK_B {
-                let chord = if shift { "ctrl+shift+b" } else { "ctrl+b" };
-                protocol::emit(&HostEvent::Shortcut {
-                    chord: chord.to_string(),
-                });
-                return 1;
-            }
-            if ctrl && !alt && !shift && key == VK_L {
-                protocol::emit(&HostEvent::Shortcut {
-                    chord: "ctrl+l".to_string(),
-                });
-                return 1;
-            }
-            if key == VK_F12 || (ctrl && shift && !alt && key == VK_I) {
-                self.state.toggle_devtools(None);
-                return 1;
-            }
-            if key == VK_F5 || (ctrl && !alt && key == VK_R) {
-                if let Some(browser) = browser {
-                    if ctrl && shift && key == VK_R {
-                        browser.reload_ignore_cache();
-                    } else {
-                        browser.reload();
+            let action = pre_key_action(
+                event.type_ == KeyEventType::RAWKEYDOWN,
+                event.windows_key_code,
+                mods & FLAG_CTRL != 0,
+                mods & FLAG_SHIFT != 0,
+                mods & FLAG_ALT != 0,
+            );
+            match action {
+                PreKeyAction::Ignore => 0,
+                PreKeyAction::Shortcut(chord) => {
+                    protocol::emit(&HostEvent::Shortcut {
+                        chord: chord.to_string(),
+                    });
+                    1
+                }
+                PreKeyAction::ToggleDevtools => {
+                    self.state.toggle_devtools(None);
+                    1
+                }
+                PreKeyAction::Reload { ignore_cache } => {
+                    if let Some(browser) = browser {
+                        if ignore_cache {
+                            browser.reload_ignore_cache();
+                        } else {
+                            browser.reload();
+                        }
                     }
+                    1
                 }
-                return 1;
-            }
-            if alt && !ctrl && key == VK_LEFT {
-                if let Some(browser) = browser {
-                    browser.go_back();
+                PreKeyAction::Back => {
+                    if let Some(browser) = browser {
+                        browser.go_back();
+                    }
+                    1
                 }
-                return 1;
-            }
-            if alt && !ctrl && key == VK_RIGHT {
-                if let Some(browser) = browser {
-                    browser.go_forward();
+                PreKeyAction::Forward => {
+                    if let Some(browser) = browser {
+                        browser.go_forward();
+                    }
+                    1
                 }
-                return 1;
-            }
-            if key == VK_ESCAPE {
-                if let Some(browser) = browser {
-                    browser.stop_load();
+                PreKeyAction::Stop => {
+                    if let Some(browser) = browser {
+                        browser.stop_load();
+                    }
+                    1
                 }
-                return 1;
             }
-            0
         }
     }
 }
@@ -890,22 +1105,292 @@ wrap_request_handler! {
             _error_code: ::std::os::raw::c_int,
             error_string: Option<&CefString>,
         ) {
-            let status = if status == TerminationStatus::PROCESS_CRASHED {
-                "crashed".to_string()
-            } else if status == TerminationStatus::PROCESS_WAS_KILLED {
-                "killed".to_string()
-            } else if status == TerminationStatus::ABNORMAL_TERMINATION {
-                "abnormal".to_string()
-            } else if status == TerminationStatus::PROCESS_OOM {
-                "oom".to_string()
-            } else if status == TerminationStatus::LAUNCH_FAILED {
-                "launch-failed".to_string()
-            } else if let Some(s) = error_string {
-                s.to_string()
-            } else {
-                format!("{}", status.get_raw())
-            };
-            protocol::emit(&HostEvent::RenderCrashed { status });
+            let kind = render_term_from_status(status);
+            let error = error_string.map(|s| s.to_string());
+            protocol::emit(&HostEvent::RenderCrashed {
+                status: render_crash_status(kind, error.as_deref()),
+            });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ozone_embed_is_x11_not_wayland_or_headless() {
+        let mode = ozone_mode(false);
+        assert_eq!(mode.platform, "x11");
+        assert_ne!(mode.platform, "wayland");
+        assert_ne!(mode.platform, "headless");
+        assert_eq!(ozone_platform(false), "x11");
+        assert!(!mode.disable_gpu);
+        assert_eq!(mode.use_gl, None);
+        assert_eq!(mode.use_angle, None);
+    }
+
+    #[test]
+    fn ozone_health_is_headless_not_x11() {
+        let mode = ozone_mode(true);
+        assert_eq!(mode.platform, "headless");
+        assert_ne!(mode.platform, "x11");
+        assert_ne!(mode.platform, "wayland");
+        assert_eq!(ozone_platform(true), "headless");
+        assert!(mode.disable_gpu);
+        assert_eq!(mode.use_gl, Some("angle"));
+        assert_eq!(mode.use_angle, Some("swiftshader"));
+    }
+
+    #[test]
+    fn ozone_modes_are_mutually_exclusive() {
+        assert_ne!(ozone_platform(false), ozone_platform(true));
+        assert_ne!(ozone_mode(false), ozone_mode(true));
+    }
+
+    #[test]
+    fn ozone_does_not_depend_on_shm_policy() {
+        // shm/--disable-dev-shm-usage is another slice. ozone_mode takes
+        // only health_check — both modes stay valid with the shm switch on or off.
+        assert_eq!(ozone_mode(false).platform, ozone_platform(false));
+        assert_eq!(ozone_mode(true).platform, ozone_platform(true));
+        assert_ne!(ozone_platform(false), ozone_platform(true));
+    }
+
+    fn consumes_key(action: PreKeyAction) -> bool {
+        !matches!(action, PreKeyAction::Ignore)
+    }
+
+    #[test]
+    fn extras_cannot_override_ozone_to_wayland_or_swap_mode() {
+        let wayland = ["--ozone-platform=wayland".to_string()];
+        let x11 = ["--ozone-platform=x11".to_string()];
+        let headless = ["ozone-platform=headless".to_string()];
+        assert_eq!(effective_ozone_platform(false, &wayland), "x11");
+        assert_eq!(effective_ozone_platform(true, &wayland), "headless");
+        assert_eq!(effective_ozone_platform(true, &x11), "headless");
+        assert_eq!(effective_ozone_platform(false, &headless), "x11");
+    }
+
+    #[test]
+    fn alloy_native_required_for_embed_and_health() {
+        let switches = required_alloy_native_switches();
+        assert!(switches.contains(&"use-alloy-style"));
+        assert!(switches.contains(&"use-native"));
+        assert!(!switches.contains(&"ozone-platform"));
+    }
+
+    #[test]
+    fn popup_always_cancels_and_loads_main() {
+        let with_url = popup_disposition(Some("https://example.test/a"));
+        assert!(with_url.cancel);
+        assert_eq!(
+            with_url.load_in_main.as_deref(),
+            Some("https://example.test/a")
+        );
+
+        let empty = popup_disposition(Some(""));
+        assert!(empty.cancel);
+        assert_eq!(empty.load_in_main.as_deref(), Some(""));
+
+        let none = popup_disposition(None);
+        assert!(none.cancel);
+        assert_eq!(none.load_in_main, None);
+
+        let js = popup_disposition(Some("javascript:alert(1)"));
+        assert!(js.cancel);
+        assert_eq!(js.load_in_main.as_deref(), Some("javascript:alert(1)"));
+    }
+
+    #[test]
+    fn close_always_quits_when_on_before_close_is_missing() {
+        let first = close_plan(false, true);
+        assert!(first.close_browser);
+        assert!(
+            first.quit_loop,
+            "Ozone X11 child may never fire on_before_close"
+        );
+
+        let no_browser = close_plan(false, false);
+        assert!(!no_browser.close_browser);
+        assert!(no_browser.quit_loop);
+
+        let again = close_plan(true, true);
+        assert!(
+            !again.close_browser,
+            "already closing must not close_browser again"
+        );
+        assert!(again.quit_loop);
+    }
+
+    #[test]
+    fn before_close_quits_only_for_main_browser() {
+        assert!(should_quit_on_before_close(7, 7));
+        assert!(should_quit_on_before_close(3, 0));
+        assert!(
+            !should_quit_on_before_close(99, 7),
+            "DevTools/popup close must not quit the host"
+        );
+    }
+
+    #[test]
+    fn health_success_quits_without_close_browser() {
+        let plan = health_success_teardown();
+        assert!(!plan.close_browser);
+        assert!(plan.quit_loop);
+        assert!(!emit_ready_event(true));
+        assert!(emit_ready_event(false));
+        assert!(take_main_browser(false, false));
+        assert!(!take_main_browser(true, false));
+        assert!(!take_main_browser(false, true));
+    }
+
+    #[test]
+    fn shortcut_contract_chords_are_consumed() {
+        for (shift, chord) in [(false, "ctrl+b"), (true, "ctrl+shift+b")] {
+            let action = pre_key_action(true, VK_B, true, shift, false);
+            assert_eq!(action, PreKeyAction::Shortcut(chord));
+            assert!(consumes_key(action));
+        }
+        let ctrl_l = pre_key_action(true, VK_L, true, false, false);
+        assert_eq!(ctrl_l, PreKeyAction::Shortcut("ctrl+l"));
+        assert!(consumes_key(ctrl_l));
+    }
+
+    #[test]
+    fn shortcut_modifiers_do_not_false_positive() {
+        assert_eq!(
+            pre_key_action(true, VK_B, true, false, true),
+            PreKeyAction::Ignore,
+            "ctrl+alt+b is not a host shortcut"
+        );
+        assert_eq!(
+            pre_key_action(true, VK_L, true, true, false),
+            PreKeyAction::Ignore,
+            "ctrl+shift+l is not ctrl+l"
+        );
+        assert_eq!(
+            pre_key_action(true, VK_L, false, false, false),
+            PreKeyAction::Ignore
+        );
+        assert_eq!(
+            pre_key_action(true, VK_B, false, false, false),
+            PreKeyAction::Ignore
+        );
+        assert_eq!(
+            pre_key_action(false, VK_B, true, false, false),
+            PreKeyAction::Ignore,
+            "only RAWKEYDOWN"
+        );
+        assert_eq!(
+            pre_key_action(true, VK_I, false, false, false),
+            PreKeyAction::Ignore
+        );
+    }
+
+    #[test]
+    fn reload_back_forward_stop_devtools_keys() {
+        assert_eq!(
+            pre_key_action(true, VK_F12, false, false, false),
+            PreKeyAction::ToggleDevtools
+        );
+        assert_eq!(
+            pre_key_action(true, VK_F12, true, true, true),
+            PreKeyAction::ToggleDevtools,
+            "F12 toggles even with modifiers"
+        );
+        assert_eq!(
+            pre_key_action(true, VK_I, true, true, false),
+            PreKeyAction::ToggleDevtools
+        );
+        assert_eq!(
+            pre_key_action(true, VK_F5, false, false, false),
+            PreKeyAction::Reload {
+                ignore_cache: false
+            }
+        );
+        assert_eq!(
+            pre_key_action(true, VK_F5, true, true, false),
+            PreKeyAction::Reload {
+                ignore_cache: false
+            },
+            "ctrl+shift+F5 is still a normal reload"
+        );
+        assert_eq!(
+            pre_key_action(true, VK_R, true, false, false),
+            PreKeyAction::Reload {
+                ignore_cache: false
+            }
+        );
+        assert_eq!(
+            pre_key_action(true, VK_R, true, true, false),
+            PreKeyAction::Reload { ignore_cache: true }
+        );
+        assert_eq!(
+            pre_key_action(true, VK_LEFT, false, false, true),
+            PreKeyAction::Back
+        );
+        assert_eq!(
+            pre_key_action(true, VK_RIGHT, false, false, true),
+            PreKeyAction::Forward
+        );
+        assert_eq!(
+            pre_key_action(true, VK_LEFT, true, false, true),
+            PreKeyAction::Ignore,
+            "ctrl+alt+left is not back"
+        );
+        assert_eq!(
+            pre_key_action(true, VK_ESCAPE, false, false, false),
+            PreKeyAction::Stop
+        );
+        assert_eq!(
+            pre_key_action(true, VK_ESCAPE, true, true, true),
+            PreKeyAction::Stop,
+            "Escape always stops"
+        );
+        assert!(consumes_key(pre_key_action(
+            true, VK_F5, false, false, false
+        )));
+        assert!(!consumes_key(pre_key_action(
+            true, VK_L, false, false, false
+        )));
+    }
+
+    #[test]
+    fn render_crash_status_uses_contract_labels() {
+        assert_eq!(render_crash_status(RenderTerm::Crashed, None), "crashed");
+        assert_eq!(render_crash_status(RenderTerm::Killed, Some("x")), "killed");
+        assert_eq!(render_crash_status(RenderTerm::Abnormal, None), "abnormal");
+        assert_eq!(render_crash_status(RenderTerm::Oom, None), "oom");
+        assert_eq!(
+            render_crash_status(RenderTerm::LaunchFailed, None),
+            "launch-failed"
+        );
+        assert_eq!(
+            render_crash_status(RenderTerm::Other(42), Some("gpu-reset")),
+            "gpu-reset"
+        );
+        assert_eq!(render_crash_status(RenderTerm::Other(7), None), "7");
+        assert_eq!(
+            render_crash_status(RenderTerm::Other(7), Some("")),
+            "",
+            "empty error_string is still used when present"
+        );
+    }
+
+    #[test]
+    fn chrome_events_skip_health_and_non_main() {
+        assert!(is_main_browser(0, 99));
+        assert!(is_main_browser(4, 4));
+        assert!(!is_main_browser(4, 5));
+        assert!(!emit_chrome_ui_event(true, true));
+        assert!(!emit_chrome_ui_event(false, false));
+        assert!(emit_chrome_ui_event(false, true));
+        assert!(!emit_load_error(true, true, true, -105));
+        assert!(!emit_load_error(false, false, true, -105));
+        assert!(!emit_load_error(false, true, false, -105));
+        assert!(!emit_load_error(false, true, true, ERR_ABORTED));
+        assert_eq!(ERR_ABORTED, -3);
+        assert!(emit_load_error(false, true, true, -105));
     }
 }
