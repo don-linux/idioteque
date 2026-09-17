@@ -193,9 +193,18 @@ mod tests {
         );
     }
 
+    fn health_ok_line() -> &'static str {
+        r#"{"event":"health","ok":true,"cef":"152.0.6+g708dc14+chromium-152.0.7977.83","chromium":"152.0.7977.83","apiVersion":15200}"#
+    }
+
     #[test]
     fn denylist_reasons_match_contract() {
-        assert_eq!(HealthFailure::Exit(10).denylist_reason(), "health-exit-10");
+        for code in [2, 10, 11, 12, 13, 14, 15, 16] {
+            assert_eq!(
+                HealthFailure::Exit(code).denylist_reason(),
+                format!("health-exit-{code}")
+            );
+        }
         assert_eq!(HealthFailure::Timeout.denylist_reason(), "health-timeout");
         assert_eq!(HealthFailure::Crashed.denylist_reason(), "health-crashed");
         assert_eq!(
@@ -205,6 +214,41 @@ mod tests {
         assert_eq!(
             HealthFailure::Spawn("x".into()).denylist_reason(),
             "health-spawn"
+        );
+        assert_ne!(
+            HealthFailure::Exit(12).denylist_reason(),
+            "health-timeout",
+            "exit 12 del host (watchdog 30s) no es el timeout de 45s del ADE"
+        );
+        assert_ne!(
+            HealthFailure::Timeout.denylist_reason(),
+            "health-exit-12",
+            "timeout del ADE no se reescribe como health-exit-12"
+        );
+    }
+
+    #[test]
+    fn failure_from_exit_maps_signal_one_without_fatal_to_crashed() {
+        assert_eq!(failure_from_exit(1, false), HealthFailure::Crashed);
+        assert_eq!(
+            failure_from_exit(1, true),
+            HealthFailure::Exit(1),
+            "un fatal + exit 1 es health-exit-1, no crashed"
+        );
+        assert_eq!(failure_from_exit(12, false), HealthFailure::Exit(12));
+        assert_eq!(failure_from_exit(12, true), HealthFailure::Exit(12));
+        assert_eq!(failure_from_exit(15, false), HealthFailure::Exit(15));
+        assert_eq!(
+            failure_from_exit(1, false).denylist_reason(),
+            "health-crashed"
+        );
+        assert_eq!(
+            failure_from_exit(1, true).denylist_reason(),
+            "health-exit-1"
+        );
+        assert_eq!(
+            failure_from_exit(12, false).denylist_reason(),
+            "health-exit-12"
         );
     }
 
@@ -390,6 +434,227 @@ exit 10
             }
             other => panic!("expected Crashed, got {other:?}"),
         }
+        assert_cache_gone(&cache);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn contract_exit_codes_map_to_health_exit_reason() {
+        for code in [2, 10, 11, 12, 13, 14, 15, 16] {
+            let tmp = TempDir::new().unwrap();
+            let (slot, cache) = setup_dirs(&tmp);
+            let binary = write_script(
+                tmp.path(),
+                &format!("exit-{code}"),
+                &format!("#!/bin/sh\nexit {code}\n"),
+            );
+            let outcome = run_with(&binary, &slot, &cache, Duration::from_secs(3));
+            match &outcome {
+                HealthOutcome::Failed(failure @ HealthFailure::Exit(got)) if *got == code => {
+                    assert_eq!(failure.denylist_reason(), format!("health-exit-{code}"));
+                }
+                other => panic!("expected Exit({code}), got {other:?}"),
+            }
+            assert_cache_gone(&cache);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fatal_then_exit_one_is_health_exit_one() {
+        let tmp = TempDir::new().unwrap();
+        let (slot, cache) = setup_dirs(&tmp);
+        let binary = write_script(
+            tmp.path(),
+            "fatal-one",
+            r#"#!/bin/sh
+printf '%s\n' '{"event":"fatal","message":"boom","code":1}'
+exit 1
+"#,
+        );
+        let outcome = run_with(&binary, &slot, &cache, Duration::from_secs(3));
+        match &outcome {
+            HealthOutcome::Failed(failure @ HealthFailure::Exit(1)) => {
+                assert_eq!(failure.denylist_reason(), "health-exit-1");
+            }
+            other => panic!("expected Exit(1), got {other:?}"),
+        }
+        assert_cache_gone(&cache);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn host_watchdog_exit_12_is_not_ade_timeout() {
+        let tmp = TempDir::new().unwrap();
+        let (slot, cache) = setup_dirs(&tmp);
+        let binary = write_script(tmp.path(), "watchdog", "#!/bin/sh\nexit 12\n");
+        let outcome = run_with(&binary, &slot, &cache, Duration::from_secs(3));
+        match &outcome {
+            HealthOutcome::Failed(failure @ HealthFailure::Exit(12)) => {
+                assert_eq!(failure.denylist_reason(), "health-exit-12");
+                assert_ne!(failure.denylist_reason(), "health-timeout");
+            }
+            other => panic!("expected Exit(12), got {other:?}"),
+        }
+        assert_cache_gone(&cache);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn handshake_then_hang_is_timeout_not_passed() {
+        let tmp = TempDir::new().unwrap();
+        let (slot, cache) = setup_dirs(&tmp);
+        let pidfile = tmp.path().join("host.pid");
+        let binary = write_script(
+            tmp.path(),
+            "handshake-hang",
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' '{}'\necho $$ > '{}'\nexec sleep 30\n",
+                health_ok_line(),
+                pidfile.display()
+            ),
+        );
+        let started = Instant::now();
+        let outcome = run_with(&binary, &slot, &cache, Duration::from_secs(1));
+        assert!(
+            started.elapsed() < Duration::from_secs(8),
+            "tras el handshake el ADE debe aplicar su timeout"
+        );
+        match &outcome {
+            HealthOutcome::Failed(failure @ HealthFailure::Timeout) => {
+                assert_eq!(failure.denylist_reason(), "health-timeout");
+            }
+            other => panic!("expected Timeout after handshake, got {other:?}"),
+        }
+        assert_cache_gone(&cache);
+        let pid: u32 = fs::read_to_string(&pidfile)
+            .expect("pidfile")
+            .trim()
+            .parse()
+            .expect("pid");
+        assert!(
+            !Path::new(&format!("/proc/{pid}")).exists(),
+            "el host colgado tras health ok:true debía morir"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn interleaved_noise_then_health_ok_still_passes() {
+        let tmp = TempDir::new().unwrap();
+        let (slot, cache) = setup_dirs(&tmp);
+        let binary = write_script(
+            tmp.path(),
+            "noisy-host",
+            &format!(
+                r#"#!/bin/sh
+printf '%s\n' '{{"event":"ready","cef":"x","chromium":"y","apiVersion":15200,"xid":1}}'
+printf '%s\n' 'not json'
+printf '%s\n' '{{"event":"title","title":"blank"}}'
+printf '%s\n' '{}'
+exit 0
+"#,
+                health_ok_line()
+            ),
+        );
+        let outcome = run_with(&binary, &slot, &cache, Duration::from_secs(3));
+        assert_eq!(
+            outcome,
+            HealthOutcome::Passed {
+                cef: "152.0.6+g708dc14+chromium-152.0.7977.83".into(),
+                chromium: "152.0.7977.83".into(),
+                api_version: 15200,
+            }
+        );
+        assert_cache_gone(&cache);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn last_health_ok_true_wins_when_versions_differ() {
+        let tmp = TempDir::new().unwrap();
+        let (slot, cache) = setup_dirs(&tmp);
+        let binary = write_script(
+            tmp.path(),
+            "two-health",
+            r#"#!/bin/sh
+printf '%s\n' '{"event":"health","ok":true,"cef":"first","chromium":"1.0","apiVersion":1}'
+printf '%s\n' '{"event":"health","ok":true,"cef":"second","chromium":"2.0","apiVersion":2}'
+exit 0
+"#,
+        );
+        let outcome = run_with(&binary, &slot, &cache, Duration::from_secs(3));
+        assert_eq!(
+            outcome,
+            HealthOutcome::Passed {
+                cef: "second".into(),
+                chromium: "2.0".into(),
+                api_version: 2,
+            }
+        );
+        assert_cache_gone(&cache);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ready_without_health_is_no_handshake() {
+        let tmp = TempDir::new().unwrap();
+        let (slot, cache) = setup_dirs(&tmp);
+        let binary = write_script(
+            tmp.path(),
+            "ready-only",
+            r#"#!/bin/sh
+printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200,"xid":1}'
+exit 0
+"#,
+        );
+        let outcome = run_with(&binary, &slot, &cache, Duration::from_secs(3));
+        match &outcome {
+            HealthOutcome::Failed(failure @ HealthFailure::NoHandshake) => {
+                assert_eq!(failure.denylist_reason(), "health-no-handshake");
+            }
+            other => panic!("expected NoHandshake, got {other:?}"),
+        }
+        assert_cache_gone(&cache);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn health_on_stderr_is_no_handshake() {
+        let tmp = TempDir::new().unwrap();
+        let (slot, cache) = setup_dirs(&tmp);
+        let binary = write_script(
+            tmp.path(),
+            "stderr-health",
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' '{}' >&2\nexit 0\n",
+                health_ok_line()
+            ),
+        );
+        let outcome = run_with(&binary, &slot, &cache, Duration::from_secs(3));
+        match &outcome {
+            HealthOutcome::Failed(failure @ HealthFailure::NoHandshake) => {
+                assert_eq!(failure.denylist_reason(), "health-no-handshake");
+            }
+            other => panic!("expected NoHandshake, got {other:?}"),
+        }
+        assert_cache_gone(&cache);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nested_cache_contents_are_removed_on_spawn_failure() {
+        let tmp = TempDir::new().unwrap();
+        let (slot, cache) = setup_dirs(&tmp);
+        let deep = cache.join("a").join("b");
+        fs::create_dir_all(&deep).unwrap();
+        fs::write(deep.join("blob"), vec![0u8; 4096]).unwrap();
+        let missing = tmp.path().join("no-such-host");
+        let outcome = run_with(&missing, &slot, &cache, Duration::from_secs(1));
+        assert!(matches!(
+            outcome,
+            HealthOutcome::Failed(HealthFailure::Spawn(_))
+        ));
         assert_cache_gone(&cache);
     }
 }
