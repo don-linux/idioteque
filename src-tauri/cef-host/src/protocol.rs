@@ -43,6 +43,11 @@ pub enum HostEvent {
     Shortcut {
         chord: String,
     },
+    Focus {
+        owner: FocusOwner,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        next: Option<bool>,
+    },
     RenderCrashed {
         status: String,
     },
@@ -87,8 +92,17 @@ pub enum HostCommand {
     Show,
     Hide,
     Focus,
+    Unfocus,
     Devtools,
     Close,
+}
+
+/// Who should own the keyboard after a `focus` event (CONTRACT: one owner).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FocusOwner {
+    App,
+    Browser,
 }
 
 /// Why the stdin pump stopped. All three map to orderly shutdown / exit 0
@@ -254,6 +268,55 @@ mod tests {
         emit(&HostEvent::Title {
             title: "no-writer".into(),
         });
+    }
+
+    #[test]
+    fn write_focus_event_is_one_contract_json_line() {
+        let mut buf = Vec::new();
+        write_event(
+            &mut buf,
+            &HostEvent::Focus {
+                owner: FocusOwner::Browser,
+                next: None,
+            },
+        )
+        .unwrap();
+        let text = String::from_utf8(buf).unwrap();
+        assert_eq!(text.bytes().filter(|&b| b == b'\n').count(), 1);
+        let value: serde_json::Value = serde_json::from_str(text.trim_end()).unwrap();
+        assert_eq!(value["event"], "focus");
+        assert_eq!(value["owner"], "browser");
+        assert!(value.get("next").is_none());
+
+        let mut buf = Vec::new();
+        write_event(
+            &mut buf,
+            &HostEvent::Focus {
+                owner: FocusOwner::App,
+                next: Some(false),
+            },
+        )
+        .unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(String::from_utf8(buf).unwrap().trim_end()).unwrap();
+        assert_eq!(value["event"], "focus");
+        assert_eq!(value["owner"], "app");
+        assert_eq!(value["next"], false);
+    }
+
+    #[test]
+    fn unfocus_command_is_snake_case_and_not_focus() {
+        let json = serde_json::to_string(&HostCommand::Unfocus).unwrap();
+        assert_eq!(json, r#"{"cmd":"unfocus"}"#);
+        assert_ne!(json, serde_json::to_string(&HostCommand::Focus).unwrap());
+        assert_eq!(
+            parse_command_line(r#"{"cmd":"unfocus"}"#),
+            Some(HostCommand::Unfocus)
+        );
+        assert_eq!(
+            parse_command_line(r#"{"cmd":"focus"}"#),
+            Some(HostCommand::Focus)
+        );
     }
 
     #[test]
@@ -542,6 +605,7 @@ mod tests {
             HostCommand::Show,
             HostCommand::Hide,
             HostCommand::Focus,
+            HostCommand::Unfocus,
             HostCommand::Devtools,
             HostCommand::Close,
         ];

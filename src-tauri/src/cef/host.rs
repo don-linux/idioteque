@@ -372,10 +372,27 @@ pub fn browser_set_visible(state: State<CefState>, visible: bool) -> Result<(), 
     with_host(&state, |host| host.send(&cmd))
 }
 
-/// El usuario pulsó en la UI Svelte (barra de URL, botones): el foco X11 vuelve al toplevel.
+/// After the toplevel owns X11, drop CEF's logical focus. Never moves X11 itself.
+fn reclaim_app_keyboard(
+    take_x11: impl FnOnce() -> Result<(), String>,
+    send: impl FnOnce(&HostCommand) -> Result<(), String>,
+) -> Result<(), String> {
+    take_x11()?;
+    match send(&HostCommand::Unfocus) {
+        Ok(()) => Ok(()),
+        // No host / broken pipe: chrome already has X11.
+        Err(_) => Ok(()),
+    }
+}
+
+/// El usuario pulsó en la UI Svelte (barra de URL, botones): el foco X11 vuelve
+/// al toplevel y CEF suelta el foco lógico (`unfocus`).
 #[tauri::command]
-pub fn browser_focus_app(window: tauri::Window) -> Result<(), String> {
-    on_gtk(move || hole::focus_toplevel(&window))?
+pub fn browser_focus_app(window: tauri::Window, state: State<CefState>) -> Result<(), String> {
+    reclaim_app_keyboard(
+        || on_gtk(move || hole::focus_toplevel(&window))?,
+        |cmd| with_host(&state, |host| host.send(cmd)),
+    )
 }
 
 #[tauri::command]
@@ -959,6 +976,29 @@ exit 0
 "#;
 
     /// Escribe `LD_LIBRARY_PATH` y si llegó `--idq-no-sandbox` en `--idq-cache-dir`.
+    /// Records each stdin command line into `--idq-cache-dir`/cmds.
+    #[cfg(unix)]
+    const RECORD_CMDS: &str = r#"#!/bin/sh
+cache=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--idq-cache-dir" ]; then
+    cache="$arg"
+  fi
+  prev="$arg"
+done
+mkdir -p "$cache"
+: > "$cache/cmds"
+printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200,"xid":1}'
+while IFS= read -r line || [ -n "$line" ]; do
+  printf '%s\n' "$line" >> "$cache/cmds"
+  case "$line" in
+    *'"cmd":"close"'*) exit 0 ;;
+  esac
+done
+exit 0
+"#;
+
     #[cfg(unix)]
     const DUMP_SPAWN_ENV: &str = r#"#!/bin/sh
 cache=""
@@ -1569,6 +1609,89 @@ exit 0
         assert!(host.is_alive(), "tirar el Channel no mata al host");
         host.kill_graceful(Duration::from_millis(250));
         assert!(!host.is_alive());
+    }
+
+    #[test]
+    fn reclaim_app_keyboard_sends_unfocus_once_after_x11() {
+        let mut x11 = 0;
+        let mut cmds = Vec::new();
+        reclaim_app_keyboard(
+            || {
+                x11 += 1;
+                Ok(())
+            },
+            |cmd| {
+                cmds.push(cmd.clone());
+                Ok(())
+            },
+        )
+        .expect("reclaim");
+        assert_eq!(x11, 1);
+        assert_eq!(cmds, vec![HostCommand::Unfocus]);
+    }
+
+    #[test]
+    fn reclaim_app_keyboard_skips_unfocus_if_x11_fails() {
+        let mut cmds = Vec::new();
+        let err = reclaim_app_keyboard(
+            || Err("no X11".into()),
+            |cmd| {
+                cmds.push(cmd.clone());
+                Ok(())
+            },
+        )
+        .expect_err("x11 must abort the command");
+        assert_eq!(err, "no X11");
+        assert!(cmds.is_empty(), "unfocus must not run before XSetInputFocus");
+    }
+
+    #[test]
+    fn reclaim_app_keyboard_swallows_missing_host() {
+        reclaim_app_keyboard(|| Ok(()), |_| Err("No hay un navegador en ejecución".into()))
+            .expect("chrome already has X11");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn browser_focus_app_with_fake_host_sends_unfocus_once() {
+        let tmp = TempDir::new().unwrap();
+        let cache = tmp.path().join("cache-unfocus");
+        let binary = write_script(tmp.path(), "record-cmds", RECORD_CMDS);
+        let mut host = spawn_host(&launch(binary, tmp.path().to_path_buf(), cache.clone()))
+            .expect("spawn");
+        let events = host.take_events();
+        let _ = events.recv_timeout(Duration::from_secs(3)).expect("ready");
+        let state = CefState::default();
+        state.set_host_for_test(host);
+
+        reclaim_app_keyboard(|| Ok(()), |cmd| with_host(&state, |h| h.send(cmd)))
+            .expect("unfocus");
+
+        // The child appends after the write+flush from HostProcess::send.
+        let cmds_path = cache.join("cmds");
+        let mut recorded = String::new();
+        for _ in 0..50 {
+            recorded = fs::read_to_string(&cmds_path).unwrap_or_default();
+            if recorded.contains("unfocus") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let lines: Vec<&str> = recorded
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect();
+        assert_eq!(
+            lines,
+            vec![r#"{"cmd":"unfocus"}"#],
+            "browser_focus_app must send unfocus exactly once: {recorded:?}"
+        );
+        assert_eq!(
+            lines.iter().filter(|line| **line == r#"{"cmd":"unfocus"}"#).count(),
+            1
+        );
+        take_and_kill(&state).expect("cleanup");
     }
 
     #[cfg(unix)]

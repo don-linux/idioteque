@@ -282,8 +282,15 @@ Cada mensaje es un objeto JSON con `event`:
   (no se emite para `ERR_ABORTED`).
 - `{"event":"shortcut","chord":"ctrl+b"}` — chords reenviados: `ctrl+b`,
   `ctrl+shift+b`, `ctrl+l`. El host los consume (no llegan a la página).
-- `nav`, `title`, `load-end` y `load-error` solo se emiten para el browser
-  principal: la ventana de DevTools y otros popups no alimentan la barra.
+- `{"event":"focus","owner":"browser"}` — `CefFocusHandler::OnGotFocus` del
+  browser principal. El ADE/Svelte hace blur del input de la barra para que
+  solo CEF reciba teclas.
+- `{"event":"focus","owner":"app","next":true}` — `OnTakeFocus`: Tab (o
+  Shift+Tab con `next:false`) salió de la página. El ADE enfoca la URL o el
+  último control de la barra y reclama X11.
+- `nav`, `title`, `load-end`, `load-error` y `focus` solo se emiten para el
+  browser principal: la ventana de DevTools y otros popups no alimentan la
+  barra.
 - `{"event":"render-crashed","status":"…"}`
 - `{"event":"health","ok":true,"cef":"…","chromium":"…","apiVersion":15200}`
   — solo en modo health check, justo antes de salir 0.
@@ -303,6 +310,8 @@ CEF con `post_task`.
 - `{"cmd":"show"}`, `{"cmd":"hide"}` — `XMapWindow`/`XUnmapWindow` +
   `was_hidden(false/true)`; tras `show`, `XRaiseWindow`.
 - `{"cmd":"focus"}` — `XSetInputFocus` + `set_focus(true)`.
+- `{"cmd":"unfocus"}` — `set_focus(false)` únicamente. **No** llama
+  `XSetInputFocus`: el ADE ya movió el foco X11 al toplevel.
 - `{"cmd":"devtools"}` — abre DevTools si no está, lo cierra si está.
 - `{"cmd":"close"}` — cierre ordenado: `close_browser(true)`, `quit_message_loop`,
   `shutdown`, exit 0.
@@ -339,6 +348,12 @@ DevTools en el punto del clic) y "Recargar".
 Popups (`on_before_popup`): se cancelan y la URL se carga en el frame
 principal (una sola pestaña). DevTools sí abre su ventana propia.
 
+Un solo dueño de teclado: o el chrome wry/Svelte o el hijo CEF, nunca los
+dos. `browser_focus_app` hace `XSetInputFocus(toplevel)` y después
+`unfocus`. Un clic en la página emite `focus owner=browser` y el frontend
+hace blur del campo URL. `{"cmd":"focus"}` entrega a CEF tanto X11 como
+`set_focus(true)`.
+
 ### 4.7 Códigos de salida
 
 - `0` ok (incluye cierre ordenado y health check correcto)
@@ -374,9 +389,10 @@ Todos devuelven `Result<_, String>` con mensajes en español, como `pty_*`.
 - `browser_set_visible { visible: bool }` → oculta/muestra el hueco GDK y manda
   `show`/`hide`.
 - `browser_focus_app` — devuelve el foco X11 al toplevel de idioteque
-  (`XSetInputFocus`). Mientras la ventana de CEF tiene el foco, el webview no
-  recibe teclas; el frontend lo llama al pulsar en la barra Svelte, al enfocar
-  la URL y tras un `shortcut` del host.
+  (`XSetInputFocus`) y, en el mismo comando, manda `unfocus` al host. Mientras
+  la ventana de CEF tiene el foco, el webview no recibe teclas; el frontend lo
+  llama una vez por `focusin` de la barra Svelte (si `focusOwner` no es ya
+  `app`) y tras un `shortcut` del host (Ctrl+L).
 - `browser_kill` — `close`, espera 2 s, `SIGKILL` si sigue.
 - `cef_runtime_info -> CefRuntimeInfo`:
   `{ current: SlotInfo, base: SlotInfo, candidate: SlotInfo | null, denylist: DenyEntry[], lastCheckAt: string | null, pendingPromotion: {...} | null, hostApiVersion: 15200, platform: "linux64", hostAlive: bool }`

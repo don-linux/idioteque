@@ -6,14 +6,14 @@ use std::sync::{Arc, Mutex, OnceLock};
 use cef::sys::cef_event_flags_t;
 use cef::{
     wrap_app, wrap_browser_process_handler, wrap_client, wrap_context_menu_handler,
-    wrap_display_handler, wrap_keyboard_handler, wrap_life_span_handler, wrap_load_handler,
-    wrap_request_handler, wrap_task, *,
+    wrap_display_handler, wrap_focus_handler, wrap_keyboard_handler, wrap_life_span_handler,
+    wrap_load_handler, wrap_request_handler, wrap_task, *,
 };
 
 use crate::args::HostArgs;
 use crate::exit::{self, fatal};
 use crate::platform;
-use crate::protocol::{self, HostCommand, HostEvent};
+use crate::protocol::{self, FocusOwner, HostCommand, HostEvent};
 use crate::slot::{self, Manifest};
 
 const MENU_INSPECT: i32 = 26500; // MENU_ID_USER_FIRST
@@ -138,6 +138,65 @@ fn is_main_browser(main_id: i32, browser_id: i32) -> bool {
 
 fn emit_chrome_ui_event(health_check: bool, is_main: bool) -> bool {
     !health_check && is_main
+}
+
+/// Keyboard handoff from `CefFocusHandler`. Main browser only, same filter as nav/title.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FocusHandoff {
+    Browser,
+    App { next: bool },
+}
+
+fn focus_handoff_event(
+    health_check: bool,
+    is_main: bool,
+    handoff: FocusHandoff,
+) -> Option<HostEvent> {
+    if !emit_chrome_ui_event(health_check, is_main) {
+        return None;
+    }
+    Some(match handoff {
+        FocusHandoff::Browser => HostEvent::Focus {
+            owner: FocusOwner::Browser,
+            next: None,
+        },
+        FocusHandoff::App { next } => HostEvent::Focus {
+            owner: FocusOwner::App,
+            next: Some(next),
+        },
+    })
+}
+
+/// `{"cmd":"focus"}` moves X11 onto the CEF child. `{"cmd":"unfocus"}` must not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BrowserFocusPlan {
+    x11: bool,
+    set_focus: i32,
+}
+
+fn give_browser_focus_plan() -> BrowserFocusPlan {
+    BrowserFocusPlan {
+        x11: true,
+        set_focus: 1,
+    }
+}
+
+fn drop_browser_focus_plan() -> BrowserFocusPlan {
+    BrowserFocusPlan {
+        x11: false,
+        set_focus: 0,
+    }
+}
+
+fn apply_browser_focus(state: &AppState, plan: BrowserFocusPlan) {
+    if plan.x11 {
+        platform::focus_window(state.xid());
+    }
+    if let Some(browser) = state.lock_browser() {
+        if let Some(host) = browser.host() {
+            host.set_focus(plan.set_focus);
+        }
+    }
 }
 
 fn emit_load_error(
@@ -288,6 +347,16 @@ impl AppState {
     /// Solo el browser principal alimenta la barra: DevTools y otros popups no.
     fn is_main(&self, browser: &Browser) -> bool {
         is_main_browser(self.main_id.load(Ordering::SeqCst), browser.identifier())
+    }
+
+    fn emit_focus(&self, browser: &Browser, handoff: FocusHandoff) {
+        if let Some(event) = focus_handoff_event(
+            self.args.health_check,
+            self.is_main(browser),
+            handoff,
+        ) {
+            protocol::emit(&event);
+        }
     }
 
     fn emit_nav(&self, browser: &Browser, url: Option<String>) {
@@ -452,14 +521,8 @@ pub fn dispatch(cmd: &HostCommand) {
                 }
             }
         }
-        HostCommand::Focus => {
-            platform::focus_window(state.xid());
-            if let Some(browser) = state.lock_browser() {
-                if let Some(host) = browser.host() {
-                    host.set_focus(1);
-                }
-            }
-        }
+        HostCommand::Focus => apply_browser_focus(state, give_browser_focus_plan()),
+        HostCommand::Unfocus => apply_browser_focus(state, drop_browser_focus_plan()),
         HostCommand::Devtools => state.toggle_devtools(None),
         HostCommand::Close => state.request_close(),
     }
@@ -611,7 +674,8 @@ fn make_client(state: Arc<AppState>) -> Client {
     } else {
         None
     };
-    HostClient::new(life, load, display, keyboard, menu, request, render)
+    let focus = HostFocus::new(state.clone());
+    HostClient::new(life, load, display, keyboard, menu, request, render, focus)
 }
 
 wrap_task! {
@@ -707,6 +771,7 @@ wrap_client! {
         menu: ContextMenuHandler,
         request: RequestHandler,
         render: Option<RenderHandler>,
+        focus: FocusHandler,
     }
 
     impl Client {
@@ -730,6 +795,9 @@ wrap_client! {
         }
         fn render_handler(&self) -> Option<RenderHandler> {
             self.render.clone()
+        }
+        fn focus_handler(&self) -> Option<FocusHandler> {
+            Some(self.focus.clone())
         }
     }
 }
@@ -971,6 +1039,29 @@ wrap_display_handler! {
             protocol::emit(&HostEvent::Title {
                 title: title.map(|t| t.to_string()).unwrap_or_default(),
             });
+        }
+    }
+}
+
+wrap_focus_handler! {
+    struct HostFocus {
+        state: Arc<AppState>,
+    }
+
+    impl FocusHandler {
+        fn on_got_focus(&self, browser: Option<&mut Browser>) {
+            let Some(browser) = browser else {
+                return;
+            };
+            self.state.emit_focus(browser, FocusHandoff::Browser);
+        }
+
+        fn on_take_focus(&self, browser: Option<&mut Browser>, next: ::std::os::raw::c_int) {
+            let Some(browser) = browser else {
+                return;
+            };
+            self.state
+                .emit_focus(browser, FocusHandoff::App { next: next != 0 });
         }
     }
 }
@@ -1394,5 +1485,66 @@ mod tests {
         assert!(!emit_load_error(false, true, true, ERR_ABORTED));
         assert_eq!(ERR_ABORTED, -3);
         assert!(emit_load_error(false, true, true, -105));
+    }
+
+    #[test]
+    fn focus_handler_emits_only_for_main_browser() {
+        assert_eq!(
+            focus_handoff_event(true, true, FocusHandoff::Browser),
+            None,
+            "health-check must not emit chrome focus"
+        );
+        assert_eq!(
+            focus_handoff_event(false, false, FocusHandoff::Browser),
+            None,
+            "DevTools / popup must not emit focus"
+        );
+        assert_eq!(
+            focus_handoff_event(false, false, FocusHandoff::App { next: true }),
+            None
+        );
+        assert_eq!(
+            focus_handoff_event(false, true, FocusHandoff::Browser),
+            Some(HostEvent::Focus {
+                owner: FocusOwner::Browser,
+                next: None,
+            })
+        );
+    }
+
+    #[test]
+    fn on_take_focus_next_true_and_false() {
+        assert_eq!(
+            focus_handoff_event(false, true, FocusHandoff::App { next: true }),
+            Some(HostEvent::Focus {
+                owner: FocusOwner::App,
+                next: Some(true),
+            })
+        );
+        assert_eq!(
+            focus_handoff_event(false, true, FocusHandoff::App { next: false }),
+            Some(HostEvent::Focus {
+                owner: FocusOwner::App,
+                next: Some(false),
+            })
+        );
+        assert_ne!(
+            focus_handoff_event(false, true, FocusHandoff::App { next: true }),
+            focus_handoff_event(false, true, FocusHandoff::App { next: false })
+        );
+    }
+
+    #[test]
+    fn unfocus_never_calls_xsetinputfocus() {
+        let drop = drop_browser_focus_plan();
+        assert!(
+            !drop.x11,
+            "Unfocus must not call XSetInputFocus; ADE already owns the toplevel"
+        );
+        assert_eq!(drop.set_focus, 0);
+        let give = give_browser_focus_plan();
+        assert!(give.x11, "Focus still moves X11 onto the CEF child");
+        assert_eq!(give.set_focus, 1);
+        assert_ne!(drop, give);
     }
 }

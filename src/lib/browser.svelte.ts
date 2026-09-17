@@ -31,6 +31,8 @@ export type BrowserCommand =
   | { cmd: "focus" }
   | { cmd: "devtools" };
 
+export type FocusOwner = "app" | "browser";
+
 export type BrowserEvent =
   | { event: "ready"; cef: string; chromium: string; apiVersion: number; xid: number }
   | { event: "nav"; url: string; canGoBack: boolean; canGoForward: boolean; loading: boolean }
@@ -38,10 +40,67 @@ export type BrowserEvent =
   | { event: "load-end"; status: number }
   | { event: "load-error"; code: number; text: string; url: string }
   | { event: "shortcut"; chord: string }
+  | { event: "focus"; owner: FocusOwner; next?: boolean }
   | { event: "render-crashed"; status: string }
   | { event: "health"; ok: boolean; cef: string; chromium: string; apiVersion: number }
   | { event: "fatal"; message: string; code: number }
   | { event: "exit"; code: number };
+
+/** Toolbar / app input that must not keep keys while CEF owns the keyboard. */
+export type KeyboardTarget = {
+  tagName?: string;
+  isContentEditable?: boolean;
+  closest?: (selector: string) => unknown;
+  blur?: () => void;
+  focus?: () => void;
+};
+
+export function isAppKeyboardTarget(el: KeyboardTarget | null | undefined): boolean {
+  if (!el) return false;
+  if (typeof el.closest === "function" && el.closest("[data-browser-toolbar]")) return true;
+  const tag = el.tagName?.toLowerCase();
+  if (tag === "input" || tag === "textarea" || tag === "select") return true;
+  return el.isContentEditable === true;
+}
+
+/** One `browser_focus_app` per chrome activation; skip if we already own keys. */
+export function shouldClaimAppFocus(owner: FocusOwner): boolean {
+  return owner !== "app";
+}
+
+/** Show-time rAF must not steal keys from the URL bar. */
+export function shouldGiftCefFocus(owner: FocusOwner): boolean {
+  return owner !== "app";
+}
+
+export function resolveChromeTarget(
+  toolbar: { querySelector?: (selector: string) => KeyboardTarget | null } | null | undefined,
+  next: boolean,
+): KeyboardTarget | null {
+  if (!toolbar?.querySelector) return null;
+  return toolbar.querySelector(next ? "[data-browser-url]" : "[data-browser-chrome-last]");
+}
+
+function pageDocument(): {
+  activeElement?: KeyboardTarget | null;
+  querySelector?: (
+    selector: string,
+  ) => { querySelector?: (selector: string) => KeyboardTarget | null } | null;
+} | null {
+  if (typeof document === "undefined") return null;
+  return document;
+}
+
+function blurActiveAppKeyboard(): void {
+  const active = pageDocument()?.activeElement ?? null;
+  if (!isAppKeyboardTarget(active)) return;
+  active.blur?.();
+}
+
+function focusToolbarChrome(next: boolean): void {
+  const toolbar = pageDocument()?.querySelector?.("[data-browser-toolbar]") ?? null;
+  resolveChromeTarget(toolbar, next)?.focus?.();
+}
 
 function messageFrom(error: unknown): string {
   if (typeof error === "string") return error;
@@ -83,6 +142,8 @@ class BrowserState {
   noSandbox = $state(false);
   focusUrlRequested = $state(0);
   pendingSpawn = $state(false);
+  /** Single keyboard owner: wry chrome (`app`) or the CEF child (`browser`). */
+  focusOwner = $state<FocusOwner>("browser");
 
   visible = $derived(
     surface.current === "browser" && !unsavedExit.open && !folderVisibility.open,
@@ -217,6 +278,7 @@ class BrowserState {
 
   /** Devuelve el foco X11 a la ventana de idioteque (la barra Svelte, el editor). */
   async focusApp(): Promise<void> {
+    this.focusOwner = "app";
     try {
       await invoke("browser_focus_app");
     } catch {
@@ -244,6 +306,7 @@ class BrowserState {
     this.canGoForward = false;
     this.boot = null;
     this.noSandbox = false;
+    this.focusOwner = "browser";
 
     if (options.restoreSurface && surface.current === "browser") {
       surface.set("editor");
@@ -297,6 +360,9 @@ class BrowserState {
       case "shortcut":
         this.#onShortcut(event.chord);
         return;
+      case "focus":
+        this.#onFocus(event);
+        return;
       case "render-crashed":
         this.loading = false;
         this.error = renderCrashedMessage(event.status);
@@ -331,6 +397,17 @@ class BrowserState {
       return true;
     }
     return this.#suppressRetryFatal;
+  }
+
+  #onFocus(event: Extract<BrowserEvent, { event: "focus" }>): void {
+    if (event.owner === "browser") {
+      this.focusOwner = "browser";
+      blurActiveAppKeyboard();
+      return;
+    }
+    this.focusOwner = "app";
+    void this.focusApp();
+    focusToolbarChrome(event.next !== false);
   }
 
   #onShortcut(chord: string): void {

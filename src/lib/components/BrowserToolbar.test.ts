@@ -52,7 +52,7 @@ class FakeInput {
 }
 
 function loadHandlers(js: string) {
-  const src = ["onToolbarPointerDown", "onUrlKeydown"]
+  const src = ["onToolbarFocusIn", "onUrlKeydown"]
     .map((name) => extractFunction(js, name))
     .join("\n");
 
@@ -61,9 +61,15 @@ function loadHandlers(js: string) {
       "browser",
       "displayUrl",
       "HTMLInputElement",
-      `${src}\nreturn { onToolbarPointerDown, onUrlKeydown };`,
-    )(browser, displayUrl, FakeInput) as {
-      onToolbarPointerDown: () => void;
+      "shouldClaimAppFocus",
+      `${src}\nreturn { onToolbarFocusIn, onUrlKeydown };`,
+    )(
+      browser,
+      displayUrl,
+      FakeInput,
+      (owner: string) => owner !== "app",
+    ) as {
+      onToolbarFocusIn: () => void;
       onUrlKeydown: (event: {
         key: string;
         currentTarget: unknown;
@@ -82,7 +88,10 @@ function fakeBrowser(overrides: Record<string, unknown> = {}) {
     url: "https://example.com/page/",
     inputUrl: "example.com/other",
     focusUrlRequested: 0,
-    focusApp: vi.fn().mockResolvedValue(undefined),
+    focusOwner: "browser",
+    focusApp: vi.fn().mockImplementation(async function (this: { focusOwner: string }) {
+      this.focusOwner = "app";
+    }),
     focus: vi.fn().mockResolvedValue(undefined),
     navigate: vi.fn().mockResolvedValue(undefined),
     back: vi.fn(),
@@ -109,25 +118,29 @@ describe("BrowserToolbar", () => {
     vi.restoreAllMocks();
   });
 
-  it("reclaims X11 via browser_focus_app on toolbar pointerdown capture", () => {
+  it("reclaims X11 via one browser_focus_app on toolbar focusin", () => {
     const js = compileToolbar();
 
     expect(js).toMatch(/class="toolbar/);
+    expect(js).toMatch(/data-browser-toolbar/);
+    expect(js).toMatch(/data-browser-url/);
+    expect(js).toMatch(/data-browser-chrome-last/);
     expect(js).toMatch(/var div = root_3\(\)/);
-    // Capture on the toolbar root (not the row): covers Reintentar and
-    // disabled chrome, and runs before a child can stopPropagation.
-    expect(js).toMatch(/\$\.event\('pointerdown',\s*div,\s*onToolbarPointerDown,\s*true\)/);
-    expect(js).not.toMatch(/\$\.event\('pointerdown',\s*div_1,/);
+    expect(js).toMatch(/\$\.event\('focusin',\s*div,\s*onToolbarFocusIn/);
+    expect(js).not.toMatch(/pointerdown/);
+    expect(js).not.toMatch(/\$\.event\('focus',\s*input_1/);
 
-    const pointer = extractFunction(js, "onToolbarPointerDown");
-    expect(pointer).toMatch(/browser\.focusApp\(\)/);
-    expect(pointer).not.toMatch(/browser\.focus\(/);
-    expect(pointer).not.toMatch(/alive/);
-    expect(pointer).not.toMatch(/invoke\(/);
+    const focusin = extractFunction(js, "onToolbarFocusIn");
+    expect(focusin).toMatch(/shouldClaimAppFocus\(browser\.focusOwner\)/);
+    expect(focusin).toMatch(/browser\.focusApp\(\)/);
+    expect(focusin).not.toMatch(/browser\.focus\(/);
+    expect(focusin).not.toMatch(/alive/);
+    expect(focusin).not.toMatch(/invoke\(/);
 
     const browser = fakeBrowser({ alive: false, error: "El navegador necesita X11" });
-    const { onToolbarPointerDown } = loadHandlers(js)(browser);
-    onToolbarPointerDown();
+    const { onToolbarFocusIn } = loadHandlers(js)(browser);
+    onToolbarFocusIn();
+    onToolbarFocusIn();
 
     expect(browser.focusApp).toHaveBeenCalledTimes(1);
     expect(browser.focus).not.toHaveBeenCalled();
@@ -140,21 +153,23 @@ describe("BrowserToolbar", () => {
     const handlers = loadHandlers(js);
 
     for (const state of [
-      { alive: true, error: null },
-      { alive: false, error: null },
-      { alive: false, error: "El sandbox de Chromium no está disponible" },
+      { alive: true, error: null, focusOwner: "browser" },
+      { alive: false, error: null, focusOwner: "browser" },
+      { alive: false, error: "El sandbox de Chromium no está disponible", focusOwner: "browser" },
     ]) {
       const browser = fakeBrowser(state);
-      handlers(browser).onToolbarPointerDown();
+      handlers(browser).onToolbarFocusIn();
       expect(browser.focusApp, JSON.stringify(state)).toHaveBeenCalledTimes(1);
       expect(browser.focus, JSON.stringify(state)).not.toHaveBeenCalled();
     }
   });
 
-  it("reclaims app focus when the URL field is focused, not CEF focus", () => {
+  it("does not send a second browser_focus_app when the app already owns the keyboard", () => {
     const js = compileToolbar();
-    expect(js).toMatch(/\$\.event\('focus',\s*input_1,\s*\(\) => void browser\.focusApp\(\)\)/);
-    expect(js).not.toMatch(/\$\.event\('focus',\s*input_1,\s*\(\) => void browser\.focus\(\)\)/);
+    const browser = fakeBrowser({ focusOwner: "app" });
+    loadHandlers(js)(browser).onToolbarFocusIn();
+    expect(browser.focusApp).not.toHaveBeenCalled();
+    expect(browser.focus).not.toHaveBeenCalled();
   });
 
   it("reclaims X11 before focusing the URL on Ctrl+L, even if the host is dead", () => {

@@ -458,6 +458,17 @@ describe("BrowserView.svelte wiring", () => {
   it("does not hardcode the workspace park offset (that CSS lives on +page)", () => {
     expect(SOURCE).not.toContain("-12000");
   });
+
+  it("skips the show-time rAF focus gift when the toolbar already owns the keyboard", () => {
+    expect(SOURCE).toContain("shouldGiftCefFocus(browser.focusOwner)");
+    expect(SOURCE).toContain("void browser.focus()");
+    const instance = SOURCE.split(/<script lang="ts">/)[1] ?? "";
+    expect(instance).toContain("shouldGiftCefFocus");
+    expect(instance.indexOf("shouldGiftCefFocus(browser.focusOwner)")).toBeGreaterThan(-1);
+    expect(instance.indexOf("shouldGiftCefFocus(browser.focusOwner)")).toBeLessThan(
+      instance.indexOf("void browser.focus()"),
+    );
+  });
 });
 
 type HostPolicy = {

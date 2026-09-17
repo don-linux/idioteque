@@ -209,7 +209,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { cssBoundsOf, physicalBounds } from "$lib/browser-bounds";
-  import { browser } from "$lib/browser.svelte";
+  import { browser, shouldGiftCefFocus } from "$lib/browser.svelte";
   import BrowserToolbar from "$lib/components/BrowserToolbar.svelte";
 
   function attachHost(node: HTMLElement): () => void {
@@ -295,6 +295,7 @@
       if (tick.setVisible) void browser.setVisible(browser.visible);
       if (!tick.focusAfterFrame) return;
       const id = requestAnimationFrame(() => {
+        if (!shouldGiftCefFocus(browser.focusOwner)) return;
         void browser.focus();
       });
       return () => cancelAnimationFrame(id);

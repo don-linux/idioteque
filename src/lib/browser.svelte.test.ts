@@ -26,7 +26,8 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: tauri.invoke,
 }));
 
-const { browser } = await import("./browser.svelte");
+const { browser, isAppKeyboardTarget, shouldClaimAppFocus, shouldGiftCefFocus } =
+  await import("./browser.svelte");
 
 const BOUNDS: BrowserBounds = { x: 8, y: 40, w: 1200, h: 700 };
 const INCOMPATIBLE = "El motor Chromium no es compatible con esta versión de idioteque";
@@ -447,6 +448,7 @@ describe("browser.svelte.ts state", () => {
       expect(browser.canGoForward).toBe(false);
       expect(browser.boot).toBeNull();
       expect(browser.noSandbox).toBe(false);
+      expect(browser.focusOwner).toBe("browser");
       expect(tauri.invoke).toHaveBeenCalledWith("browser_kill");
     });
 
@@ -498,6 +500,80 @@ describe("browser.svelte.ts state", () => {
         loading: false,
       });
       expect(browser.url).toBe("https://new.example/");
+    });
+  });
+
+  describe("keyboard focus owner", () => {
+    const originalDocument = (globalThis as { document?: unknown }).document;
+
+    afterEach(() => {
+      if (originalDocument === undefined) {
+        delete (globalThis as { document?: unknown }).document;
+      } else {
+        (globalThis as { document?: unknown }).document = originalDocument;
+      }
+    });
+
+    it("blurs the active app input when CEF reports focus owner=browser", async () => {
+      const gate = await spawnLive();
+      const blur = vi.fn();
+      const input = {
+        tagName: "INPUT",
+        blur,
+        closest: () => ({}),
+      };
+      (globalThis as { document?: unknown }).document = {
+        activeElement: input,
+        querySelector: () => null,
+      };
+      browser.focusOwner = "app";
+      gate.channel?.onmessage({ event: "focus", owner: "browser" });
+      expect(blur).toHaveBeenCalledTimes(1);
+      expect(browser.focusOwner).toBe("browser");
+      expect(tauri.invoke).not.toHaveBeenCalledWith("browser_focus_app");
+    });
+
+    it("focuses the last toolbar control when CEF reports focus owner=app next=false", async () => {
+      const gate = await spawnLive();
+      tauri.invoke.mockClear();
+      const url = { focus: vi.fn(), tagName: "INPUT" };
+      const last = { focus: vi.fn(), tagName: "BUTTON" };
+      const toolbar = {
+        querySelector: (sel: string) => (sel === "[data-browser-url]" ? url : last),
+      };
+      (globalThis as { document?: unknown }).document = {
+        activeElement: null,
+        querySelector: (sel: string) => (sel === "[data-browser-toolbar]" ? toolbar : null),
+      };
+      gate.channel?.onmessage({ event: "focus", owner: "app", next: false });
+      expect(last.focus).toHaveBeenCalledTimes(1);
+      expect(url.focus).not.toHaveBeenCalled();
+      expect(browser.focusOwner).toBe("app");
+      expect(tauri.invoke).toHaveBeenCalledWith("browser_focus_app");
+      expect(tauri.invoke.mock.calls.filter((call) => call[0] === "browser_focus_app")).toHaveLength(
+        1,
+      );
+    });
+
+    it("does not fire two focusApp claims for one chrome click", async () => {
+      await spawnLive();
+      tauri.invoke.mockClear();
+      browser.focusOwner = "browser";
+      expect(shouldClaimAppFocus(browser.focusOwner)).toBe(true);
+      await browser.focusApp();
+      expect(browser.focusOwner).toBe("app");
+      expect(shouldClaimAppFocus(browser.focusOwner)).toBe(false);
+      expect(tauri.invoke.mock.calls.filter((call) => call[0] === "browser_focus_app")).toHaveLength(
+        1,
+      );
+    });
+
+    it("skips the BrowserView show-time rAF gift while the app owns the keyboard", () => {
+      expect(shouldGiftCefFocus("app")).toBe(false);
+      expect(shouldGiftCefFocus("browser")).toBe(true);
+      expect(isAppKeyboardTarget({ tagName: "INPUT" })).toBe(true);
+      expect(isAppKeyboardTarget({ tagName: "DIV" })).toBe(false);
+      expect(isAppKeyboardTarget({ tagName: "DIV", closest: () => ({}) })).toBe(true);
     });
   });
 });

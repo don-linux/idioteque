@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-use super::ipc::HostEvent;
+use super::ipc::{FocusOwner, HostEvent};
 
 /// Códigos con los que el ADE reintenta una vez sin sandbox (contrato 5).
 /// `1` es un abort (SIGABRT: `ExitStatus::code() == None` → 1).
@@ -909,6 +909,10 @@ mod tests {
     #[test]
     fn drop_other_events_while_retry_possible() {
         let nav = HostEvent::Title { title: "x".into() };
+        let focus = HostEvent::Focus {
+            owner: FocusOwner::Browser,
+            next: None,
+        };
         assert_eq!(
             forward_action(&nav, false, false, false),
             ForwardAction::Drop
@@ -916,6 +920,15 @@ mod tests {
         assert_eq!(
             forward_action(&nav, true, false, false),
             ForwardAction::Send
+        );
+        assert_eq!(
+            forward_action(&focus, false, false, false),
+            ForwardAction::Drop
+        );
+        assert_eq!(
+            forward_action(&focus, true, false, false),
+            ForwardAction::Send,
+            "focus is forwarded like nav once the host is ready"
         );
         assert_eq!(
             forward_action(&fatal(15), false, false, true),

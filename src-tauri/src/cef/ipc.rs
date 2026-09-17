@@ -34,6 +34,11 @@ pub enum HostEvent {
     Shortcut {
         chord: String,
     },
+    Focus {
+        owner: FocusOwner,
+        #[serde(default)]
+        next: Option<bool>,
+    },
     RenderCrashed {
         status: String,
     },
@@ -84,8 +89,17 @@ pub enum HostCommand {
     Show,
     Hide,
     Focus,
+    Unfocus,
     Devtools,
     Close,
+}
+
+/// Who should own the keyboard after a host `focus` event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FocusOwner {
+    App,
+    Browser,
 }
 
 /// Tope de una línea host→ADE. Holgado respecto al máximo de URL de Chromium
@@ -170,6 +184,27 @@ mod tests {
             parse_event(r#"{"event":"shortcut","chord":"ctrl+b"}"#).unwrap(),
             HostEvent::Shortcut {
                 chord: "ctrl+b".into()
+            }
+        );
+        assert_eq!(
+            parse_event(r#"{"event":"focus","owner":"browser"}"#).unwrap(),
+            HostEvent::Focus {
+                owner: FocusOwner::Browser,
+                next: None,
+            }
+        );
+        assert_eq!(
+            parse_event(r#"{"event":"focus","owner":"app","next":true}"#).unwrap(),
+            HostEvent::Focus {
+                owner: FocusOwner::App,
+                next: Some(true),
+            }
+        );
+        assert_eq!(
+            parse_event(r#"{"event":"focus","owner":"app","next":false}"#).unwrap(),
+            HostEvent::Focus {
+                owner: FocusOwner::App,
+                next: Some(false),
             }
         );
         assert_eq!(
@@ -299,6 +334,9 @@ mod tests {
             r#"{"event":"load-end","status":"200"}"#,
             r#"{"event":"load-error","code":-105,"text":"ERR","url":null}"#,
             r#"{"event":"shortcut"}"#,
+            r#"{"event":"focus"}"#,
+            r#"{"event":"focus","owner":"nope"}"#,
+            r#"{"event":"focus","next":true}"#,
             r#"{"event":"render-crashed"}"#,
             r#"{"event":"health","ok":"true","cef":"x","chromium":"y","apiVersion":15200}"#,
             r#"{"event":"fatal","message":"boom"}"#,
@@ -501,6 +539,14 @@ mod tests {
         assert_eq!(
             encode_command(&HostCommand::Focus).trim_end(),
             r#"{"cmd":"focus"}"#
+        );
+        assert_eq!(
+            encode_command(&HostCommand::Unfocus).trim_end(),
+            r#"{"cmd":"unfocus"}"#
+        );
+        assert_ne!(
+            encode_command(&HostCommand::Unfocus),
+            encode_command(&HostCommand::Focus)
         );
         assert_eq!(
             encode_command(&HostCommand::Devtools).trim_end(),

@@ -155,6 +155,15 @@ sesión Xorg) Mutter sigue levantando XWayland: idioteque fija
 `GDK_BACKEND=x11` si hay `DISPLAY` y CEF usa `--ozone-platform=x11` contra
 ese mismo display. No es embed Wayland nativo.
 
+Foco X11 entre el toplevel y el hijo CEF: cefclient GTK envía
+`WM_TAKE_FOCUS` al toplevel cuando la barra de URL reclama el teclado
+(workaround GTK+X11, cefclient #3782). idioteque no usa ese ClientMessage
+para la barra: `browser_focus_app` hace `XSetInputFocus` sobre el toplevel
+de Tauri y manda `{"cmd":"unfocus"}` (`set_focus(false)`). `CefFocusHandler`
+avisa cuando el hijo gana (`owner=browser`) o cede (`owner=app`) el foco.
+No se elimina el manejo de `WM_TAKE_FOCUS` si Chromium lo entrega; no es el
+camino de la barra.
+
 `chrome-sandbox` solo se exporta como `CHROME_DEVEL_SANDBOX` si es setuid-root.
 En `tauri dev` el helper es del usuario; en la AppImage el squashfs no puede
 ser setuid. En Ubuntu 24.04+ (`apparmor_restrict_unprivileged_userns=1`)

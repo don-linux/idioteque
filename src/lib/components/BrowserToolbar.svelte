@@ -4,7 +4,7 @@
   import Code from "@lucide/svelte/icons/code";
   import RotateCw from "@lucide/svelte/icons/rotate-cw";
   import X from "@lucide/svelte/icons/x";
-  import { browser } from "$lib/browser.svelte";
+  import { browser, shouldClaimAppFocus } from "$lib/browser.svelte";
   import { displayUrl } from "$lib/browser-url";
   import { surface } from "$lib/workspace-surface.svelte";
 
@@ -19,8 +19,9 @@
     });
   }
 
-  // Any interaction with the Svelte toolbar takes the X11 focus back from CEF.
-  function onToolbarPointerDown(): void {
+  // One reclaim per chrome activation. Skip if we already own the keyboard.
+  function onToolbarFocusIn(): void {
+    if (!shouldClaimAppFocus(browser.focusOwner)) return;
     void browser.focusApp();
   }
 
@@ -42,7 +43,7 @@
   }
 </script>
 
-<div class="toolbar" onpointerdowncapture={onToolbarPointerDown}>
+<div class="toolbar" data-browser-toolbar onfocusin={onToolbarFocusIn}>
   <div class="row">
     <button
       type="button"
@@ -94,10 +95,10 @@
       autocomplete="off"
       autocapitalize="off"
       aria-label="URL"
+      data-browser-url
       bind:value={browser.inputUrl}
       {@attach attachUrl}
       onkeydown={onUrlKeydown}
-      onfocus={() => void browser.focusApp()}
     />
     <button
       type="button"
@@ -114,6 +115,7 @@
       class="action"
       aria-label="Cerrar navegador (Ctrl+B)"
       title="Cerrar navegador (Ctrl+B)"
+      data-browser-chrome-last
       onclick={() => browser.leave()}
     >
       <X size={16} strokeWidth={1.75} aria-hidden="true" />
