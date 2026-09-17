@@ -511,11 +511,15 @@ fn apply_switches(state: &AppState, command_line: &mut CommandLine) {
         add_switch(command_line, "no-sandbox");
         add_switch(command_line, "no-zygote");
     }
-    // Shared memory goes to /dev/shm like Chrome does. The switch is only for
-    // hosts where /dev/shm is unusable (64 MiB container shm, quota), never
-    // tied to the sandbox: see shm.rs.
-    if state.disable_dev_shm {
-        add_switch(command_line, "disable-dev-shm-usage");
+    // Official Chromium workaround (`kDisableDevShmUsage` / crbug/715363) only
+    // when `/dev/shm` is unusable (permissions, ENOSPC, EDQUOT) or when
+    // `IDIOTEQUE_CEF_ARGS` forces the flag. Docker's 64 MiB default is one
+    // failure case, not product policy. Never tied to the sandbox: see shm.rs.
+    if crate::shm::command_line_disables_dev_shm(
+        state.disable_dev_shm,
+        &state.args.extra_switches,
+    ) {
+        add_switch(command_line, crate::shm::DISABLE_DEV_SHM_USAGE);
     }
     // Software GL for X servers without DRI3 (the dev VM). A user machine that
     // merely lacks the sandbox keeps its GPU: pass these via IDIOTEQUE_CEF_ARGS
