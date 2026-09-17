@@ -209,4 +209,62 @@ describe("handleBrowserShortcut", () => {
     expect(toggleBrowser).toHaveBeenCalledTimes(1);
     expect(event.preventDefault).toHaveBeenCalledTimes(1);
   });
+
+  it("still swallows the chord when stopImmediatePropagation is missing", () => {
+    const event = key();
+    delete event.stopImmediatePropagation;
+    const toggleBrowser = vi.fn();
+
+    handleBrowserShortcut(event, {
+      hasWorkspace: true,
+      insideTerminal: false,
+      toggleBrowser,
+    });
+
+    expect(toggleBrowser).toHaveBeenCalledTimes(1);
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(event.stopPropagation).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not treat a lone KeyB or the letter b as a chord", () => {
+    const letter = key({ ctrlKey: false, code: "KeyB" });
+    const short = key({ code: "b" });
+    const toggleBrowser = vi.fn();
+
+    handleBrowserShortcut(letter, {
+      hasWorkspace: true,
+      insideTerminal: false,
+      toggleBrowser,
+    });
+    handleBrowserShortcut(short, {
+      hasWorkspace: true,
+      insideTerminal: false,
+      toggleBrowser,
+    });
+
+    expect(toggleBrowser).not.toHaveBeenCalled();
+    expect(letter.preventDefault).not.toHaveBeenCalled();
+    expect(short.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("does not steal Ctrl+Alt+Shift+B or Ctrl+Shift+Meta+B", () => {
+    const alt = key({ shiftKey: true, altKey: true });
+    const meta = key({ shiftKey: true, metaKey: true });
+    const toggleBrowser = vi.fn();
+
+    handleBrowserShortcut(alt, {
+      hasWorkspace: true,
+      insideTerminal: true,
+      toggleBrowser,
+    });
+    handleBrowserShortcut(meta, {
+      hasWorkspace: true,
+      insideTerminal: false,
+      toggleBrowser,
+    });
+
+    expect(toggleBrowser).not.toHaveBeenCalled();
+    expect(isBrowserToggleAnywhereShortcut(alt)).toBe(false);
+    expect(isBrowserToggleAnywhereShortcut(meta)).toBe(false);
+  });
 });
