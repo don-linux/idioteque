@@ -91,6 +91,11 @@ impl CefState {
             Err(_) => false,
         }
     }
+
+    #[cfg(test)]
+    fn set_host_for_test(&self, process: HostProcess) {
+        *self.host.lock().expect("host lock") = Some(process);
+    }
 }
 
 pub fn spawn_host(launch: &HostLaunch) -> Result<HostProcess, String> {
@@ -588,13 +593,18 @@ fn prepend_lib_path(cmd: &mut Command, cef_dir: &std::path::Path) {
     }
 }
 
+/// Contrato 4.1: el directorio del slot va *delante* de lo que ya hubiera.
+fn compose_search_path(prefix: &str, existing: Option<&str>, sep: &str) -> String {
+    match existing {
+        Some(existing) if !existing.is_empty() => format!("{prefix}{sep}{existing}"),
+        _ => prefix.to_string(),
+    }
+}
+
 fn prepend_env(cmd: &mut Command, key: &str, cef_dir: &std::path::Path, sep: &str) {
     let prefix = cef_dir.display().to_string();
-    let value = match std::env::var(key) {
-        Ok(existing) if !existing.is_empty() => format!("{prefix}{sep}{existing}"),
-        _ => prefix,
-    };
-    cmd.env(key, value);
+    let existing = std::env::var(key).ok();
+    cmd.env(key, compose_search_path(&prefix, existing.as_deref(), sep));
 }
 
 /// Ventana X11 "hueco" para CEF.
@@ -809,10 +819,101 @@ exit 15
 "#;
 
     #[cfg(unix)]
+    const EXIT_16_FATAL: &str = r#"#!/bin/sh
+printf '%s\n' '{"event":"fatal","message":"no X11","code":16}'
+exit 16
+"#;
+
+    /// Sale 15 + fatal salvo que el ADE haya pasado `--idq-no-sandbox` (contrato 5).
+    #[cfg(unix)]
+    const SANDBOX_FATAL_UNTIL_NO_SANDBOX: &str = r#"#!/bin/sh
+case " $* " in
+  *" --idq-no-sandbox "*)
+    printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200,"xid":1}'
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        *'"cmd":"close"'*) exit 0 ;;
+      esac
+    done
+    exit 0
+    ;;
+esac
+printf '%s\n' '{"event":"fatal","message":"sandbox","code":15}'
+exit 15
+"#;
+
+    #[cfg(unix)]
+    const READY_THEN_EXIT_15: &str = r#"#!/bin/sh
+printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200,"xid":1}'
+exit 15
+"#;
+
+    #[cfg(unix)]
     const IGNORE_CLOSE: &str = r#"#!/bin/sh
 printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200,"xid":1}'
 exec sleep 30
 "#;
+
+    #[cfg(unix)]
+    const MULTI_EVENT: &str = r#"#!/bin/sh
+printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200,"xid":1}'
+printf '%s\n' '{"event":"title","title":"one"}'
+printf '%s\n' '{"event":"title","title":"two"}'
+printf '%s\n' '{"event":"title","title":"three"}'
+while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in
+    *'"cmd":"close"'*) exit 0 ;;
+  esac
+done
+exit 0
+"#;
+
+    #[cfg(unix)]
+    const GARBAGE_THEN_READY: &str = r#"#!/bin/sh
+printf '\n'
+printf '   \n'
+printf 'not-json\n'
+printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200,"xid":1}'
+while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in
+    *'"cmd":"close"'*) exit 0 ;;
+  esac
+done
+exit 0
+"#;
+
+    /// Escribe `LD_LIBRARY_PATH` y si llegó `--idq-no-sandbox` en `--idq-cache-dir`.
+    #[cfg(unix)]
+    const DUMP_SPAWN_ENV: &str = r#"#!/bin/sh
+cache=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--idq-cache-dir" ]; then
+    cache="$arg"
+  fi
+  prev="$arg"
+done
+mkdir -p "$cache"
+{
+  printf '%s' "$LD_LIBRARY_PATH"
+} > "$cache/ld_library_path"
+case " $* " in
+  *" --idq-no-sandbox "*) printf '1' > "$cache/no_sandbox" ;;
+  *) printf '0' > "$cache/no_sandbox" ;;
+esac
+printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200,"xid":1}'
+while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in
+    *'"cmd":"close"'*) exit 0 ;;
+  esac
+done
+exit 0
+"#;
+
+    #[cfg(unix)]
+    fn spawn_ok(binary: PathBuf, root: &std::path::Path, cache_name: &str) -> HostProcess {
+        spawn_host(&launch(binary, root.to_path_buf(), root.join(cache_name))).expect("spawn")
+    }
 
     #[cfg(unix)]
     #[test]
@@ -910,24 +1011,29 @@ exec sleep 30
     #[test]
     fn pump_swallows_fatal_and_forwards_ready_after_retry() {
         let tmp = TempDir::new().unwrap();
-        let dying = write_script(tmp.path(), "exit-15-fatal", EXIT_15_FATAL);
-        let ready = write_script(tmp.path(), "ready-host", FAKE_HOST);
-        let first_launch = launch(dying, tmp.path().to_path_buf(), tmp.path().join("cache"));
+        let binary = write_script(
+            tmp.path(),
+            "sandbox-then-ready",
+            SANDBOX_FATAL_UNTIL_NO_SANDBOX,
+        );
+        let first_launch = launch(binary, tmp.path().to_path_buf(), tmp.path().join("cache"));
         let mut first = spawn_host(&first_launch).expect("first");
         let events = first.take_events();
-        let retry_launch = launch(
-            ready,
-            tmp.path().to_path_buf(),
-            tmp.path().join("cache-retry"),
-        );
         let mut kept: Option<HostProcess> = None;
         let mut ui: Vec<HostEvent> = Vec::new();
+        let mut retry_count = 0;
 
         pump_host_events(
             events,
             &first_launch,
-            |_| {
-                let mut process = spawn_host(&retry_launch).expect("retry");
+            |retry| {
+                retry_count += 1;
+                assert!(
+                    retry.no_sandbox,
+                    "contrato 5: el retry debe llevar --idq-no-sandbox"
+                );
+                assert_eq!(retry.binary, first_launch.binary);
+                let mut process = spawn_host(retry).expect("retry");
                 let next = process.take_events();
                 kept = Some(process);
                 Ok(next)
@@ -939,6 +1045,7 @@ exec sleep 30
             },
         );
 
+        assert_eq!(retry_count, 1, "una sola vez: {ui:?}");
         assert!(
             ui.iter()
                 .all(|event| !matches!(event, HostEvent::Fatal { .. })),
@@ -951,5 +1058,524 @@ exec sleep 30
         );
         drop(first);
         drop(kept);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pump_exit_15_without_fatal_still_retries_once() {
+        let tmp = TempDir::new().unwrap();
+        let dying = write_script(tmp.path(), "exit-15", EXIT_15);
+        let ready = write_script(tmp.path(), "ready-host", FAKE_HOST);
+        let first_launch = launch(dying, tmp.path().to_path_buf(), tmp.path().join("cache"));
+        let mut first = spawn_host(&first_launch).expect("first");
+        let events = first.take_events();
+        let retry_launch = launch(
+            ready,
+            tmp.path().to_path_buf(),
+            tmp.path().join("cache-retry"),
+        );
+        let mut kept: Option<HostProcess> = None;
+        let mut ui = Vec::new();
+        let mut retry_count = 0;
+
+        pump_host_events(
+            events,
+            &first_launch,
+            |retry| {
+                retry_count += 1;
+                assert!(retry.no_sandbox);
+                let mut process = spawn_host(&retry_launch).expect("retry");
+                let next = process.take_events();
+                kept = Some(process);
+                Ok(next)
+            },
+            |event| {
+                let keep_going = !matches!(event, HostEvent::Ready { .. });
+                ui.push(event);
+                keep_going
+            },
+        );
+
+        assert_eq!(retry_count, 1);
+        assert!(
+            ui.iter()
+                .any(|event| matches!(event, HostEvent::Ready { .. })),
+            "{ui:?}"
+        );
+        assert!(
+            ui.iter()
+                .all(|event| !matches!(event, HostEvent::Fatal { .. } | HostEvent::Exit { .. })),
+            "ready corta el pump de prueba; no debe haberse filtrado fatal/exit: {ui:?}"
+        );
+        drop(first);
+        drop(kept);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pump_does_not_retry_exit_15_after_ready() {
+        let tmp = TempDir::new().unwrap();
+        let binary = write_script(tmp.path(), "ready-then-15", READY_THEN_EXIT_15);
+        let first_launch = launch(binary, tmp.path().to_path_buf(), tmp.path().join("cache"));
+        let mut first = spawn_host(&first_launch).expect("first");
+        let events = first.take_events();
+        let mut ui = Vec::new();
+        let mut retry_count = 0;
+
+        pump_host_events(
+            events,
+            &first_launch,
+            |_| {
+                retry_count += 1;
+                Err("no se debe reintentar después de ready".into())
+            },
+            |event| {
+                ui.push(event);
+                true
+            },
+        );
+
+        assert_eq!(retry_count, 0, "{ui:?}");
+        assert!(
+            ui.iter()
+                .any(|event| matches!(event, HostEvent::Ready { .. })),
+            "{ui:?}"
+        );
+        assert_eq!(
+            ui.iter()
+                .filter(|event| matches!(event, HostEvent::Exit { code: 15 }))
+                .count(),
+            1,
+            "{ui:?}"
+        );
+        drop(first);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pump_does_not_retry_when_first_launch_already_has_no_sandbox() {
+        let tmp = TempDir::new().unwrap();
+        let binary = write_script(tmp.path(), "exit-15-fatal", EXIT_15_FATAL);
+        let mut first_launch = launch(binary, tmp.path().to_path_buf(), tmp.path().join("cache"));
+        first_launch.no_sandbox = true;
+        let mut first = spawn_host(&first_launch).expect("first");
+        let events = first.take_events();
+        let mut ui = Vec::new();
+        let mut retry_count = 0;
+
+        pump_host_events(
+            events,
+            &first_launch,
+            |_| {
+                retry_count += 1;
+                Err("ya iba sin sandbox".into())
+            },
+            |event| {
+                ui.push(event);
+                true
+            },
+        );
+
+        assert_eq!(retry_count, 0, "{ui:?}");
+        assert!(
+            ui.iter()
+                .any(|event| matches!(event, HostEvent::Fatal { code: 15, .. })),
+            "sin retry el fatal sí llega: {ui:?}"
+        );
+        assert!(
+            ui.iter()
+                .any(|event| matches!(event, HostEvent::Exit { code: 15 })),
+            "{ui:?}"
+        );
+        drop(first);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pump_retry_spawn_failure_flushes_held_fatal_and_exit() {
+        let tmp = TempDir::new().unwrap();
+        let binary = write_script(tmp.path(), "exit-15-fatal", EXIT_15_FATAL);
+        let first_launch = launch(binary, tmp.path().to_path_buf(), tmp.path().join("cache"));
+        let mut first = spawn_host(&first_launch).expect("first");
+        let events = first.take_events();
+        let mut ui = Vec::new();
+
+        pump_host_events(
+            events,
+            &first_launch,
+            |_| Err("no queda binario".into()),
+            |event| {
+                ui.push(event);
+                true
+            },
+        );
+
+        assert!(
+            matches!(ui.first(), Some(HostEvent::Fatal { code: 15, .. })),
+            "{ui:?}"
+        );
+        assert!(
+            matches!(ui.last(), Some(HostEvent::Exit { code: 15 })),
+            "{ui:?}"
+        );
+        drop(first);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pump_second_exit_15_after_retry_is_not_retried_again() {
+        let tmp = TempDir::new().unwrap();
+        let dying = write_script(tmp.path(), "exit-15-fatal", EXIT_15_FATAL);
+        let first_launch = launch(
+            dying.clone(),
+            tmp.path().to_path_buf(),
+            tmp.path().join("cache"),
+        );
+        let mut first = spawn_host(&first_launch).expect("first");
+        let events = first.take_events();
+        let retry_launch = launch(
+            dying,
+            tmp.path().to_path_buf(),
+            tmp.path().join("cache-retry"),
+        );
+        let mut kept: Option<HostProcess> = None;
+        let mut ui = Vec::new();
+        let mut retry_count = 0;
+
+        pump_host_events(
+            events,
+            &first_launch,
+            |retry| {
+                retry_count += 1;
+                assert!(retry.no_sandbox);
+                let mut process = spawn_host(&retry_launch).expect("retry");
+                let next = process.take_events();
+                kept = Some(process);
+                Ok(next)
+            },
+            |event| {
+                ui.push(event);
+                true
+            },
+        );
+
+        assert_eq!(retry_count, 1, "el segundo 15 no relanza: {ui:?}");
+        assert!(
+            ui.iter()
+                .any(|event| matches!(event, HostEvent::Fatal { code: 15, .. })),
+            "el fatal del segundo intento sí llega: {ui:?}"
+        );
+        assert!(
+            ui.iter()
+                .any(|event| matches!(event, HostEvent::Exit { code: 15 })),
+            "{ui:?}"
+        );
+        drop(first);
+        drop(kept);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pump_stops_when_channel_drops_mid_stream() {
+        let tmp = TempDir::new().unwrap();
+        let binary = write_script(tmp.path(), "multi", MULTI_EVENT);
+        let first_launch = launch(binary, tmp.path().to_path_buf(), tmp.path().join("cache"));
+        let mut first = spawn_host(&first_launch).expect("spawn");
+        let events = first.take_events();
+        let mut ui = Vec::new();
+
+        pump_host_events(
+            events,
+            &first_launch,
+            |_| unreachable!("no hay retry"),
+            |event| {
+                ui.push(event.clone());
+                !matches!(event, HostEvent::Title { title } if title == "one")
+            },
+        );
+
+        assert!(
+            matches!(ui.first(), Some(HostEvent::Ready { .. })),
+            "{ui:?}"
+        );
+        assert!(
+            ui.iter()
+                .any(|event| matches!(event, HostEvent::Title { title } if title == "one")),
+            "{ui:?}"
+        );
+        assert!(
+            ui.iter()
+                .all(|event| !matches!(event, HostEvent::Title { title } if title == "two" || title == "three")),
+            "Channel caído no sigue drenando: {ui:?}"
+        );
+        first.kill_graceful(Duration::from_millis(250));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pump_stops_when_channel_drops_on_flushed_fatal() {
+        let tmp = TempDir::new().unwrap();
+        let binary = write_script(tmp.path(), "exit-16-fatal", EXIT_16_FATAL);
+        let first_launch = launch(binary, tmp.path().to_path_buf(), tmp.path().join("cache"));
+        let mut first = spawn_host(&first_launch).expect("spawn");
+        let events = first.take_events();
+        let mut ui = Vec::new();
+
+        pump_host_events(
+            events,
+            &first_launch,
+            |_| unreachable!("16 no se reintenta"),
+            |event| {
+                ui.push(event.clone());
+                !matches!(event, HostEvent::Fatal { .. })
+            },
+        );
+
+        assert_eq!(ui.len(), 1, "{ui:?}");
+        assert!(matches!(ui[0], HostEvent::Fatal { code: 16, .. }), "{ui:?}");
+        drop(first);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pump_stops_when_channel_drops_on_retry_ready() {
+        let tmp = TempDir::new().unwrap();
+        let binary = write_script(
+            tmp.path(),
+            "sandbox-then-ready",
+            SANDBOX_FATAL_UNTIL_NO_SANDBOX,
+        );
+        let first_launch = launch(binary, tmp.path().to_path_buf(), tmp.path().join("cache"));
+        let mut first = spawn_host(&first_launch).expect("first");
+        let events = first.take_events();
+        let mut kept: Option<HostProcess> = None;
+        let mut ui = Vec::new();
+
+        pump_host_events(
+            events,
+            &first_launch,
+            |retry| {
+                let mut process = spawn_host(retry).expect("retry");
+                let next = process.take_events();
+                kept = Some(process);
+                Ok(next)
+            },
+            |event| {
+                ui.push(event.clone());
+                !matches!(event, HostEvent::Ready { .. })
+            },
+        );
+
+        assert_eq!(ui.len(), 1, "{ui:?}");
+        assert!(matches!(ui[0], HostEvent::Ready { .. }), "{ui:?}");
+        drop(first);
+        if let Some(mut host) = kept {
+            host.kill_graceful(Duration::from_millis(250));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn spawn_reader_survives_dropped_event_channel_until_kill() {
+        let tmp = TempDir::new().unwrap();
+        let binary = write_script(tmp.path(), "stuck", IGNORE_CLOSE);
+        let mut host = spawn_ok(binary, tmp.path(), "cache");
+        let events = host.take_events();
+        let _ = events.recv_timeout(Duration::from_secs(3)).expect("ready");
+        drop(events);
+        assert!(host.is_alive(), "tirar el Channel no mata al host");
+        host.kill_graceful(Duration::from_millis(250));
+        assert!(!host.is_alive());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn take_and_kill_is_ok_on_empty_state() {
+        let state = CefState::default();
+        take_and_kill(&state).expect("vacío");
+        assert!(!state.host_alive());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn take_and_kill_reaps_a_live_host() {
+        let tmp = TempDir::new().unwrap();
+        let binary = write_script(tmp.path(), "stuck", IGNORE_CLOSE);
+        let mut host = spawn_ok(binary, tmp.path(), "cache");
+        let events = host.take_events();
+        let _ = events.recv_timeout(Duration::from_secs(3)).expect("ready");
+        assert!(host.is_alive());
+        let state = CefState::default();
+        state.set_host_for_test(host);
+        assert!(state.host_alive());
+        take_and_kill(&state).expect("kill");
+        assert!(!state.host_alive());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn double_spawn_take_and_kill_then_second_host() {
+        let tmp = TempDir::new().unwrap();
+        let stuck = write_script(tmp.path(), "stuck", IGNORE_CLOSE);
+        let ready = write_script(tmp.path(), "ready", FAKE_HOST);
+        let mut first = spawn_ok(stuck, tmp.path(), "cache-a");
+        let first_events = first.take_events();
+        let _ = first_events
+            .recv_timeout(Duration::from_secs(3))
+            .expect("ready");
+        let first_pid = first.pid();
+        let state = CefState::default();
+        state.set_host_for_test(first);
+        assert!(state.host_alive());
+
+        take_and_kill(&state).expect("primer host");
+        assert!(!state.host_alive());
+        assert!(
+            !pid_alive(first_pid),
+            "el primer cef-host no puede seguir vivo tras el segundo spawn"
+        );
+
+        let mut second = spawn_ok(ready, tmp.path(), "cache-b");
+        let second_events = second.take_events();
+        let first_evt = second_events
+            .recv_timeout(Duration::from_secs(3))
+            .expect("ready 2");
+        assert!(matches!(first_evt, HostEvent::Ready { .. }));
+        assert!(second.is_alive());
+        state.set_host_for_test(second);
+        assert!(state.host_alive());
+        take_and_kill(&state).expect("cleanup");
+        assert!(!state.host_alive());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn spawn_host_itself_allows_two_live_processes() {
+        let tmp = TempDir::new().unwrap();
+        let stuck = write_script(tmp.path(), "stuck", IGNORE_CLOSE);
+        let mut a = spawn_ok(stuck.clone(), tmp.path(), "cache-a");
+        let mut b = spawn_ok(stuck, tmp.path(), "cache-b");
+        let ea = a.take_events();
+        let eb = b.take_events();
+        let _ = ea.recv_timeout(Duration::from_secs(3)).expect("a");
+        let _ = eb.recv_timeout(Duration::from_secs(3)).expect("b");
+        assert!(a.is_alive() && b.is_alive());
+        a.kill_graceful(Duration::from_millis(250));
+        b.kill_graceful(Duration::from_millis(250));
+        assert!(!a.is_alive() && !b.is_alive());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn concurrent_take_and_kill_does_not_poison_state() {
+        let tmp = TempDir::new().unwrap();
+        let binary = write_script(tmp.path(), "stuck", IGNORE_CLOSE);
+        let mut host = spawn_ok(binary, tmp.path(), "cache");
+        let events = host.take_events();
+        let _ = events.recv_timeout(Duration::from_secs(3)).expect("ready");
+        let state = CefState::default();
+        state.set_host_for_test(host);
+        std::thread::scope(|scope| {
+            scope.spawn(|| take_and_kill(&state).expect("a"));
+            scope.spawn(|| take_and_kill(&state).expect("b"));
+        });
+        assert!(!state.host_alive());
+        take_and_kill(&state).expect("idempotente");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn kill_on_exit_reaps_installed_host() {
+        let tmp = TempDir::new().unwrap();
+        let binary = write_script(tmp.path(), "stuck", IGNORE_CLOSE);
+        let mut host = spawn_ok(binary, tmp.path(), "cache");
+        let events = host.take_events();
+        let _ = events.recv_timeout(Duration::from_secs(3)).expect("ready");
+        let state = CefState::default();
+        state.set_host_for_test(host);
+        kill_on_exit(&state);
+        assert!(!state.host_alive());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[should_panic(expected = "los eventos de cef-host ya se están leyendo")]
+    fn take_events_twice_panics() {
+        let tmp = TempDir::new().unwrap();
+        let binary = write_script(tmp.path(), "ready", FAKE_HOST);
+        let mut host = spawn_ok(binary, tmp.path(), "cache");
+        let _ = host.take_events();
+        let _ = host.take_events();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn spawn_skips_garbage_stdout_and_still_emits_ready() {
+        let tmp = TempDir::new().unwrap();
+        let binary = write_script(tmp.path(), "garbage", GARBAGE_THEN_READY);
+        let mut host = spawn_ok(binary, tmp.path(), "cache");
+        let events = host.take_events();
+        let first = events.recv_timeout(Duration::from_secs(3)).expect("ready");
+        assert!(matches!(first, HostEvent::Ready { .. }), "{first:?}");
+        host.send(&HostCommand::Close).expect("close");
+        let exit = events.recv_timeout(Duration::from_secs(3)).expect("exit");
+        assert_eq!(exit, HostEvent::Exit { code: 0 });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn spawn_prepending_ld_library_path_puts_slot_first() {
+        let tmp = TempDir::new().unwrap();
+        let slot = tmp.path().join("slot-dir");
+        fs::create_dir_all(&slot).unwrap();
+        let cache = tmp.path().join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        let binary = write_script(tmp.path(), "dump-env", DUMP_SPAWN_ENV);
+        let mut host = spawn_host(&launch(binary, slot.clone(), cache.clone())).expect("spawn");
+        let events = host.take_events();
+        let _ = events.recv_timeout(Duration::from_secs(3)).expect("ready");
+        let got = fs::read_to_string(cache.join("ld_library_path")).expect("dump");
+        let prefix = slot.display().to_string();
+        let expected = compose_search_path(
+            &prefix,
+            std::env::var("LD_LIBRARY_PATH").ok().as_deref(),
+            ":",
+        );
+        assert_eq!(got, expected, "LD_LIBRARY_PATH del hijo");
+        assert!(
+            got == prefix || got.starts_with(&format!("{prefix}:")),
+            "el slot debe ir primero: {got}"
+        );
+        let no_sandbox = fs::read_to_string(cache.join("no_sandbox")).expect("flag");
+        assert_eq!(no_sandbox, "0");
+        host.send(&HostCommand::Close).expect("close");
+        let _ = events.recv_timeout(Duration::from_secs(3));
+    }
+
+    #[test]
+    fn compose_search_path_prepends_and_keeps_existing() {
+        assert_eq!(compose_search_path("/slot", None, ":"), "/slot");
+        assert_eq!(compose_search_path("/slot", Some(""), ":"), "/slot");
+        assert_eq!(
+            compose_search_path("/slot", Some("/usr/lib:/opt/lib"), ":"),
+            "/slot:/usr/lib:/opt/lib"
+        );
+        assert_eq!(
+            compose_search_path(r"C:\slot", Some(r"C:\Windows\System32"), ";"),
+            r"C:\slot;C:\Windows\System32"
+        );
+        assert_eq!(
+            compose_search_path("/slot", Some("/slot:/usr/lib"), ":"),
+            "/slot:/slot:/usr/lib"
+        );
+    }
+
+    #[cfg(unix)]
+    fn pid_alive(pid: u32) -> bool {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
     }
 }
