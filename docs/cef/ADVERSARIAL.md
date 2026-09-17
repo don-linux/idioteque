@@ -10,6 +10,15 @@ Workarounds stay if removing them breaks health-check or spawn.
 3. `/dev/shm` is Chromium’s tmpfs backing store (anonymous file + unlink + mmap), not the `libcef` directory. Do not copy the engine there. Do not force `--disable-dev-shm-usage` when shm is healthy. Official flag only when `/dev/shm` is unusable.
 4. Order: startup-repro test → try the documented path → if startup fails, revert and cite why here.
 
+### Kept: shm probe 128 MiB + `CacheDir` (`cursor/cef-test-shm-911c` @ `110b55b`)
+
+Tried the two official Chromium levels only (`/dev/shm` default, `--disable-dev-shm-usage` → `$TMPDIR`). Startup-repro tests fail without the extras:
+
+- **128 MiB `fallocate` probe** — ChromeDriver’s `access(W_OK|X_OK)` accepts Docker’s 64 MiB `/dev/shm`; Chromium then dies with `ENOSPC` / `TransferBuffer::Initialize() failed` (crbug/715363). The probe is not “cloud = always disable”: a desktop/deb/rpm/AppImage with 1–8 GiB shm still chooses `DevShm`.
+- **`CacheDir` + `TMPDIR=<cache>/shm`** — official level 2 still uses `GetTempDir()`. If that tmpfs is also unusable (`EDQUOT` / usrquota, systemd ≥ 258, any distro), the flag alone points at the same broken temp. Third fallback stays on disk cache.
+
+`/dev/shm` stays first. Flag only when the probe says shm is unusable. Do not copy `libcef` into `/dev/shm`.
+
 ## Linux surfaces
 
 deb / rpm / AppImage. Ubuntu cloud is a lab, not “Linux”. Do not encode AppArmor-only, apt-only, or “64 MiB shm = always disable”.
@@ -28,4 +37,5 @@ Lab-only notes (not in git): Project store `internal/cef-implementation-map-adve
 
 | Slice | Reason |
 | ----- | ------ |
-| | |
+| shm (drop 128 MiB probe) | Startup-repro: 64 MiB shm passes `access()` then Chromium OOMs. Kept. |
+| shm (drop `CacheDir`) | Startup-repro: official flag + broken `$TMPDIR` still cannot reserve shm. Kept. |
