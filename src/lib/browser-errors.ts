@@ -4,7 +4,7 @@ export const RENDER_CRASHED = "La página se cerró inesperadamente";
 
 /** `status` viene del host (`crashed`, `killed`, `oom`, `launch-failed`…). */
 export function renderCrashedMessage(status: string): string {
-  const detail = status.trim();
+  const detail = status.replace(/\s+/g, " ").trim();
   return detail.length > 0 ? `${RENDER_CRASHED} (${detail})` : RENDER_CRASHED;
 }
 
