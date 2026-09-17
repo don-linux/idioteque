@@ -277,7 +277,7 @@ pub fn browser_spawn(
     let slot = manifest::resolve_effective(&paths)?;
     let binary = paths::host_binary_path(&app)?;
     let (_, _, phys_w, phys_h) = physical_bounds(bounds.x, bounds.y, bounds.w, bounds.h, scale);
-    let (lx, ly, lw, lh) = logical_bounds(bounds.x, bounds.y, bounds.w, bounds.h);
+    let (lx, ly, lw, lh) = hole::sanitize_css_bounds(bounds.x, bounds.y, bounds.w, bounds.h);
     let hole_xid = {
         let window = window.clone();
         on_gtk(move || hole::create(&window, lx, ly, lw, lh))?
@@ -342,7 +342,7 @@ pub fn browser_set_bounds(
     h: f64,
     scale: f64,
 ) -> Result<(), String> {
-    let (lx, ly, lw, lh) = logical_bounds(x, y, w, h);
+    let (lx, ly, lw, lh) = hole::sanitize_css_bounds(x, y, w, h);
     let (_, _, pw, ph) = physical_bounds(x, y, w, h, scale);
     let xid = state.hole_xid.load(Ordering::SeqCst);
     if xid != 0 {
@@ -614,146 +614,219 @@ fn prepend_env(cmd: &mut Command, key: &str, cef_dir: &std::path::Path, sep: &st
 /// repintado. Un hijo nativo creado por GDK sí se descuenta de la región de
 /// recorte del toplevel: CEF se reparenta dentro de él. Las coordenadas del
 /// hueco son lógicas (CSS px); dentro, CEF ocupa `(0, 0)` en píxeles físicos.
-#[cfg(target_os = "linux")]
+///
+/// Quitar este hueco rompe el embed (GTK recubre al hijo X11). Se conserva.
 mod hole {
-    use gtk::glib::Cast;
-    use gtk::prelude::*;
-
-    use super::X11_REQUIRED;
-
-    fn lookup(xid: u64) -> Option<gdk::Window> {
-        let display = gdk::Display::default()?;
-        let x11_display = display.downcast_ref::<gdkx11::X11Display>()?;
-        gdkx11::X11Window::lookup_for_display(x11_display, xid as _).map(|w| w.upcast())
+    /// CSS px → geometría GDK. Tamaño 0 / NaN / ±Inf no llegan a `CreateWindow`
+    /// como 0×0 ni como `i32::MAX`: se tratan como inválidos (1×1, origen 0).
+    pub fn sanitize_css_bounds(x: f64, y: f64, w: f64, h: f64) -> (i32, i32, i32, i32) {
+        (css_coord(x), css_coord(y), css_size(w), css_size(h))
     }
 
-    pub fn create(window: &tauri::Window, x: i32, y: i32, w: i32, h: i32) -> Result<u64, String> {
-        let gtk_window = window.gtk_window().map_err(|_| X11_REQUIRED.to_string())?;
-        let parent = gtk_window
-            .window()
-            .ok_or_else(|| "La ventana de idioteque aún no está realizada".to_string())?;
-        if parent.downcast_ref::<gdkx11::X11Window>().is_none() {
-            return Err(X11_REQUIRED.to_string());
+    fn css_coord(v: f64) -> i32 {
+        if !v.is_finite() {
+            return 0;
         }
-
-        // Visual por defecto de la pantalla, no el visual GL que GTK elige para
-        // su toplevel: Chromium crea su ventana con el visual por defecto y
-        // colormap `CopyFromParent`, y con otro visual el servidor devuelve
-        // `BadMatch` en `CreateWindow`.
-        let attrs = gdk::WindowAttr {
-            window_type: gdk::WindowType::Child,
-            wclass: gdk::WindowWindowClass::InputOutput,
-            x: Some(x),
-            y: Some(y),
-            width: w.max(1),
-            height: h.max(1),
-            visual: parent.screen().system_visual(),
-            event_mask: gdk::EventMask::empty(),
-            ..Default::default()
-        };
-        let hole = gdk::Window::new(Some(&parent), &attrs);
-        if !hole.ensure_native() {
-            hole.destroy();
-            return Err("GDK no pudo crear la ventana nativa para el navegador".to_string());
-        }
-        hole.show();
-        hole.raise();
-
-        let xid = hole
-            .downcast_ref::<gdkx11::X11Window>()
-            .ok_or_else(|| X11_REQUIRED.to_string())?
-            .xid();
-        // `gdk_window_new` entrega la ref del creador; `gdk_window_destroy`
-        // es quien la consume. gtk-rs es `from_glib_full`: si el wrapper se
-        // droppea aquí, la ventana llega a 0 y la tabla XID de GDK se queda
-        // con un puntero colgante (segfault en el DestroyNotify).
-        let _: *mut gdk::ffi::GdkWindow =
-            unsafe { gtk::glib::translate::IntoGlibPtr::into_glib_ptr(hole) };
-        Ok(xid as u64)
+        v.round().clamp(i32::MIN as f64, i32::MAX as f64) as i32
     }
 
-    pub fn move_resize(xid: u64, x: i32, y: i32, w: i32, h: i32) {
-        if let Some(hole) = lookup(xid) {
-            hole.move_resize(x, y, w.max(1), h.max(1));
+    fn css_size(v: f64) -> i32 {
+        if !v.is_finite() {
+            return 1;
+        }
+        v.round().clamp(1.0, i32::MAX as f64) as i32
+    }
+
+    pub fn clamp_geom(x: i32, y: i32, w: i32, h: i32) -> (i32, i32, i32, i32) {
+        (x, y, w.max(1), h.max(1))
+    }
+
+    /// Visual que debe llevar `GdkWindowAttr`. Nunca el del padre (a menudo GL):
+    /// Chromium hace `CreateWindow` con el visual por defecto y colormap
+    /// `CopyFromParent` (CEF #3294 / #2804). Sin `system`, GDK hereda el GL
+    /// del toplevel y el servidor devuelve `BadMatch`.
+    pub fn window_attr_visual<V>(system: Option<V>, _parent: Option<V>) -> Result<V, String> {
+        system.ok_or_else(|| {
+            "La pantalla no tiene visual por defecto; el hueco GDK no puede embeder CEF".to_string()
+        })
+    }
+
+    /// `gdk_window_new` entrega una ref `from_glib_full`. gtk-rs `IntoGlibPtr`
+    /// es `ManuallyDrop` + `to_glib_none`: no incrementa, solo evita el
+    /// `g_object_unref` del Drop. Esa ref del creador tiene que seguir viva
+    /// hasta `gdk_window_destroy`. Si el wrapper se droppea, el GObject llega
+    /// a 0 y la tabla XID de GDK se queda con un puntero colgante (UAF en
+    /// DestroyNotify).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum CreatorRef {
+        LeakUntilDestroy,
+        DestroyNow,
+    }
+
+    pub fn creator_ref_after_new(ensure_native_ok: bool) -> CreatorRef {
+        if ensure_native_ok {
+            CreatorRef::LeakUntilDestroy
+        } else {
+            CreatorRef::DestroyNow
         }
     }
 
-    pub fn set_visible(xid: u64, visible: bool) {
-        if let Some(hole) = lookup(xid) {
-            if visible {
-                hole.show();
-                hole.raise();
-            } else {
-                hole.hide();
-            }
+    /// Refcount GObject del creador tras `gdk_window_new` (= 1).
+    pub fn modeled_creator_refs(into_glib_ptr: bool, rust_drop: bool, gdk_destroy: bool) -> u32 {
+        let mut refs = 1u32;
+        if rust_drop && !into_glib_ptr {
+            refs = refs.saturating_sub(1);
         }
+        if gdk_destroy {
+            refs = refs.saturating_sub(1);
+        }
+        refs
     }
 
-    pub fn destroy(xid: u64) {
-        if let Some(hole) = lookup(xid) {
-            hole.hide();
-            // Consume la ref del creador que `create` dejó viva. El wrapper
-            // de `lookup` (`from_glib_none`) suelta su ref temporal al drop;
-            // la entrada XID la quita GDK al DestroyNotify.
-            hole.destroy();
-        }
+    pub fn xid_table_use_after_free(gobject_refs: u32, xid_still_registered: bool) -> bool {
+        xid_still_registered && gobject_refs == 0
     }
 
-    /// Devuelve el foco X11 al toplevel de idioteque. Mientras la ventana de
-    /// CEF tiene el foco, el servidor X le entrega a ella todas las teclas y
-    /// el webview no ve nada; al pulsar en la barra Svelte hay que recuperarlo.
-    pub fn focus_toplevel(window: &tauri::Window) -> Result<(), String> {
-        let gtk_window = window.gtk_window().map_err(|_| X11_REQUIRED.to_string())?;
-        let gdk_window = gtk_window
-            .window()
-            .ok_or_else(|| "La ventana de idioteque aún no está realizada".to_string())?;
-        let x11_window = gdk_window
-            .downcast_ref::<gdkx11::X11Window>()
-            .ok_or_else(|| X11_REQUIRED.to_string())?;
-        let xid = x11_window.xid();
-        unsafe {
-            let xdisplay = gdkx11::ffi::gdk_x11_get_default_xdisplay();
-            if xdisplay.is_null() {
+    #[cfg(target_os = "linux")]
+    mod gdk {
+        use gtk::glib::Cast;
+        use gtk::prelude::*;
+
+        use super::super::X11_REQUIRED;
+        use super::{clamp_geom, creator_ref_after_new, window_attr_visual, CreatorRef};
+
+        fn lookup(xid: u64) -> Option<gdk::Window> {
+            let display = gdk::Display::default()?;
+            let x11_display = display.downcast_ref::<gdkx11::X11Display>()?;
+            gdkx11::X11Window::lookup_for_display(x11_display, xid as _).map(|w| w.upcast())
+        }
+
+        pub fn create(
+            window: &tauri::Window,
+            x: i32,
+            y: i32,
+            w: i32,
+            h: i32,
+        ) -> Result<u64, String> {
+            let gtk_window = window.gtk_window().map_err(|_| X11_REQUIRED.to_string())?;
+            let parent = gtk_window
+                .window()
+                .ok_or_else(|| "La ventana de idioteque aún no está realizada".to_string())?;
+            if parent.downcast_ref::<gdkx11::X11Window>().is_none() {
                 return Err(X11_REQUIRED.to_string());
             }
-            x11::xlib::XSetInputFocus(
-                xdisplay,
-                xid as x11::xlib::Window,
-                x11::xlib::RevertToParent,
-                x11::xlib::CurrentTime,
-            );
-            x11::xlib::XFlush(xdisplay);
+
+            let (x, y, w, h) = clamp_geom(x, y, w, h);
+            let visual = window_attr_visual(parent.screen().system_visual(), parent.visual())?;
+            let attrs = gdk::WindowAttr {
+                window_type: gdk::WindowType::Child,
+                wclass: gdk::WindowWindowClass::InputOutput,
+                x: Some(x),
+                y: Some(y),
+                width: w,
+                height: h,
+                visual: Some(visual),
+                event_mask: gdk::EventMask::empty(),
+                ..Default::default()
+            };
+            let hole = gdk::Window::new(Some(&parent), &attrs);
+            match creator_ref_after_new(hole.ensure_native()) {
+                CreatorRef::DestroyNow => {
+                    hole.destroy();
+                    return Err("GDK no pudo crear la ventana nativa para el navegador".to_string());
+                }
+                CreatorRef::LeakUntilDestroy => {
+                    hole.show();
+                    hole.raise();
+                    let xid = hole
+                        .downcast_ref::<gdkx11::X11Window>()
+                        .ok_or_else(|| X11_REQUIRED.to_string())?
+                        .xid();
+                    // glib-0.18 `IntoGlibPtr` for GObject: ManuallyDrop + to_glib_none.
+                    let _: *mut gdk::ffi::GdkWindow =
+                        unsafe { gtk::glib::translate::IntoGlibPtr::into_glib_ptr(hole) };
+                    Ok(xid as u64)
+                }
+            }
         }
-        Ok(())
-    }
-}
 
-#[cfg(not(target_os = "linux"))]
-mod hole {
-    pub fn create(
-        _window: &tauri::Window,
-        _x: i32,
-        _y: i32,
-        _w: i32,
-        _h: i32,
-    ) -> Result<u64, String> {
-        Err("El navegador embebido solo está implementado en Linux/X11".to_string())
-    }
-    pub fn move_resize(_xid: u64, _x: i32, _y: i32, _w: i32, _h: i32) {}
-    pub fn set_visible(_xid: u64, _visible: bool) {}
-    pub fn destroy(_xid: u64) {}
-    pub fn focus_toplevel(_window: &tauri::Window) -> Result<(), String> {
-        Ok(())
-    }
-}
+        pub fn move_resize(xid: u64, x: i32, y: i32, w: i32, h: i32) {
+            let (x, y, w, h) = clamp_geom(x, y, w, h);
+            if let Some(hole) = lookup(xid) {
+                hole.move_resize(x, y, w, h);
+            }
+        }
 
-fn logical_bounds(x: f64, y: f64, w: f64, h: f64) -> (i32, i32, i32, i32) {
-    (
-        x.round() as i32,
-        y.round() as i32,
-        w.round().max(1.0) as i32,
-        h.round().max(1.0) as i32,
-    )
+        pub fn set_visible(xid: u64, visible: bool) {
+            if let Some(hole) = lookup(xid) {
+                if visible {
+                    hole.show();
+                    hole.raise();
+                } else {
+                    hole.hide();
+                }
+            }
+        }
+
+        pub fn destroy(xid: u64) {
+            if let Some(hole) = lookup(xid) {
+                hole.hide();
+                // Consume la ref del creador que `create` dejó viva. El wrapper
+                // de `lookup` (`from_glib_none`) suelta su ref temporal al drop;
+                // la entrada XID la quita GDK al DestroyNotify.
+                hole.destroy();
+            }
+        }
+
+        /// Devuelve el foco X11 al toplevel de idioteque. Mientras la ventana de
+        /// CEF tiene el foco, el servidor X le entrega a ella todas las teclas y
+        /// el webview no ve nada; al pulsar en la barra Svelte hay que recuperarlo.
+        pub fn focus_toplevel(window: &tauri::Window) -> Result<(), String> {
+            let gtk_window = window.gtk_window().map_err(|_| X11_REQUIRED.to_string())?;
+            let gdk_window = gtk_window
+                .window()
+                .ok_or_else(|| "La ventana de idioteque aún no está realizada".to_string())?;
+            let x11_window = gdk_window
+                .downcast_ref::<gdkx11::X11Window>()
+                .ok_or_else(|| X11_REQUIRED.to_string())?;
+            let xid = x11_window.xid();
+            unsafe {
+                let xdisplay = gdkx11::ffi::gdk_x11_get_default_xdisplay();
+                if xdisplay.is_null() {
+                    return Err(X11_REQUIRED.to_string());
+                }
+                x11::xlib::XSetInputFocus(
+                    xdisplay,
+                    xid as x11::xlib::Window,
+                    x11::xlib::RevertToParent,
+                    x11::xlib::CurrentTime,
+                );
+                x11::xlib::XFlush(xdisplay);
+            }
+            Ok(())
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    mod gdk {
+        pub fn create(
+            _window: &tauri::Window,
+            _x: i32,
+            _y: i32,
+            _w: i32,
+            _h: i32,
+        ) -> Result<u64, String> {
+            Err("El navegador embebido solo está implementado en Linux/X11".to_string())
+        }
+        pub fn move_resize(_xid: u64, _x: i32, _y: i32, _w: i32, _h: i32) {}
+        pub fn set_visible(_xid: u64, _visible: bool) {}
+        pub fn destroy(_xid: u64) {}
+        pub fn focus_toplevel(_window: &tauri::Window) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    pub(super) use gdk::{create, destroy, focus_toplevel, move_resize, set_visible};
 }
 
 fn destroy_hole(state: &CefState) {
@@ -998,6 +1071,107 @@ exit 0
         assert_eq!(
             physical_bounds(0.0, 36.0, 1200.0, 700.0, 1.0),
             (0, 36, 1200, 700)
+        );
+    }
+
+    #[test]
+    fn hole_css_bounds_round_without_scale() {
+        assert_eq!(
+            hole::sanitize_css_bounds(10.2, 20.6, 100.4, 50.5),
+            (10, 21, 100, 51)
+        );
+        assert_eq!(
+            hole::sanitize_css_bounds(0.0, 36.0, 1200.0, 700.0),
+            (0, 36, 1200, 700)
+        );
+    }
+
+    #[test]
+    fn hole_css_bounds_zero_and_negative_size_become_one() {
+        assert_eq!(hole::sanitize_css_bounds(8.0, 9.0, 0.0, 0.0), (8, 9, 1, 1));
+        assert_eq!(
+            hole::sanitize_css_bounds(-4.2, 12.0, -10.0, 0.4),
+            (-4, 12, 1, 1)
+        );
+        assert_eq!(hole::clamp_geom(3, 4, 0, -2), (3, 4, 1, 1));
+    }
+
+    #[test]
+    fn hole_css_bounds_nan_and_inf_do_not_reach_gdk() {
+        let nan = f64::NAN;
+        let inf = f64::INFINITY;
+        let ninf = f64::NEG_INFINITY;
+        assert_eq!(hole::sanitize_css_bounds(nan, nan, nan, nan), (0, 0, 1, 1));
+        assert_eq!(
+            hole::sanitize_css_bounds(inf, ninf, inf, ninf),
+            (0, 0, 1, 1)
+        );
+        assert_eq!(
+            hole::sanitize_css_bounds(10.0, nan, 800.0, inf),
+            (10, 0, 800, 1)
+        );
+        // Old `logical_bounds` did `round().max(1.0) as i32`: Inf became i32::MAX.
+        let old_inf = inf.round().max(1.0) as i32;
+        assert_eq!(old_inf, i32::MAX);
+        assert_ne!(
+            hole::sanitize_css_bounds(0.0, 0.0, inf, inf),
+            (0, 0, i32::MAX, i32::MAX)
+        );
+    }
+
+    #[test]
+    fn hole_never_falls_back_to_parent_gl_visual() {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        enum Kind {
+            System,
+            Parent,
+        }
+        assert_eq!(
+            hole::window_attr_visual(Some(Kind::System), Some(Kind::Parent)).unwrap(),
+            Kind::System
+        );
+        assert!(
+            hole::window_attr_visual::<Kind>(None, Some(Kind::Parent)).is_err(),
+            "parent GL visual must not be a fallback; Chromium CreateWindow BadMatch"
+        );
+        assert!(hole::window_attr_visual::<Kind>(None, None).is_err());
+    }
+
+    #[test]
+    fn into_glib_ptr_keeps_creator_ref_until_destroy() {
+        let leaked = hole::modeled_creator_refs(true, true, false);
+        assert_eq!(leaked, 1);
+        assert!(
+            !hole::xid_table_use_after_free(leaked, true),
+            "into_glib_ptr (ManuallyDrop) must leave the from_glib_full ref alive"
+        );
+        let after_destroy = hole::modeled_creator_refs(true, true, true);
+        assert_eq!(after_destroy, 0);
+        assert!(
+            !hole::xid_table_use_after_free(after_destroy, false),
+            "gdk_window_destroy consumes the creator ref and drops the XID entry"
+        );
+    }
+
+    #[test]
+    fn dropping_full_wrapper_without_into_glib_ptr_uafs_xid_table() {
+        let dropped = hole::modeled_creator_refs(false, true, false);
+        assert_eq!(dropped, 0);
+        assert!(
+            hole::xid_table_use_after_free(dropped, true),
+            "dropping the gtk-rs wrapper unrefs to 0 while GDK still has the XID"
+        );
+    }
+
+    #[test]
+    fn native_failure_destroys_wrapper_instead_of_leaking() {
+        assert_eq!(
+            hole::creator_ref_after_new(true),
+            hole::CreatorRef::LeakUntilDestroy
+        );
+        assert_eq!(
+            hole::creator_ref_after_new(false),
+            hole::CreatorRef::DestroyNow
         );
     }
 
