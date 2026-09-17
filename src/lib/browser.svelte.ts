@@ -63,6 +63,11 @@ function messageForExitCode(code: number): string | null {
   return "El navegador se cerró inesperadamente";
 }
 
+/** ADE retries once on exit 15 / abort 1 / initialize 11 (CONTRACT 4.1 / 5). */
+function isSandboxRetryFatal(event: BrowserEvent): event is Extract<BrowserEvent, { event: "fatal" }> {
+  return event.event === "fatal" && (event.code === 1 || event.code === 11 || event.code === 15);
+}
+
 class BrowserState {
   started = $state(false);
   alive = $state(false);
@@ -84,6 +89,8 @@ class BrowserState {
   );
 
   #gen = 0;
+  /** First-attempt sandbox fatal leaked by ADE; keep “Arrancando…” and ignore a late copy after ready. */
+  #suppressRetryFatal = false;
 
   enter(): void {
     surface.enterBrowser();
@@ -107,6 +114,7 @@ class BrowserState {
     if (this.alive || this.booting) return;
 
     const gen = ++this.#gen;
+    this.#suppressRetryFatal = false;
     this.pendingSpawn = false;
     this.booting = true;
     this.error = null;
@@ -131,7 +139,7 @@ class BrowserState {
       if (gen !== this.#gen) return;
       this.booting = false;
       this.alive = false;
-      this.error = messageFrom(error);
+      if (this.error === null) this.error = messageFrom(error);
     }
   }
 
@@ -222,6 +230,7 @@ class BrowserState {
 
   async #shutdown(options: { restoreSurface: boolean }): Promise<void> {
     this.#gen += 1;
+    this.#suppressRetryFatal = false;
     this.pendingSpawn = false;
     this.started = false;
     this.alive = false;
@@ -258,6 +267,8 @@ class BrowserState {
   }
 
   #onEvent(event: BrowserEvent): void {
+    if (isSandboxRetryFatal(event) && this.#holdSandboxRetryFatal()) return;
+
     switch (event.event) {
       case "ready":
         this.alive = true;
@@ -299,11 +310,27 @@ class BrowserState {
         this.alive = false;
         this.booting = false;
         this.loading = false;
+        if (event.code === 1 || event.code === 11 || event.code === 15) {
+          this.#suppressRetryFatal = true;
+        }
         if (event.code !== 0) this.error = messageForExitCode(event.code);
         return;
       case "health":
         return;
     }
+  }
+
+  /**
+   * CONTRACT: the first sandbox-retry fatal must not leave “Arrancando Chromium…”.
+   * ADE is supposed to swallow it; if the Channel still delivers it (or delivers
+   * it late after ready), keep booting and do not kill a recovered session.
+   */
+  #holdSandboxRetryFatal(): boolean {
+    if (this.booting || this.alive) {
+      this.#suppressRetryFatal = true;
+      return true;
+    }
+    return this.#suppressRetryFatal;
   }
 
   #onShortcut(chord: string): void {
