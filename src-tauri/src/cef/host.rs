@@ -662,6 +662,7 @@ mod hole {
     }
 
     /// Refcount GObject del creador tras `gdk_window_new` (= 1).
+    #[cfg(test)]
     pub fn modeled_creator_refs(into_glib_ptr: bool, rust_drop: bool, gdk_destroy: bool) -> u32 {
         let mut refs = 1u32;
         if rust_drop && !into_glib_ptr {
@@ -673,6 +674,7 @@ mod hole {
         refs
     }
 
+    #[cfg(test)]
     pub fn xid_table_use_after_free(gobject_refs: u32, xid_still_registered: bool) -> bool {
         xid_still_registered && gobject_refs == 0
     }
@@ -707,7 +709,8 @@ mod hole {
             }
 
             let (x, y, w, h) = clamp_geom(x, y, w, h);
-            let visual = window_attr_visual(parent.screen().system_visual(), parent.visual())?;
+            let visual =
+                window_attr_visual(parent.screen().system_visual(), Some(parent.visual()))?;
             let attrs = gdk::WindowAttr {
                 window_type: gdk::WindowType::Child,
                 wclass: gdk::WindowWindowClass::InputOutput,
@@ -1016,6 +1019,10 @@ exec sleep 30
             hole::sanitize_css_bounds(0.0, 0.0, inf, inf),
             (0, 0, i32::MAX, i32::MAX)
         );
+        assert_eq!(
+            hole::sanitize_css_bounds(1e20, -1e20, 1e20, 8.0),
+            (i32::MAX, i32::MIN, i32::MAX, 8)
+        );
     }
 
     #[test]
@@ -1072,6 +1079,8 @@ exec sleep 30
             hole::creator_ref_after_new(false),
             hole::CreatorRef::DestroyNow
         );
+        // `hole.destroy()` on the from_glib_full wrapper (no into_glib_ptr).
+        assert_eq!(hole::modeled_creator_refs(false, false, true), 0);
     }
 
     #[test]
