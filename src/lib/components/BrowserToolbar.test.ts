@@ -126,9 +126,10 @@ describe("BrowserToolbar", () => {
     expect(js).toMatch(/data-browser-url/);
     expect(js).toMatch(/data-browser-chrome-last/);
     expect(js).toMatch(/var div = root_3\(\)/);
-    expect(js).toMatch(/\$\.event\('focusin',\s*div,\s*onToolbarFocusIn/);
+    expect(js).toMatch(/\$\.delegated\('focusin',\s*div,\s*onToolbarFocusIn\)/);
     expect(js).not.toMatch(/pointerdown/);
     expect(js).not.toMatch(/\$\.event\('focus',\s*input_1/);
+    expect(js).not.toMatch(/\$\.delegated\('focus',\s*input_1/);
 
     const focusin = extractFunction(js, "onToolbarFocusIn");
     expect(focusin).toMatch(/shouldClaimAppFocus\(browser\.focusOwner\)/);

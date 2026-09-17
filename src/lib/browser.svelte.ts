@@ -93,7 +93,7 @@ function pageDocument(): {
 
 function blurActiveAppKeyboard(): void {
   const active = pageDocument()?.activeElement ?? null;
-  if (!isAppKeyboardTarget(active)) return;
+  if (active == null || !isAppKeyboardTarget(active)) return;
   active.blur?.();
 }
 

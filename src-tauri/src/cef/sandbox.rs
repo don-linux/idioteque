@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-use super::ipc::{FocusOwner, HostEvent};
+use super::ipc::HostEvent;
 
 /// Códigos con los que el ADE reintenta una vez sin sandbox (contrato 5).
 /// `1` es un abort (SIGABRT: `ExitStatus::code() == None` → 1).
@@ -392,6 +392,7 @@ pub fn forward_action(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cef::ipc::FocusOwner;
     use std::path::{Path, PathBuf};
     use tempfile::TempDir;
 
