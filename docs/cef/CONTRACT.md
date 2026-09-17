@@ -168,8 +168,12 @@ Argumentos desconocidos se ignoran.
 
 - `--idq-cef-dir <dir>` slot a cargar (obligatorio).
 - `--idq-cache-dir <dir>` `root_cache_path` (obligatorio).
-- `--idq-parent <xid>` ventana X11 padre. Sin él, ventana top-level propia
-  (modo standalone para pruebas).
+- `--idq-parent <xid>` ventana X11 padre (el hueco GDK del ADE, sección 5).
+  El host cuelga de ella una ventana intermedia con el visual y colormap por
+  defecto del servidor (el hueco lleva el visual GL de GTK y Chromium crea su
+  ventana con el visual por defecto: sin la intermedia `CreateWindow` da
+  `BadMatch`) y CEF cuelga de la intermedia en `(0, 0)`. Sin `--idq-parent`,
+  ventana top-level propia (modo standalone para pruebas).
 - `--idq-bounds x,y,w,h` en píxeles físicos relativos al padre.
 - `--idq-scale <f>` device scale factor (se pasa como
   `--force-device-scale-factor`).
@@ -183,7 +187,9 @@ Argumentos desconocidos se ignoran.
 Variables de entorno que pone el ADE al spawnear: `LD_LIBRARY_PATH=<slot>`
 (delante de lo que ya hubiera), `CHROME_DEVEL_SANDBOX=<slot>/chrome-sandbox`.
 Variables opcionales: `IDIOTEQUE_CEF_ARGS` (switches extra de Chromium
-separados por espacio, p. ej. `--disable-gpu`), `IDIOTEQUE_CEF_NO_SANDBOX=1`.
+separados por espacio, p. ej. `--disable-gpu`), `IDIOTEQUE_CEF_NO_SANDBOX=1`,
+`IDIOTEQUE_CEF_SOFTWARE_GL=1` (ANGLE/SwiftShader por software, para servidores X
+sin DRI3 como la VM de desarrollo; una máquina sin sandbox conserva su GPU).
 
 ### 4.2 Arranque
 
@@ -220,10 +226,13 @@ Cada mensaje es un objeto JSON con `event`:
   (no se emite para `ERR_ABORTED`).
 - `{"event":"shortcut","chord":"ctrl+b"}` — chords reenviados: `ctrl+b`,
   `ctrl+shift+b`, `ctrl+l`. El host los consume (no llegan a la página).
+- `nav`, `title`, `load-end` y `load-error` solo se emiten para el browser
+  principal: la ventana de DevTools y otros popups no alimentan la barra.
 - `{"event":"render-crashed","status":"…"}`
 - `{"event":"health","ok":true,"cef":"…","chromium":"…","apiVersion":15200}`
   — solo en modo health check, justo antes de salir 0.
 - `{"event":"fatal","message":"…","code":11}` — justo antes de salir ≠ 0.
+- `{"event":"info","apiVersion":15200,"cefCompiled":"152.0.6+…"}` — solo con `--idq-info`.
 
 ### 4.4 Protocolo ADE → host (stdin)
 
@@ -233,7 +242,8 @@ CEF con `post_task`.
 - `{"cmd":"navigate","url":"…"}`
 - `{"cmd":"back"}`, `{"cmd":"forward"}`, `{"cmd":"stop"}`
 - `{"cmd":"reload","ignoreCache":false}`
-- `{"cmd":"set_bounds","x":0,"y":36,"w":1200,"h":700}` (píxeles físicos)
+- `{"cmd":"set_bounds","x":0,"y":0,"w":1200,"h":700}` (píxeles físicos,
+  relativos al hueco: el ADE ya colocó el hueco en coordenadas lógicas)
 - `{"cmd":"show"}`, `{"cmd":"hide"}` — `XMapWindow`/`XUnmapWindow` +
   `was_hidden(false/true)`; tras `show`, `XRaiseWindow`.
 - `{"cmd":"focus"}` — `XSetInputFocus` + `set_focus(true)`.
@@ -299,10 +309,15 @@ Todos devuelven `Result<_, String>` con mensajes en español, como `pty_*`.
   4.4 serializado con `#[serde(tag = "cmd", rename_all = "snake_case")]`.
 - `browser_set_bounds { x, y, w, h, scale }` — recibe CSS px y scale; el ADE
   multiplica y redondea antes de mandar `set_bounds`.
-- `browser_set_visible { visible: bool }` → `show`/`hide`.
+- `browser_set_visible { visible: bool }` → oculta/muestra el hueco GDK y manda
+  `show`/`hide`.
+- `browser_focus_app` — devuelve el foco X11 al toplevel de idioteque
+  (`XSetInputFocus`). Mientras la ventana de CEF tiene el foco, el webview no
+  recibe teclas; el frontend lo llama al pulsar en la barra Svelte, al enfocar
+  la URL y tras un `shortcut` del host.
 - `browser_kill` — `close`, espera 2 s, `SIGKILL` si sigue.
 - `cef_runtime_info -> CefRuntimeInfo`:
-  `{ current: SlotInfo, base: SlotInfo, candidate: SlotInfo | null, denylist: DenyEntry[], lastCheckAt: string | null, pendingPromotion: {...} | null, hostApiVersion: 15200, platform: "linux64" }`
+  `{ current: SlotInfo, base: SlotInfo, candidate: SlotInfo | null, denylist: DenyEntry[], lastCheckAt: string | null, pendingPromotion: {...} | null, hostApiVersion: 15200, platform: "linux64", hostAlive: bool }`
   con `SlotInfo = { cefVersion, chromiumVersion, source, path, verified }`.
 - `cef_check_updates -> Result<(), String>` — lanza un ciclo del updater en
   segundo plano (si no hay otro corriendo).
@@ -311,6 +326,13 @@ Todos devuelven `Result<_, String>` con mensajes en español, como `pty_*`.
 más `{"event":"exit","code":n}` cuando el proceso termina.
 
 `Bounds = { x: f64, y: f64, w: f64, h: f64 }` en CSS px.
+
+Hueco GDK: `browser_spawn` crea bajo el toplevel un `GdkWindow` hijo nativo
+(GDK pinta el toplevel con `IncludeInferiors`, así que una ventana X ajena
+colgada directamente quedaría tapada; un hijo que GDK conoce se descuenta de su
+región de recorte). Su XID es el `--idq-parent` del host. El ADE lo mueve con
+coordenadas lógicas en `browser_set_bounds`, lo oculta/muestra en
+`browser_set_visible` y lo destruye en `browser_kill`.
 
 ## 6. Evento global `cef-update`
 
@@ -370,6 +392,8 @@ toasts: los avisos `cef-update` se encolan y se muestran al salir del navegador.
 - Selección: plataforma actual → `channel == "stable"` → archivo
   `type == "minimal"` → versión > motor efectivo → no denylistada → la mayor.
 - Espacio: antes de bajar exige 2 GB libres en `~/.idioteque/cef`.
+- Overrides de desarrollo: `IDIOTEQUE_CEF_STARTUP_DELAY_SECS`,
+  `IDIOTEQUE_CEF_SKIP_STRIP=1` (para slots sintéticos en pruebas).
 - Descarga a `candidate/download.tar.bz2` verificando `size` y `sha1` del
   índice en streaming. Extracción de `Release/*`, `Resources/*`,
   `include/cef_api_versions.h`, `include/cef_version.h`, `LICENSE.txt` al

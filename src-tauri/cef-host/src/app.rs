@@ -86,8 +86,14 @@ impl AppState {
         )
     }
 
+    /// Solo el browser principal alimenta la barra: DevTools y otros popups no.
+    fn is_main(&self, browser: &Browser) -> bool {
+        let main = self.main_id.load(Ordering::SeqCst);
+        main == 0 || browser.identifier() == main
+    }
+
     fn emit_nav(&self, browser: &Browser, url: Option<String>) {
-        if self.args.health_check {
+        if self.args.health_check || !self.is_main(browser) {
             return;
         }
         let url = url.unwrap_or_else(|| frame_url(browser));
@@ -633,6 +639,11 @@ wrap_load_handler! {
             if frame.is_main() == 0 {
                 return;
             }
+            if let Some(browser) = browser.as_deref() {
+                if !self.state.is_main(browser) {
+                    return;
+                }
+            }
             if self.state.args.health_check {
                 if self
                     .state
@@ -667,7 +678,7 @@ wrap_load_handler! {
 
         fn on_load_error(
             &self,
-            _browser: Option<&mut Browser>,
+            browser: Option<&mut Browser>,
             frame: Option<&mut Frame>,
             error_code: Errorcode,
             error_text: Option<&CefString>,
@@ -675,6 +686,11 @@ wrap_load_handler! {
         ) {
             if self.state.args.health_check {
                 return;
+            }
+            if let Some(browser) = browser {
+                if !self.state.is_main(browser) {
+                    return;
+                }
             }
             if let Some(frame) = frame {
                 if frame.is_main() == 0 {
@@ -712,9 +728,14 @@ wrap_display_handler! {
                 .emit_nav(browser, url.map(|u| u.to_string()));
         }
 
-        fn on_title_change(&self, _browser: Option<&mut Browser>, title: Option<&CefString>) {
+        fn on_title_change(&self, browser: Option<&mut Browser>, title: Option<&CefString>) {
             if self.state.args.health_check {
                 return;
+            }
+            if let Some(browser) = browser {
+                if !self.state.is_main(browser) {
+                    return;
+                }
             }
             protocol::emit(&HostEvent::Title {
                 title: title.map(|t| t.to_string()).unwrap_or_default(),
