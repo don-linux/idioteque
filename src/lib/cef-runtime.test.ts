@@ -1,10 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  CEF_CHECKING,
+  CEF_UNAVAILABLE,
   formatCheckedAt,
   formatDenyEntry,
   formatPendingPromotion,
   sourceLabel,
 } from "./cef-runtime";
+
+describe("copy constants", () => {
+  it("keeps the settings fallbacks", () => {
+    expect(CEF_UNAVAILABLE).toBe("No disponible fuera de idioteque");
+    expect(CEF_CHECKING).toBe("Buscando…");
+  });
+});
 
 describe("sourceLabel", () => {
   it("labels the bundled slot as factory", () => {
@@ -13,6 +22,13 @@ describe("sourceLabel", () => {
 
   it("labels the installed slot as updated", () => {
     expect(sourceLabel("installed")).toBe("actualizado");
+  });
+
+  it("treats unknown, empty or differently-cased sources as factory", () => {
+    expect(sourceLabel("downloaded")).toBe("de fábrica");
+    expect(sourceLabel("")).toBe("de fábrica");
+    expect(sourceLabel("Installed")).toBe("de fábrica");
+    expect(sourceLabel("INSTALLED")).toBe("de fábrica");
   });
 });
 
@@ -23,6 +39,11 @@ describe("formatCheckedAt", () => {
 
   it("says never when the timestamp is invalid", () => {
     expect(formatCheckedAt("no-es-una-fecha")).toBe("nunca");
+  });
+
+  it("says never for empty or whitespace timestamps", () => {
+    expect(formatCheckedAt("")).toBe("nunca");
+    expect(formatCheckedAt("   ")).toBe("nunca");
   });
 
   it("formats a timestamp as local dd/mm/aaaa hh:mm", () => {
@@ -67,6 +88,17 @@ describe("formatDenyEntry", () => {
         at: iso,
       }),
     ).toBe(`153.0.8000.10 — health-exit-10 — ${formatCheckedAt(iso)}`);
+  });
+
+  it("still formats when the denylist timestamp is missing", () => {
+    expect(
+      formatDenyEntry({
+        cefVersion: "153.0.1+gabc",
+        chromiumVersion: "153.0.8000.10",
+        reason: "health-timeout",
+        at: "",
+      }),
+    ).toBe("153.0.8000.10 — health-timeout — nunca");
   });
 });
 
