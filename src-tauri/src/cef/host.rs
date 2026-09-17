@@ -1504,7 +1504,8 @@ exit 0
         let tmp = TempDir::new().unwrap();
         let binary = write_script(tmp.path(), "ready", FAKE_HOST);
         let mut host = spawn_ok(binary, tmp.path(), "cache");
-        let _ = host.take_events();
+        let events = host.take_events();
+        let _ = events.recv_timeout(Duration::from_secs(3)).expect("ready");
         let _ = host.take_events();
     }
 
@@ -1574,6 +1575,8 @@ exit 0
     fn pid_alive(pid: u32) -> bool {
         std::process::Command::new("kill")
             .args(["-0", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .status()
             .map(|status| status.success())
             .unwrap_or(false)
