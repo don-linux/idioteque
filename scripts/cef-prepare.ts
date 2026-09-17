@@ -8,15 +8,16 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = path.resolve(path.dirname(path.resolve(process.argv[1] ?? ".")), "..");
+export const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const SRC_TAURI = path.join(ROOT, "src-tauri");
 const BASE_JSON_PATH = path.join(SRC_TAURI, "cef", "base.json");
 const SDK_ROOT = path.join(SRC_TAURI, ".cef-sdk");
 const CEF_BASE_DIR = path.join(SRC_TAURI, "cef-base");
 const BINARIES_DIR = path.join(SRC_TAURI, "binaries");
 
-const TRIPLE_TO_PLATFORM: Record<string, string> = {
+export const TRIPLE_TO_PLATFORM: Record<string, string> = {
   "x86_64-unknown-linux-gnu": "linux64",
   "aarch64-unknown-linux-gnu": "linuxarm64",
   "x86_64-pc-windows-msvc": "windows64",
@@ -24,7 +25,7 @@ const TRIPLE_TO_PLATFORM: Record<string, string> = {
   "aarch64-apple-darwin": "macosarm64",
 };
 
-const REQUIRED_LINUX64 = [
+export const REQUIRED_LINUX64 = [
   "libcef.so",
   "icudtl.dat",
   "v8_context_snapshot.bin",
@@ -40,13 +41,15 @@ const REQUIRED_LINUX64 = [
   "chrome-sandbox",
 ];
 
-interface BaseFile {
+export const KNOWN_PREPARE_FLAGS = ["--skip-host", "--skip-base", "--force"] as const;
+
+export interface BaseFile {
   name: string;
   sha1: string;
   size: number;
 }
 
-interface BaseJson {
+export interface BaseJson {
   cefVersion: string;
   chromiumVersion: string;
   hostApiVersion: number;
@@ -54,7 +57,7 @@ interface BaseJson {
   files: Record<string, BaseFile>;
 }
 
-interface ArchiveJson {
+export interface ArchiveJson {
   name?: string;
   sha1?: string;
 }
@@ -83,9 +86,51 @@ interface SlotManifest {
   createdAt: string;
 }
 
-function fail(message: string): never {
-  console.error(message);
-  process.exit(1);
+export interface PrepareFlags {
+  skipHost: boolean;
+  skipBase: boolean;
+  force: boolean;
+  unknown: string[];
+}
+
+export interface CefPreparePaths {
+  srcTauri: string;
+  baseJsonPath: string;
+  sdkRoot: string;
+  cefBaseDir: string;
+  binariesDir: string;
+}
+
+export interface PrepareDeps {
+  rustcHostTriple: () => string;
+  prepareHost: (triple: string, force: boolean) => void;
+  prepareBase: (platform: string, force: boolean) => void;
+  log: (message: string) => void;
+}
+
+export class PrepareError extends Error {
+  override readonly name = "PrepareError";
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+export function fail(message: string): never {
+  throw new PrepareError(message);
+}
+
+export function defaultPreparePaths(): CefPreparePaths {
+  return {
+    srcTauri: SRC_TAURI,
+    baseJsonPath: BASE_JSON_PATH,
+    sdkRoot: SDK_ROOT,
+    cefBaseDir: CEF_BASE_DIR,
+    binariesDir: BINARIES_DIR,
+  };
+}
+
+function resolvePaths(override?: Partial<CefPreparePaths>): CefPreparePaths {
+  return { ...defaultPreparePaths(), ...override };
 }
 
 function run(command: string, args: string[], cwd: string): SpawnSyncReturns<Buffer> {
@@ -101,7 +146,7 @@ function commandExists(name: string): boolean {
   return !probe.error;
 }
 
-function rustcHostTriple(): string {
+export function rustcHostTriple(): string {
   const result = spawnSync("rustc", ["--print", "host-tuple"], {
     encoding: "utf8",
     env: process.env,
@@ -117,12 +162,45 @@ function rustcHostTriple(): string {
   return triple;
 }
 
-function majorMinorPatch(cefVersion: string): string {
+export function platformOfTriple(triple: string): string | undefined {
+  return TRIPLE_TO_PLATFORM[triple];
+}
+
+export function majorMinorPatch(cefVersion: string): string {
   const plus = cefVersion.indexOf("+");
   return plus === -1 ? cefVersion : cefVersion.slice(0, plus);
 }
 
-function findVersionDir(sdkRoot: string, prefix: string): string {
+/** Hex SHA-1: case-insensitive, trim both sides (CDN JSON is not always lowercase). */
+export function sha1Eq(actual: string | undefined | null, expected: string): boolean {
+  if (typeof actual !== "string") return false;
+  const left = actual.trim();
+  const right = expected.trim();
+  if (left.length === 0 || right.length === 0) return false;
+  return left.toLowerCase() === right.toLowerCase();
+}
+
+export function assertArchiveMatches(archive: ArchiveJson, platformFile: BaseFile): void {
+  if (archive.name !== platformFile.name || !sha1Eq(archive.sha1, platformFile.sha1)) {
+    fail(
+      `base.json y la SDK descargada no coinciden\n` +
+        `  esperado: ${platformFile.name} ${platformFile.sha1}\n` +
+        `  SDK:      ${archive.name ?? "(sin name)"} ${archive.sha1 ?? "(sin sha1)"}`,
+    );
+  }
+}
+
+export function parsePrepareFlags(argv: string[]): PrepareFlags {
+  const flags = new Set(argv);
+  return {
+    skipHost: flags.has("--skip-host"),
+    skipBase: flags.has("--skip-base"),
+    force: flags.has("--force"),
+    unknown: [...flags].filter((flag) => !KNOWN_PREPARE_FLAGS.includes(flag as (typeof KNOWN_PREPARE_FLAGS)[number])),
+  };
+}
+
+export function findVersionDir(sdkRoot: string, prefix: string): string {
   if (!fs.existsSync(sdkRoot)) {
     fail(`No existe el SDK de CEF en ${sdkRoot}. Compila cef-host una vez para descargarlo.`);
   }
@@ -132,7 +210,8 @@ function findVersionDir(sdkRoot: string, prefix: string): string {
     .readdirSync(sdkRoot)
     .filter((name) => name === prefix || name.startsWith(`${prefix}+`) || name.startsWith(`${prefix}-`))
     .map((name) => path.join(sdkRoot, name))
-    .filter((p) => fs.statSync(p).isDirectory());
+    .filter((p) => fs.statSync(p).isDirectory())
+    .sort();
   if (matches.length === 1) return matches[0];
   if (matches.length > 1) {
     fail(`Varios directorios de SDK coinciden con ${prefix}: ${matches.join(", ")}`);
@@ -140,12 +219,13 @@ function findVersionDir(sdkRoot: string, prefix: string): string {
   fail(`No hay un directorio de SDK cuya versión coincida con ${prefix} bajo ${sdkRoot}`);
 }
 
-function findSdkSlot(versionDir: string): string {
+export function findSdkSlot(versionDir: string): string {
   if (fs.existsSync(path.join(versionDir, "archive.json"))) return versionDir;
   const dirs = fs
     .readdirSync(versionDir)
     .map((name) => path.join(versionDir, name))
-    .filter((p) => fs.statSync(p).isDirectory());
+    .filter((p) => fs.statSync(p).isDirectory())
+    .sort();
   const withArchive = dirs.filter((dir) => fs.existsSync(path.join(dir, "archive.json")));
   if (withArchive.length === 1) return withArchive[0];
   if (withArchive.length === 0) {
@@ -154,7 +234,7 @@ function findSdkSlot(versionDir: string): string {
   fail(`Varios slots de SDK con archive.json bajo ${versionDir}: ${withArchive.join(", ")}`);
 }
 
-function isTopLevelRuntimeFile(name: string): boolean {
+export function isTopLevelRuntimeFile(name: string): boolean {
   if (name === "archive.json") return false;
   if (name === "chrome-sandbox" || name === "LICENSE.txt") return true;
   if (name === "vk_swiftshader_icd.json") return true;
@@ -231,7 +311,7 @@ function parseDefineNumber(header: string, name: string): number {
   return Number(match[1]);
 }
 
-function baseAlreadyPrepared(baseDir: string, cefVersion: string): boolean {
+export function baseAlreadyPrepared(baseDir: string, cefVersion: string): boolean {
   const manifestPath = path.join(baseDir, "manifest.json");
   if (!fs.existsSync(manifestPath)) return false;
   try {
@@ -252,21 +332,22 @@ function baseAlreadyPrepared(baseDir: string, cefVersion: string): boolean {
   }
 }
 
-function prepareHost(triple: string, force: boolean): void {
+export function prepareHost(triple: string, force: boolean, paths?: Partial<CefPreparePaths>): void {
+  const resolved = resolvePaths(paths);
   console.log("Compilando cef-host en release…");
-  const cargo = run("cargo", ["build", "-p", "cef-host", "--release"], SRC_TAURI);
+  const cargo = run("cargo", ["build", "-p", "cef-host", "--release"], resolved.srcTauri);
   if (cargo.status !== 0) {
     process.exit(cargo.status ?? 1);
   }
 
   const exe = triple.includes("windows") ? ".exe" : "";
-  const src = path.join(SRC_TAURI, "target", "release", `cef-host${exe}`);
-  const dest = path.join(BINARIES_DIR, `cef-host-${triple}${exe}`);
+  const src = path.join(resolved.srcTauri, "target", "release", `cef-host${exe}`);
+  const dest = path.join(resolved.binariesDir, `cef-host-${triple}${exe}`);
   if (!fs.existsSync(src)) {
     fail(`No se encontró el binario compilado en ${src}`);
   }
 
-  fs.mkdirSync(BINARIES_DIR, { recursive: true });
+  fs.mkdirSync(resolved.binariesDir, { recursive: true });
   if (!force && fs.existsSync(dest)) {
     const srcMtime = fs.statSync(src).mtimeMs;
     const destMtime = fs.statSync(dest).mtimeMs;
@@ -280,14 +361,15 @@ function prepareHost(triple: string, force: boolean): void {
   copyPreservingMode(src, dest);
 }
 
-function prepareBase(platform: string, force: boolean): void {
-  if (!fs.existsSync(BASE_JSON_PATH)) {
-    fail(`No existe ${BASE_JSON_PATH}`);
+export function prepareBase(platform: string, force: boolean, paths?: Partial<CefPreparePaths>): void {
+  const resolved = resolvePaths(paths);
+  if (!fs.existsSync(resolved.baseJsonPath)) {
+    fail(`No existe ${resolved.baseJsonPath}`);
   }
-  const base = JSON.parse(fs.readFileSync(BASE_JSON_PATH, "utf8")) as BaseJson;
+  const base = JSON.parse(fs.readFileSync(resolved.baseJsonPath, "utf8")) as BaseJson;
   const versionPrefix = majorMinorPatch(base.cefVersion);
 
-  if (!force && baseAlreadyPrepared(CEF_BASE_DIR, base.cefVersion)) {
+  if (!force && baseAlreadyPrepared(resolved.cefBaseDir, base.cefVersion)) {
     console.log("base ya preparado");
     return;
   }
@@ -297,20 +379,14 @@ function prepareBase(platform: string, force: boolean): void {
     fail(`base.json no tiene files[${platform}]`);
   }
 
-  console.log(`Buscando SDK ${versionPrefix} bajo src-tauri/.cef-sdk…`);
-  const versionDir = findVersionDir(SDK_ROOT, versionPrefix);
+  console.log(`Buscando SDK ${versionPrefix} bajo ${path.relative(ROOT, resolved.sdkRoot) || resolved.sdkRoot}…`);
+  const versionDir = findVersionDir(resolved.sdkRoot, versionPrefix);
   const sdkDir = findSdkSlot(versionDir);
   console.log(`SDK encontrada: ${path.relative(ROOT, sdkDir)}`);
 
   const archivePath = path.join(sdkDir, "archive.json");
   const archive = JSON.parse(fs.readFileSync(archivePath, "utf8")) as ArchiveJson;
-  if (archive.name !== platformFile.name || archive.sha1 !== platformFile.sha1) {
-    fail(
-      `base.json y la SDK descargada no coinciden\n` +
-        `  esperado: ${platformFile.name} ${platformFile.sha1}\n` +
-        `  SDK:      ${archive.name ?? "(sin name)"} ${archive.sha1 ?? "(sin sha1)"}`,
-    );
-  }
+  assertArchiveMatches(archive, platformFile);
   console.log("base.json y la SDK coinciden.");
 
   const apiHeaderPath = path.join(sdkDir, "include", "cef_api_versions.h");
@@ -345,15 +421,15 @@ function prepareBase(platform: string, force: boolean): void {
   }
 
   console.log("Reconstruyendo src-tauri/cef-base/ desde cero…");
-  fs.rmSync(CEF_BASE_DIR, { recursive: true, force: true });
-  fs.mkdirSync(CEF_BASE_DIR, { recursive: true });
+  fs.rmSync(resolved.cefBaseDir, { recursive: true, force: true });
+  fs.mkdirSync(resolved.cefBaseDir, { recursive: true });
 
   const topNames = fs.readdirSync(sdkDir);
   for (const name of topNames) {
     const src = path.join(sdkDir, name);
     if (!fs.statSync(src).isFile()) continue;
     if (!isTopLevelRuntimeFile(name)) continue;
-    const dest = path.join(CEF_BASE_DIR, name);
+    const dest = path.join(resolved.cefBaseDir, name);
     if (name === "libcef.so" && (os.platform() === "linux" || platform.startsWith("linux"))) {
       stripLibcef(src, dest);
     } else {
@@ -363,7 +439,7 @@ function prepareBase(platform: string, force: boolean): void {
 
   const localesSrc = path.join(sdkDir, "locales");
   if (fs.existsSync(localesSrc) && fs.statSync(localesSrc).isDirectory()) {
-    const localesDest = path.join(CEF_BASE_DIR, "locales");
+    const localesDest = path.join(resolved.cefBaseDir, "locales");
     fs.mkdirSync(localesDest, { recursive: true });
     for (const name of fs.readdirSync(localesSrc)) {
       if (!name.endsWith(".pak")) continue;
@@ -371,16 +447,16 @@ function prepareBase(platform: string, force: boolean): void {
     }
   }
 
-  fs.mkdirSync(path.join(CEF_BASE_DIR, "include"), { recursive: true });
-  copyPreservingMode(apiHeaderPath, path.join(CEF_BASE_DIR, "include", "cef_api_versions.h"));
-  copyPreservingMode(versionHeaderPath, path.join(CEF_BASE_DIR, "include", "cef_version.h"));
+  fs.mkdirSync(path.join(resolved.cefBaseDir, "include"), { recursive: true });
+  copyPreservingMode(apiHeaderPath, path.join(resolved.cefBaseDir, "include", "cef_api_versions.h"));
+  copyPreservingMode(versionHeaderPath, path.join(resolved.cefBaseDir, "include", "cef_version.h"));
 
   if (platform === "linux64") {
-    const missing = REQUIRED_LINUX64.filter((rel) => !fs.existsSync(path.join(CEF_BASE_DIR, rel)));
+    const missing = REQUIRED_LINUX64.filter((rel) => !fs.existsSync(path.join(resolved.cefBaseDir, rel)));
     if (missing.length > 0) {
       fail(`Slot base inválido, faltan archivos obligatorios: ${missing.join(", ")}`);
     }
-    const sandbox = path.join(CEF_BASE_DIR, "chrome-sandbox");
+    const sandbox = path.join(resolved.cefBaseDir, "chrome-sandbox");
     const sandboxMode = fs.statSync(sandbox).mode;
     if ((sandboxMode & 0o111) === 0) {
       fail("chrome-sandbox no tiene bit de ejecución");
@@ -389,9 +465,9 @@ function prepareBase(platform: string, force: boolean): void {
 
   console.log("Calculando sha256 y escribiendo manifest.json…");
   const files: ManifestFile[] = [];
-  for (const rel of walkRelativeFiles(CEF_BASE_DIR)) {
+  for (const rel of walkRelativeFiles(resolved.cefBaseDir)) {
     if (rel === "manifest.json") continue;
-    const full = path.join(CEF_BASE_DIR, rel);
+    const full = path.join(resolved.cefBaseDir, rel);
     files.push({
       path: rel.replaceAll(path.sep, "/"),
       size: fs.statSync(full).size,
@@ -417,8 +493,8 @@ function prepareBase(platform: string, force: boolean): void {
     verifiedAt: null,
     createdAt: new Date().toISOString(),
   };
-  fs.writeFileSync(path.join(CEF_BASE_DIR, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
-  const libcef = path.join(CEF_BASE_DIR, "libcef.so");
+  fs.writeFileSync(path.join(resolved.cefBaseDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+  const libcef = path.join(resolved.cefBaseDir, "libcef.so");
   if (fs.existsSync(libcef)) {
     const mb = (fs.statSync(libcef).size / (1024 * 1024)).toFixed(1);
     console.log(`libcef.so stripeado: ${mb} MB`);
@@ -426,29 +502,46 @@ function prepareBase(platform: string, force: boolean): void {
   console.log(`Base lista: ${files.length} archivos en src-tauri/cef-base/`);
 }
 
-function main(): void {
-  const flags = new Set(process.argv.slice(2));
-  const skipHost = flags.has("--skip-host");
-  const skipBase = flags.has("--skip-base");
-  const force = flags.has("--force");
-  for (const flag of flags) {
-    if (flag !== "--skip-host" && flag !== "--skip-base" && flag !== "--force") {
-      console.log(`Aviso: flag desconocido ${flag}`);
-    }
+export function runPrepare(argv: string[], deps?: Partial<PrepareDeps>): void {
+  const flags = parsePrepareFlags(argv);
+  const resolved: PrepareDeps = {
+    rustcHostTriple,
+    prepareHost,
+    prepareBase: (platform, force) => prepareBase(platform, force),
+    log: (message) => console.log(message),
+    ...deps,
+  };
+
+  for (const flag of flags.unknown) {
+    resolved.log(`Aviso: flag desconocido ${flag}`);
   }
 
-  const triple = rustcHostTriple();
-  const platform = TRIPLE_TO_PLATFORM[triple];
+  const triple = resolved.rustcHostTriple();
+  const platform = platformOfTriple(triple);
   if (!platform) fail(`Triple no soportado: ${triple}`);
-  console.log(`Plataforma: ${triple} (${platform})`);
+  resolved.log(`Plataforma: ${triple} (${platform})`);
 
-  if (!skipHost) prepareHost(triple, force);
-  else console.log("Omitiendo host (--skip-host)");
+  if (!flags.skipHost) resolved.prepareHost(triple, flags.force);
+  else resolved.log("Omitiendo host (--skip-host)");
 
-  if (!skipBase) prepareBase(platform, force);
-  else console.log("Omitiendo base (--skip-base)");
+  if (!flags.skipBase) resolved.prepareBase(platform, flags.force);
+  else resolved.log("Omitiendo base (--skip-base)");
 
-  console.log("Listo.");
+  resolved.log("Listo.");
 }
 
-main();
+export function main(argv: string[] = process.argv): void {
+  try {
+    runPrepare(argv.slice(2));
+  } catch (error) {
+    if (error instanceof PrepareError) {
+      console.error(error.message);
+      process.exit(1);
+    }
+    throw error;
+  }
+}
+
+const invokedDirectly =
+  typeof process.argv[1] === "string" && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invokedDirectly) main(process.argv);
