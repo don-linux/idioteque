@@ -68,8 +68,15 @@ pub enum CycleOutcome {
     NoNewer,
     NotModified,
     Updated(Promoted),
-    Deferred { cef: String, chromium: String },
-    Incompatible { cef: String, chromium: String, reason: String },
+    Deferred {
+        cef: String,
+        chromium: String,
+    },
+    Incompatible {
+        cef: String,
+        chromium: String,
+        reason: String,
+    },
     Skipped(String),
 }
 
@@ -99,7 +106,10 @@ pub fn run_cycle(
 
     let mut early_promoted: Option<Promoted> = None;
     if state.pending_promotion.is_some() && !host_alive() {
-        log_step(&ctx.paths, "promoción diferida pendiente y el host no está vivo");
+        log_step(
+            &ctx.paths,
+            "promoción diferida pendiente y el host no está vivo",
+        );
         match promote_candidate(&ctx.paths, false) {
             Ok(PromoteResult::Promoted(promoted)) => {
                 emit(UpdateEvent::Updated {
@@ -123,7 +133,10 @@ pub fn run_cycle(
                 state.pending_promotion = None;
             }
             Err(error) => {
-                log_step(&ctx.paths, &format!("no se pudo promover lo pendiente: {error}"));
+                log_step(
+                    &ctx.paths,
+                    &format!("no se pudo promover lo pendiente: {error}"),
+                );
             }
         }
     }
@@ -132,11 +145,7 @@ pub fn run_cycle(
     let fetched = match fetch_index(&ctx.index_url, state.index_etag.as_deref()) {
         Ok(fetched) => fetched,
         Err(error) => {
-            return finish(
-                &ctx.paths,
-                &mut state,
-                CycleOutcome::Skipped(error),
-            );
+            return finish(&ctx.paths, &mut state, CycleOutcome::Skipped(error));
         }
     };
 
@@ -152,8 +161,7 @@ pub fn run_cycle(
         }
         IndexFetch::Fetched { body, etag } => {
             state.index_etag = etag;
-            match continue_with_index(ctx, host_alive, emit, &mut state, &mut denylist, &body)
-            {
+            match continue_with_index(ctx, host_alive, emit, &mut state, &mut denylist, &body) {
                 CycleOutcome::NoNewer => {
                     if let Some(promoted) = early_promoted {
                         finish(&ctx.paths, &mut state, CycleOutcome::Updated(promoted))
@@ -219,20 +227,15 @@ fn continue_with_index(
         return CycleOutcome::Skipped(error);
     }
     if let Err(error) = fs::create_dir_all(ctx.paths.candidate()) {
-        return CycleOutcome::Skipped(format!(
-            "No se pudo crear el candidate: {error}"
-        ));
+        return CycleOutcome::Skipped(format!("No se pudo crear el candidate: {error}"));
     }
 
     let tarball_in = ctx.paths.candidate().join("download.tar.bz2");
     let url = download_url(&ctx.download_base_url, &candidate.file.name);
     log_step(&ctx.paths, &format!("descargando {url}"));
-    if let Err(error) = download_verified(
-        &url,
-        &tarball_in,
-        candidate.file.size,
-        &candidate.file.sha1,
-    ) {
+    if let Err(error) =
+        download_verified(&url, &tarball_in, candidate.file.size, &candidate.file.sha1)
+    {
         let _ = discard_candidate(&ctx.paths);
         return CycleOutcome::Skipped(error.message());
     }
@@ -262,9 +265,7 @@ fn continue_with_index(
         Ok(text) => text,
         Err(error) => {
             let _ = discard_candidate(&ctx.paths);
-            return CycleOutcome::Skipped(format!(
-                "No se pudo leer cef_api_versions.h: {error}"
-            ));
+            return CycleOutcome::Skipped(format!("No se pudo leer cef_api_versions.h: {error}"));
         }
     };
     let ver_text = match fs::read_to_string(&ver_header) {
@@ -400,10 +401,7 @@ fn continue_with_index(
                     });
                     log_step(
                         &ctx.paths,
-                        &format!(
-                            "actualizado a Chromium {}",
-                            promoted.chromium_version
-                        ),
+                        &format!("actualizado a Chromium {}", promoted.chromium_version),
                     );
                     CycleOutcome::Updated(promoted)
                 }
@@ -492,7 +490,7 @@ pub fn context_from_app(app: &AppHandle) -> Result<UpdaterContext, String> {
     paths.ensure_dirs()?;
     let host_binary = paths::host_binary_path(app)?;
     let host_api_version = paths::base_info().host_api_version;
-    let no_sandbox = env_flag("IDIOTEQUE_CEF_NO_SANDBOX")
+    let no_sandbox = super::sandbox::wants_no_sandbox(&paths.bundled_base)
         || app
             .try_state::<CefState>()
             .map(|state| state.no_sandbox.load(Ordering::SeqCst))
@@ -632,7 +630,8 @@ fn env_flag(name: &str) -> bool {
 mod tests {
     use super::*;
     use crate::cef::archive::{
-        sample_api_versions_h, sample_cef_version_h, write_synthetic_tarball, VERSION_HEADER_SNIPPET,
+        sample_api_versions_h, sample_cef_version_h, write_synthetic_tarball,
+        VERSION_HEADER_SNIPPET,
     };
     use crate::cef::download::sha1_file;
     use crate::cef::manifest::{SlotSource, REQUIRED_FILES_LINUX64};
@@ -707,11 +706,7 @@ mod tests {
         for name in REQUIRED_FILES_LINUX64 {
             owned.push((tar_path_for_required(name), b"blob".to_vec(), 0o644));
         }
-        owned.push((
-            "include/cef_api_versions.h".into(),
-            api.into_bytes(),
-            0o644,
-        ));
+        owned.push(("include/cef_api_versions.h".into(), api.into_bytes(), 0o644));
         owned.push(("include/cef_version.h".into(), ver.into_bytes(), 0o644));
         owned.push(("LICENSE.txt".into(), b"license".to_vec(), 0o644));
         let refs: Vec<(&str, &[u8], u32)> = owned
@@ -748,7 +743,9 @@ mod tests {
                     let _ = stream.write_all(header.as_bytes());
                     let _ = stream.write_all(body);
                 } else {
-                    let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    );
                 }
             }
         });
@@ -878,7 +875,13 @@ mod tests {
         build_runtime_tarball(&tarball_path, 13300, 15200, NEWER, NEWER_CHROMIUM);
         let bytes = fs::read(&tarball_path).unwrap();
         let sha = sha1_file(&tarball_path).unwrap();
-        let index = index_json(ARCHIVE_NAME, &sha, bytes.len() as u64, NEWER, NEWER_CHROMIUM);
+        let index = index_json(
+            ARCHIVE_NAME,
+            &sha,
+            bytes.len() as u64,
+            NEWER,
+            NEWER_CHROMIUM,
+        );
         let host = write_script(
             tmp.path(),
             "bad-host",
@@ -892,7 +895,11 @@ exit 10
         let (events, emit) = collect_events();
         let outcome = run_cycle(&ctx, &|| false, emit.as_ref());
         match &outcome {
-            CycleOutcome::Incompatible { cef, chromium, reason } => {
+            CycleOutcome::Incompatible {
+                cef,
+                chromium,
+                reason,
+            } => {
                 assert_eq!(cef, NEWER);
                 assert_eq!(chromium, NEWER_CHROMIUM);
                 assert_eq!(reason, "health-exit-10");
@@ -931,7 +938,13 @@ exit 10
         build_runtime_tarball(&tarball_path, 99999, 99999, NEWER, NEWER_CHROMIUM);
         let bytes = fs::read(&tarball_path).unwrap();
         let sha = sha1_file(&tarball_path).unwrap();
-        let index = index_json(ARCHIVE_NAME, &sha, bytes.len() as u64, NEWER, NEWER_CHROMIUM);
+        let index = index_json(
+            ARCHIVE_NAME,
+            &sha,
+            bytes.len() as u64,
+            NEWER,
+            NEWER_CHROMIUM,
+        );
         let host = write_script(
             tmp.path(),
             "should-not-run",
@@ -949,7 +962,10 @@ exit 0
             }
             other => panic!("expected Incompatible, got {other:?}"),
         }
-        assert!(!tmp.path().join("ran").exists(), "cef-host no debía arrancar");
+        assert!(
+            !tmp.path().join("ran").exists(),
+            "cef-host no debía arrancar"
+        );
         assert!(!ctx.paths.candidate().exists());
         let list = denylist::load(&ctx.paths, 15200);
         assert!(list.contains(NEWER));
@@ -965,7 +981,13 @@ exit 0
         build_runtime_tarball(&tarball_path, 13300, 15200, NEWER, NEWER_CHROMIUM);
         let bytes = fs::read(&tarball_path).unwrap();
         let sha = sha1_file(&tarball_path).unwrap();
-        let index = index_json(ARCHIVE_NAME, &sha, bytes.len() as u64, NEWER, NEWER_CHROMIUM);
+        let index = index_json(
+            ARCHIVE_NAME,
+            &sha,
+            bytes.len() as u64,
+            NEWER,
+            NEWER_CHROMIUM,
+        );
         let host = write_script(tmp.path(), "unused-host", "#!/bin/sh\nexit 0\n");
         let ctx = setup_ctx(&tmp, index, Some((ARCHIVE_NAME, bytes)), host, false);
         let (events, emit) = collect_events();
@@ -987,7 +1009,13 @@ exit 0
         build_runtime_tarball(&tarball_path, 13300, 15200, NEWER, NEWER_CHROMIUM);
         let bytes = fs::read(&tarball_path).unwrap();
         let sha = sha1_file(&tarball_path).unwrap();
-        let index = index_json(ARCHIVE_NAME, &sha, bytes.len() as u64, NEWER, NEWER_CHROMIUM);
+        let index = index_json(
+            ARCHIVE_NAME,
+            &sha,
+            bytes.len() as u64,
+            NEWER,
+            NEWER_CHROMIUM,
+        );
         let host = write_script(
             tmp.path(),
             "ok-host",
@@ -1029,7 +1057,13 @@ exit 0
         build_runtime_tarball(&tarball_path, 13300, 15200, NEWER, NEWER_CHROMIUM);
         let bytes = fs::read(&tarball_path).unwrap();
         let sha = sha1_file(&tarball_path).unwrap();
-        let index = index_json(ARCHIVE_NAME, &sha, bytes.len() as u64, NEWER, NEWER_CHROMIUM);
+        let index = index_json(
+            ARCHIVE_NAME,
+            &sha,
+            bytes.len() as u64,
+            NEWER,
+            NEWER_CHROMIUM,
+        );
         let host = write_script(
             tmp.path(),
             "ok-host",
@@ -1053,7 +1087,10 @@ exit 0
         assert!(manifest::load(&ctx.paths.candidate()).unwrap().verified);
         let pending = state::load(&ctx.paths).pending_promotion.expect("pending");
         assert_eq!(pending.cef_version, NEWER);
-        assert_eq!(state::load(&ctx.paths).last_outcome.as_deref(), Some("deferred"));
+        assert_eq!(
+            state::load(&ctx.paths).last_outcome.as_deref(),
+            Some("deferred")
+        );
         assert!(events.lock().unwrap().is_empty());
     }
 

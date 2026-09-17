@@ -69,10 +69,7 @@ pub fn promote_candidate(paths: &CefPaths, host_alive: bool) -> Result<PromoteRe
     swap_candidate_into_current(paths, manifest)
 }
 
-pub fn recover_at_startup(
-    paths: &CefPaths,
-    host_alive: bool,
-) -> Result<Option<Promoted>, String> {
+pub fn recover_at_startup(paths: &CefPaths, host_alive: bool) -> Result<Option<Promoted>, String> {
     let current = paths.current();
     let current_old = paths.current_old();
 
@@ -170,10 +167,7 @@ fn remove_dir_if_exists(path: &Path) -> Result<(), String> {
     match fs::remove_dir_all(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!(
-            "No se pudo borrar `{}`: {error}",
-            path.display()
-        )),
+        Err(error) => Err(format!("No se pudo borrar `{}`: {error}", path.display())),
     }
 }
 
@@ -231,12 +225,7 @@ mod tests {
         files
     }
 
-    fn write_slot(
-        dir: &Path,
-        version: &str,
-        source: SlotSource,
-        verified: bool,
-    ) -> SlotManifest {
+    fn write_slot(dir: &Path, version: &str, source: SlotSource, verified: bool) -> SlotManifest {
         fs::create_dir_all(dir).expect("slot");
         let mut manifest = sample_manifest(version, source);
         manifest.files = write_required(dir, 1);
@@ -368,10 +357,7 @@ mod tests {
         assert_eq!(promoted, None);
         assert!(paths.current().exists());
         assert!(!paths.current_old().exists());
-        assert_eq!(
-            manifest::load(&paths.current()).unwrap().cef_version,
-            NEWER
-        );
+        assert_eq!(manifest::load(&paths.current()).unwrap().cef_version, NEWER);
     }
 
     #[test]
@@ -397,10 +383,7 @@ mod tests {
         assert_eq!(done.cef_version, NEWER);
         assert!(!paths.candidate().exists());
         assert!(!paths.current_old().exists());
-        assert_eq!(
-            manifest::load(&paths.current()).unwrap().cef_version,
-            NEWER
-        );
+        assert_eq!(manifest::load(&paths.current()).unwrap().cef_version, NEWER);
     }
 
     #[test]

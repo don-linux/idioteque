@@ -7,6 +7,8 @@ mod exit;
 mod health;
 mod platform;
 mod protocol;
+mod sandbox;
+mod shm;
 mod slot;
 
 use std::path::Path;
@@ -58,10 +60,7 @@ fn prepend_ld_library_path(slot: &Path) {
 fn prepare_runtime_env(slot: &Path, cache_dir: &Path) {
     prepend_ld_library_path(slot);
 
-    let sandbox = slot.join("chrome-sandbox");
-    if sandbox.is_file() && std::env::var_os("CHROME_DEVEL_SANDBOX").is_none() {
-        std::env::set_var("CHROME_DEVEL_SANDBOX", &sandbox);
-    }
+    sandbox::apply_devel_sandbox_env(slot);
 
     let icd = slot.join("vk_swiftshader_icd.json");
     if icd.is_file() {
@@ -148,6 +147,13 @@ fn main() {
     let (cef_dir, cache_dir) = parsed.require_slot_and_cache();
     prepare_runtime_env(&cef_dir, &cache_dir);
 
+    // Solo el proceso browser llega aquí; los subprocesos heredan env y switches.
+    let shm_policy = shm::decide(&cache_dir);
+    if let Err(error) = shm::apply_env(&shm_policy) {
+        eprintln!("cef-host: no se pudo preparar TMPDIR para shm: {error}");
+    }
+    eprintln!("cef-host: shm {shm_policy:?}");
+
     #[cfg(target_os = "linux")]
     {
         platform::init_threads();
@@ -182,7 +188,7 @@ fn main() {
     settings.locales_dir_path = CefString::from(locales.to_string_lossy().as_ref());
     settings.log_file = CefString::from(log_path.to_string_lossy().as_ref());
 
-    let state = app::AppState::new(parsed.clone(), manifest);
+    let state = app::AppState::new(parsed.clone(), manifest, shm_policy.disable_dev_shm());
     if parsed.health_check {
         let cancel = health::start_watchdog();
         if let Ok(mut slot) = state.health_cancel.lock() {

@@ -2090,6 +2090,7 @@ dependencies = [
  "gdkx11",
  "gtk",
  "hex",
+ "libc",
  "notify",
  "notify-debouncer-mini",
  "portable-pty",

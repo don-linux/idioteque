@@ -36,6 +36,13 @@ produce `scripts/cef-prepare.ts` a partir de `src-tauri/cef/base.json` y lo
 empaqueta `tauri build` vía `bundle.resources`. Contiene el layout plano de la
 sección 3.3 y su `manifest.json` con `source: "bundled"`.
 
+En deb y rpm eso es `/usr/lib/idioteque/cef/base/`. En la AppImage la ruta es
+la misma (`$APPDIR/usr/lib/idioteque/cef/base/`) pero no la pone Tauri:
+`scripts/tauri.ts` bundlea la AppImage sin CEF (linuxdeploy parchearía las
+libs y rompería los tamaños del manifest) y luego inyecta `cef-base/` y
+`cef-host` en el AppDir antes de reempaquetarlo. El sidecar se busca junto a
+`std::env::current_exe()` (`$APPDIR/usr/bin/`), no junto al `.AppImage`.
+
 Override en desarrollo: `IDIOTEQUE_CEF_BASE_DIR=<dir>`.
 
 ### 3.2 Directorio del usuario
@@ -49,7 +56,9 @@ Override en desarrollo: `IDIOTEQUE_CEF_BASE_DIR=<dir>`.
 - `profile/` — `root_cache_path` de Chromium (cookies, storage, caché).
 - `health-cache-<pid>/` — caché desechable de cada health check. Se borra al
   terminar y al arrancar la app.
-- `denylist.json`, `state.json`, `logs/cef-host.log`, `logs/updater.log`.
+- `denylist.json`, `state.json`, `logs/cef-host.log` (stderr del host,
+  append), `logs/chromium.log` (`log_file` de CEF; Chromium lo trunca al
+  arrancar), `logs/updater.log`.
 
 ### 3.3 Layout plano de un slot
 
@@ -180,16 +189,61 @@ Argumentos desconocidos se ignoran.
 - `--idq-url <url>` URL inicial (por defecto `about:blank`).
 - `--idq-health-check` modo health check (sección 4.5).
 - `--idq-no-sandbox` pasa `no_sandbox = 1`.
-- `--idq-log <file>` `log_file` de CEF.
+- `--idq-log <file>` `log_file` de CEF (Chromium lo trunca al arrancar).
+  El ADE lo apunta a `logs/chromium.log`; el stderr del host
+  (`cef-host fatal …`) va aparte a `logs/cef-host.log`.
 - `--idq-info` imprime `{"event":"info","apiVersion":15200,"cefCompiled":"152.0.6+…"}`
   y sale 0, sin inicializar CEF.
 
 Variables de entorno que pone el ADE al spawnear: `LD_LIBRARY_PATH=<slot>`
-(delante de lo que ya hubiera), `CHROME_DEVEL_SANDBOX=<slot>/chrome-sandbox`.
+(delante de lo que ya hubiera). `CHROME_DEVEL_SANDBOX=<slot>/chrome-sandbox`
+solo si ese helper es setuid-root (`uid 0` y bit `0o4000`); si no, se quita
+aunque viniera heredado (un helper `755` hace que Chromium haga FATAL en vez
+de usar user namespaces). En la AppImage el squashfs no puede ser setuid.
+
+Antes de spawnear, el ADE decide el sandbox: helper setuid-root **o** user
+namespaces *usables*. El probe no es `unshare -U` (sale 0 bajo AppArmor de
+Ubuntu 24.04+ aunque el ns no sirva): en un hijo hace `unshare(CLONE_NEWUSER)`
+y después `unshare(CLONE_NEWPID)`, que exige `CAP_SYS_ADMIN` dentro del ns
+(lo que Chromium necesita para el zygote). Atajo: si
+`apparmor_restrict_unprivileged_userns=1` y el perfil es `unconfined`,
+el ADE no forkea — cef-host hereda el mismo confinamiento. Si no hay
+helper ni userns usable, o si `IDIOTEQUE_CEF_NO_SANDBOX=1`, el primer
+lanzamiento ya lleva `--idq-no-sandbox` (`BrowserBoot.noSandbox = true`).
+No es un error: en `tauri dev` y en la AppImage no hay setuid. El health
+check y el updater usan el mismo predicado (un candidate no se denylista
+por falta de sandbox). Quien quiera sandbox real en el paquete: helper
+`4755` o un perfil AppArmor propio (ver
+[Chromium: AppArmor userns restrictions](https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md)).
+
+Si el probe se equivoca y el host sale `15` / `11` / abort `1` sin `ready`,
+el ADE reintenta **una** vez con `--idq-no-sandbox`. El `fatal` de ese
+primer intento no llega al frontend (Svelte se queda en “Arrancando
+Chromium…”). Un exit `10` / `13` / `14` / `16` no se reintenta: ahí sí se
+reenvía el `fatal` pendiente y el `exit`.
+
 Variables opcionales: `IDIOTEQUE_CEF_ARGS` (switches extra de Chromium
 separados por espacio, p. ej. `--disable-gpu`), `IDIOTEQUE_CEF_NO_SANDBOX=1`,
 `IDIOTEQUE_CEF_SOFTWARE_GL=1` (ANGLE/SwiftShader por software, para servidores X
 sin DRI3 como la VM de desarrollo; una máquina sin sandbox conserva su GPU).
+
+**Memoria compartida.** Chromium no usa `memfd`: cada región (transfer
+buffers de la GPU, data pipes de Mojo, fuentes) es un fichero que crea y
+borra en `/dev/shm`, o en `$TMPDIR`/`/tmp` si lleva
+`--disable-dev-shm-usage`. Ese switch es un parche para contenedores con
+`/dev/shm` de 64 MiB y **no depende de `no_sandbox`**. El host lo decide
+antes de `initialize` con un probe real (`shm.rs`): crea un fichero, lo
+borra y reserva 128 MiB con `fallocate`, lo que detecta permisos, tamaño y
+cuota por usuario (un tmpfs con `usrquota`, systemd ≥ 258, devuelve
+`EDQUOT` aunque `df` diga que sobra sitio). Orden: `/dev/shm` → sin switch
+(lo mismo que Chrome); si no sirve, el temp dir → `--disable-dev-shm-usage`;
+si tampoco, `--disable-dev-shm-usage` + `TMPDIR=<cache-dir>/shm` en disco,
+que los subprocesos heredan. La decisión queda en stderr
+(`cef-host: shm DevShm|TempDir(..)|CacheDir(..)`) y los fallos del probe
+justo antes. Sin memoria compartida los renderers mueren
+(`render-crashed`), la red da `ERR_INSUFFICIENT_RESOURCES` y un `CHECK` del
+font service tumba el proceso browser. `IDIOTEQUE_CEF_ARGS=--disable-dev-shm-usage`
+sigue forzándolo.
 
 ### 4.2 Arranque
 
@@ -209,7 +263,9 @@ sin DRI3 como la VM de desarrollo; una máquina sin sandbox conserva su GPU).
    health check, `no_sandbox` según flag/env.
 6. `initialize` falla → exit `11`. Si el fallo es del sandbox (mensaje de
    Chromium sobre SUID/namespaces en stderr, o `initialize` falla con
-   sandbox activo y el ADE lo reintenta) → exit `15`.
+   sandbox activo y el ADE lo reintenta) → exit `15`. Un abort (SIGABRT)
+   porque `CHROME_DEVEL_SANDBOX` apuntaba a un helper inválido llega al ADE
+   como `Exit` con código `1`.
 7. Sin `DISPLAY`/sin X11 → exit `16`.
 
 ### 4.3 Protocolo host → ADE (stdout)
@@ -304,7 +360,13 @@ Todos devuelven `Result<_, String>` con mensajes en español, como `pty_*`.
   — spawnea el host con el motor efectivo. Solo puede haber uno (`id`
   implícito `"browser"`); si ya existe, lo mata primero. `BrowserBoot =
   { cef: String, chromium: String, apiVersion: u32, source: "bundled"|"installed", noSandbox: bool }`.
-  Ante exit `15` reintenta una vez con `--idq-no-sandbox` y marca `noSandbox`.
+  Si no hay helper setuid ni user namespaces, el primer spawn ya lleva
+  `--idq-no-sandbox` y `noSandbox` sale `true`. Si aun así el host muere
+  antes de `ready` con exit `15`, abort `1` o `initialize` `11`, reintenta
+  una vez con `--idq-no-sandbox` y no reenvía el `fatal` del primer
+  intento. El embed es X11: en una sesión Wayland el ADE fija
+  `GDK_BACKEND=x11` si hay `DISPLAY` (XWayland). Sin `DISPLAY`, no lo pisa
+  y `browser_spawn` falla con un error claro.
 - `browser_command { cmd: BrowserCommand }` — `BrowserCommand` es el enum de
   4.4 serializado con `#[serde(tag = "cmd", rename_all = "snake_case")]`.
 - `browser_set_bounds { x, y, w, h, scale }` — recibe CSS px y scale; el ADE

@@ -87,12 +87,10 @@ pub struct SlotInfo {
 
 pub fn load(slot_dir: &Path) -> Result<SlotManifest, String> {
     let path = slot_dir.join(MANIFEST_NAME);
-    let bytes = fs::read(&path).map_err(|error| {
-        format!("No se pudo leer `{}`: {error}", path.display())
-    })?;
-    serde_json::from_slice(&bytes).map_err(|error| {
-        format!("No se pudo parsear `{}`: {error}", path.display())
-    })
+    let bytes = fs::read(&path)
+        .map_err(|error| format!("No se pudo leer `{}`: {error}", path.display()))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| format!("No se pudo parsear `{}`: {error}", path.display()))
 }
 
 pub fn save(slot_dir: &Path, manifest: &SlotManifest) -> Result<(), String> {
@@ -231,8 +229,8 @@ mod tests {
     const OLDER: &str = "151.0.1+gold+chromium-151.0.1.1";
 
     fn sample_manifest(version: &str, source: SlotSource) -> SlotManifest {
-        let chromium = super::super::version::chromium_from(version)
-            .unwrap_or_else(|| "0.0.0.0".into());
+        let chromium =
+            super::super::version::chromium_from(version).unwrap_or_else(|| "0.0.0.0".into());
         SlotManifest {
             schema: 1,
             cef_version: version.to_string(),
@@ -373,7 +371,12 @@ mod tests {
         write_slot(&paths.bundled_base, BUNDLED, SlotSource::Bundled, true);
         let mut manifest = write_slot(&paths.current(), NEWER, SlotSource::Downloaded, true);
         fs::write(paths.current().join("libcef.so"), b"too-big").unwrap();
-        manifest.files.iter_mut().find(|f| f.path == "libcef.so").unwrap().size = 1;
+        manifest
+            .files
+            .iter_mut()
+            .find(|f| f.path == "libcef.so")
+            .unwrap()
+            .size = 1;
         save(&paths.current(), &manifest).unwrap();
 
         assert!(validate(&paths.current(), &manifest).is_err());

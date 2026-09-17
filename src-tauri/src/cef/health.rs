@@ -71,8 +71,10 @@ pub fn run_health_check(run: &HealthRun) -> HealthOutcome {
         scale: 1.0,
         url: "about:blank".into(),
         health_check: true,
-        no_sandbox: run.no_sandbox,
-        log_file: run.log_file.map(Path::to_path_buf),
+        no_sandbox: run.no_sandbox || super::sandbox::wants_no_sandbox(run.slot_dir),
+        // Chromium trunca `--idq-log`; el fatal del host va a stderr.
+        log_file: None,
+        stderr_file: run.log_file.map(Path::to_path_buf),
     };
 
     let mut host = match spawn_host(&launch) {
@@ -364,11 +366,7 @@ exit 10
     fn exit_zero_without_health_is_no_handshake() {
         let tmp = TempDir::new().unwrap();
         let (slot, cache) = setup_dirs(&tmp);
-        let binary = write_script(
-            tmp.path(),
-            "silent-host",
-            "#!/bin/sh\nexit 0\n",
-        );
+        let binary = write_script(tmp.path(), "silent-host", "#!/bin/sh\nexit 0\n");
         let outcome = run_with(&binary, &slot, &cache, Duration::from_secs(3));
         match &outcome {
             HealthOutcome::Failed(failure @ HealthFailure::NoHandshake) => {
@@ -384,11 +382,7 @@ exit 10
     fn kill_dash_nine_is_crashed() {
         let tmp = TempDir::new().unwrap();
         let (slot, cache) = setup_dirs(&tmp);
-        let binary = write_script(
-            tmp.path(),
-            "crash-host",
-            "#!/bin/sh\nkill -9 $$\n",
-        );
+        let binary = write_script(tmp.path(), "crash-host", "#!/bin/sh\nkill -9 $$\n");
         let outcome = run_with(&binary, &slot, &cache, Duration::from_secs(3));
         match &outcome {
             HealthOutcome::Failed(failure @ HealthFailure::Crashed) => {

@@ -17,7 +17,7 @@ use super::ipc::{encode_command, parse_event, HostCommand, HostEvent};
 use super::manifest::{self, EffectiveSource};
 use super::paths::{self, CefPaths};
 
-const X11_REQUIRED: &str = "El navegador necesita X11 (arranca idioteque con GDK_BACKEND=x11)";
+const X11_REQUIRED: &str = "El navegador necesita X11 (en GNOME Wayland, XWayland)";
 const GRACEFUL_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Deserialize)]
@@ -50,7 +50,10 @@ pub struct HostLaunch {
     pub url: String,
     pub health_check: bool,
     pub no_sandbox: bool,
+    /// `--idq-log`: Chromium lo trunca al arrancar. Distinto de `stderr_file`.
     pub log_file: Option<PathBuf>,
+    /// stderr del host (fatals). Append; no es el `log_file` de Chromium.
+    pub stderr_file: Option<PathBuf>,
 }
 
 pub struct HostProcess {
@@ -119,14 +122,11 @@ pub fn spawn_host(launch: &HostLaunch) -> Result<HostProcess, String> {
     }
 
     prepend_lib_path(&mut cmd, &launch.cef_dir);
-    cmd.env(
-        "CHROME_DEVEL_SANDBOX",
-        launch.cef_dir.join("chrome-sandbox"),
-    );
+    super::sandbox::apply_devel_sandbox_env(&mut cmd, &launch.cef_dir);
 
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
-    cmd.stderr(stderr_stdio(launch.log_file.as_ref())?);
+    cmd.stderr(stderr_stdio(launch.stderr_file.as_ref())?);
 
     #[cfg(unix)]
     {
@@ -203,10 +203,7 @@ impl HostProcess {
     }
 
     pub fn send(&self, cmd: &HostCommand) -> Result<(), String> {
-        let mut stdin = self
-            .stdin
-            .lock()
-            .map_err(|error| error.to_string())?;
+        let mut stdin = self.stdin.lock().map_err(|error| error.to_string())?;
         let encoded = encode_command(cmd);
         stdin
             .write_all(encoded.as_bytes())
@@ -276,10 +273,14 @@ pub fn browser_spawn(
     let binary = paths::host_binary_path(&app)?;
     let (_, _, phys_w, phys_h) = physical_bounds(bounds.x, bounds.y, bounds.w, bounds.h, scale);
     let (lx, ly, lw, lh) = logical_bounds(bounds.x, bounds.y, bounds.w, bounds.h);
-    let hole_xid = hole::create(&window, lx, ly, lw, lh)?;
+    let hole_xid = {
+        let window = window.clone();
+        on_gtk(move || hole::create(&window, lx, ly, lw, lh))?
+    }?;
     state.hole_xid.store(hole_xid, Ordering::SeqCst);
 
-    let no_sandbox = env_no_sandbox() || state.no_sandbox.load(Ordering::SeqCst);
+    let no_sandbox =
+        super::sandbox::wants_no_sandbox(&slot.dir) || state.no_sandbox.load(Ordering::SeqCst);
     if no_sandbox {
         state.no_sandbox.store(true, Ordering::SeqCst);
     }
@@ -295,7 +296,8 @@ pub fn browser_spawn(
         url,
         health_check: false,
         no_sandbox,
-        log_file: Some(paths.logs_dir().join("cef-host.log")),
+        log_file: Some(paths.logs_dir().join("chromium.log")),
+        stderr_file: Some(paths.logs_dir().join("cef-host.log")),
     };
 
     let mut process = spawn_host(&launch)?;
@@ -339,7 +341,7 @@ pub fn browser_set_bounds(
     let (_, _, pw, ph) = physical_bounds(x, y, w, h, scale);
     let xid = state.hole_xid.load(Ordering::SeqCst);
     if xid != 0 {
-        hole::move_resize(xid, lx, ly, lw, lh);
+        on_gtk(move || hole::move_resize(xid, lx, ly, lw, lh))?;
     }
     with_host(&state, |host| {
         host.send(&HostCommand::SetBounds {
@@ -355,7 +357,7 @@ pub fn browser_set_bounds(
 pub fn browser_set_visible(state: State<CefState>, visible: bool) -> Result<(), String> {
     let xid = state.hole_xid.load(Ordering::SeqCst);
     if xid != 0 {
-        hole::set_visible(xid, visible);
+        on_gtk(move || hole::set_visible(xid, visible))?;
     }
     let cmd = if visible {
         HostCommand::Show
@@ -368,7 +370,7 @@ pub fn browser_set_visible(state: State<CefState>, visible: bool) -> Result<(), 
 /// El usuario pulsó en la UI Svelte (barra de URL, botones): el foco X11 vuelve al toplevel.
 #[tauri::command]
 pub fn browser_focus_app(window: tauri::Window) -> Result<(), String> {
-    hole::focus_toplevel(&window)
+    on_gtk(move || hole::focus_toplevel(&window))?
 }
 
 #[tauri::command]
@@ -412,54 +414,91 @@ fn start_forward_thread(
     launch: HostLaunch,
 ) {
     std::thread::spawn(move || {
-        let mut events = events;
-        let mut saw_ready = false;
-        let mut retried_sandbox = false;
+        let state = app.state::<CefState>();
+        pump_host_events(
+            events,
+            &launch,
+            |retry| {
+                eprintln!("[cef] sandbox no disponible, reintentando con --idq-no-sandbox");
+                state.no_sandbox.store(true, Ordering::SeqCst);
+                let mut process = spawn_host(retry)?;
+                let next = process.take_events();
+                if let Ok(mut guard) = state.host.lock() {
+                    *guard = Some(process);
+                }
+                Ok(next)
+            },
+            |event| on_event.send(event).is_ok(),
+        );
+    });
+}
 
-        loop {
-            let event = match events.recv() {
-                Ok(event) => event,
-                Err(_) => break,
-            };
+/// Recorre eventos del host. El `fatal` del primer intento no llega al
+/// Channel si todavía se puede reintentar sin sandbox (contrato 5).
+fn pump_host_events(
+    mut events: Receiver<HostEvent>,
+    launch: &HostLaunch,
+    mut spawn_retry: impl FnMut(&HostLaunch) -> Result<Receiver<HostEvent>, String>,
+    mut emit: impl FnMut(HostEvent) -> bool,
+) {
+    use super::sandbox::{forward_action, ForwardAction};
 
-            match &event {
-                HostEvent::Ready { .. } => {
+    let mut saw_ready = false;
+    let mut retried = false;
+    let mut held_fatal: Option<HostEvent> = None;
+
+    loop {
+        let event = match events.recv() {
+            Ok(event) => event,
+            Err(_) => break,
+        };
+
+        match forward_action(&event, saw_ready, retried, launch.no_sandbox) {
+            ForwardAction::Send => {
+                if matches!(event, HostEvent::Ready { .. }) {
                     saw_ready = true;
-                    if on_event.send(event).is_err() {
-                        break;
-                    }
                 }
-                HostEvent::Exit { code: 15 } if !saw_ready && !retried_sandbox && !launch.no_sandbox =>
-                {
-                    retried_sandbox = true;
-                    eprintln!("[cef] sandbox no disponible, reintentando con --idq-no-sandbox");
-                    let state = app.state::<CefState>();
-                    state.no_sandbox.store(true, Ordering::SeqCst);
-                    let mut retry = launch.clone();
-                    retry.no_sandbox = true;
-                    match spawn_host(&retry) {
-                        Ok(mut process) => {
-                            let next = process.take_events();
-                            if let Ok(mut guard) = state.host.lock() {
-                                *guard = Some(process);
+                if !emit(event) {
+                    break;
+                }
+            }
+            ForwardAction::HoldFatal => {
+                held_fatal = Some(event);
+            }
+            ForwardAction::Drop => {}
+            ForwardAction::RetrySandbox => {
+                let mut retry = launch.clone();
+                retry.no_sandbox = true;
+                match spawn_retry(&retry) {
+                    Ok(next) => {
+                        retried = true;
+                        held_fatal = None;
+                        events = next;
+                    }
+                    Err(error) => {
+                        eprintln!("[cef] reintento sin sandbox falló: {error}");
+                        if let Some(fatal) = held_fatal.take() {
+                            if !emit(fatal) {
+                                break;
                             }
-                            events = next;
                         }
-                        Err(error) => {
-                            eprintln!("[cef] reintento sin sandbox falló: {error}");
-                            let _ = on_event.send(event);
-                            break;
-                        }
-                    }
-                }
-                _ => {
-                    if on_event.send(event).is_err() {
+                        let _ = emit(event);
                         break;
                     }
                 }
             }
+            ForwardAction::FlushFatalThenSend => {
+                if let Some(fatal) = held_fatal.take() {
+                    if !emit(fatal) {
+                        break;
+                    }
+                }
+                if !emit(event) {
+                    break;
+                }
+            }
         }
-    });
+    }
 }
 
 fn take_and_kill(state: &CefState) -> Result<(), String> {
@@ -473,7 +512,10 @@ fn take_and_kill(state: &CefState) -> Result<(), String> {
     Ok(())
 }
 
-fn with_host<T>(state: &CefState, f: impl FnOnce(&HostProcess) -> Result<T, String>) -> Result<T, String> {
+fn with_host<T>(
+    state: &CefState,
+    f: impl FnOnce(&HostProcess) -> Result<T, String>,
+) -> Result<T, String> {
     let guard = state.host.lock().map_err(|error| error.to_string())?;
     let host = guard
         .as_ref()
@@ -490,17 +532,33 @@ fn physical_bounds(x: f64, y: f64, w: f64, h: f64, scale: f64) -> (i32, i32, i32
     )
 }
 
-fn env_no_sandbox() -> bool {
-    matches!(std::env::var("IDIOTEQUE_CEF_NO_SANDBOX"), Ok(value) if value == "1")
+/// GDK/X11 solo en el hilo que inicializó GTK. Los comandos Tauri corren en un worker.
+fn on_gtk<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Result<T, String> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(f())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let ctx = gtk::glib::MainContext::default();
+        if ctx.is_owner() {
+            return Ok(f());
+        }
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        ctx.invoke(move || {
+            let _ = tx.send(f());
+        });
+        rx.recv_timeout(Duration::from_secs(5))
+            .map_err(|_| "El hilo de la UI no respondió".to_string())
+    }
 }
 
 fn stderr_stdio(log_file: Option<&PathBuf>) -> Result<Stdio, String> {
     match log_file {
         Some(path) => {
             if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).map_err(|error| {
-                    format!("No se pudo crear `{}`: {error}", parent.display())
-                })?;
+                fs::create_dir_all(parent)
+                    .map_err(|error| format!("No se pudo crear `{}`: {error}", parent.display()))?;
             }
             let file = OpenOptions::new()
                 .create(true)
@@ -560,9 +618,7 @@ mod hole {
     }
 
     pub fn create(window: &tauri::Window, x: i32, y: i32, w: i32, h: i32) -> Result<u64, String> {
-        let gtk_window = window
-            .gtk_window()
-            .map_err(|_| X11_REQUIRED.to_string())?;
+        let gtk_window = window.gtk_window().map_err(|_| X11_REQUIRED.to_string())?;
         let parent = gtk_window
             .window()
             .ok_or_else(|| "La ventana de idioteque aún no está realizada".to_string())?;
@@ -597,6 +653,12 @@ mod hole {
             .downcast_ref::<gdkx11::X11Window>()
             .ok_or_else(|| X11_REQUIRED.to_string())?
             .xid();
+        // `gdk_window_new` entrega la ref del creador; `gdk_window_destroy`
+        // es quien la consume. gtk-rs es `from_glib_full`: si el wrapper se
+        // droppea aquí, la ventana llega a 0 y la tabla XID de GDK se queda
+        // con un puntero colgante (segfault en el DestroyNotify).
+        let _: *mut gdk::ffi::GdkWindow =
+            unsafe { gtk::glib::translate::IntoGlibPtr::into_glib_ptr(hole) };
         Ok(xid as u64)
     }
 
@@ -620,6 +682,9 @@ mod hole {
     pub fn destroy(xid: u64) {
         if let Some(hole) = lookup(xid) {
             hole.hide();
+            // Consume la ref del creador que `create` dejó viva. El wrapper
+            // de `lookup` (`from_glib_none`) suelta su ref temporal al drop;
+            // la entrada XID la quita GDK al DestroyNotify.
             hole.destroy();
         }
     }
@@ -628,9 +693,7 @@ mod hole {
     /// CEF tiene el foco, el servidor X le entrega a ella todas las teclas y
     /// el webview no ve nada; al pulsar en la barra Svelte hay que recuperarlo.
     pub fn focus_toplevel(window: &tauri::Window) -> Result<(), String> {
-        let gtk_window = window
-            .gtk_window()
-            .map_err(|_| X11_REQUIRED.to_string())?;
+        let gtk_window = window.gtk_window().map_err(|_| X11_REQUIRED.to_string())?;
         let gdk_window = gtk_window
             .window()
             .ok_or_else(|| "La ventana de idioteque aún no está realizada".to_string())?;
@@ -657,7 +720,13 @@ mod hole {
 
 #[cfg(not(target_os = "linux"))]
 mod hole {
-    pub fn create(_window: &tauri::Window, _x: i32, _y: i32, _w: i32, _h: i32) -> Result<u64, String> {
+    pub fn create(
+        _window: &tauri::Window,
+        _x: i32,
+        _y: i32,
+        _w: i32,
+        _h: i32,
+    ) -> Result<u64, String> {
         Err("El navegador embebido solo está implementado en Linux/X11".to_string())
     }
     pub fn move_resize(_xid: u64, _x: i32, _y: i32, _w: i32, _h: i32) {}
@@ -680,7 +749,7 @@ fn logical_bounds(x: f64, y: f64, w: f64, h: f64) -> (i32, i32, i32, i32) {
 fn destroy_hole(state: &CefState) {
     let xid = state.hole_xid.swap(0, Ordering::SeqCst);
     if xid != 0 {
-        hole::destroy(xid);
+        let _ = on_gtk(move || hole::destroy(xid));
     }
 }
 
@@ -713,6 +782,7 @@ mod tests {
             health_check: false,
             no_sandbox: false,
             log_file: None,
+            stderr_file: None,
         }
     }
 
@@ -729,6 +799,12 @@ exit 0
 
     #[cfg(unix)]
     const EXIT_15: &str = r#"#!/bin/sh
+exit 15
+"#;
+
+    #[cfg(unix)]
+    const EXIT_15_FATAL: &str = r#"#!/bin/sh
+printf '%s\n' '{"event":"fatal","message":"sandbox","code":15}'
 exit 15
 "#;
 
@@ -814,13 +890,66 @@ exec sleep 30
 
     #[test]
     fn physical_bounds_rounds_css_times_scale() {
-        assert_eq!(physical_bounds(10.2, 20.6, 100.4, 50.5, 2.0), (20, 41, 201, 101));
-        assert_eq!(physical_bounds(0.0, 36.0, 1200.0, 700.0, 1.0), (0, 36, 1200, 700));
+        assert_eq!(
+            physical_bounds(10.2, 20.6, 100.4, 50.5, 2.0),
+            (20, 41, 201, 101)
+        );
+        assert_eq!(
+            physical_bounds(0.0, 36.0, 1200.0, 700.0, 1.0),
+            (0, 36, 1200, 700)
+        );
     }
 
     #[test]
     fn host_alive_default_is_false() {
         let state = CefState::default();
         assert!(!state.host_alive());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pump_swallows_fatal_and_forwards_ready_after_retry() {
+        let tmp = TempDir::new().unwrap();
+        let dying = write_script(tmp.path(), "exit-15-fatal", EXIT_15_FATAL);
+        let ready = write_script(tmp.path(), "ready-host", FAKE_HOST);
+        let first_launch = launch(dying, tmp.path().to_path_buf(), tmp.path().join("cache"));
+        let mut first = spawn_host(&first_launch).expect("first");
+        let events = first.take_events();
+        let retry_launch = launch(
+            ready,
+            tmp.path().to_path_buf(),
+            tmp.path().join("cache-retry"),
+        );
+        let mut kept: Option<HostProcess> = None;
+        let mut ui: Vec<HostEvent> = Vec::new();
+
+        pump_host_events(
+            events,
+            &first_launch,
+            |_| {
+                let mut process = spawn_host(&retry_launch).expect("retry");
+                let next = process.take_events();
+                kept = Some(process);
+                Ok(next)
+            },
+            |event| {
+                let keep_going = !matches!(event, HostEvent::Ready { .. });
+                ui.push(event);
+                keep_going
+            },
+        );
+
+        assert!(
+            ui.iter()
+                .all(|event| !matches!(event, HostEvent::Fatal { .. })),
+            "el fatal del primer intento no debe llegar: {ui:?}"
+        );
+        assert!(
+            ui.iter()
+                .any(|event| matches!(event, HostEvent::Ready { .. })),
+            "el ready del retry debe llegar: {ui:?}"
+        );
+        drop(first);
+        drop(kept);
     }
 }

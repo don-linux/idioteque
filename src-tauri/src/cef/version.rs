@@ -91,9 +91,8 @@ fn parse_version(input: &str) -> Result<CefVersion, String> {
     let triple = parts
         .next()
         .ok_or_else(|| format!("versión CEF inválida: `{input}`"))?;
-    let numbers = parse_triple(triple).map_err(|_| {
-        format!("versión CEF inválida: `{input}` (se esperaba MAJOR.MINOR.PATCH)")
-    })?;
+    let numbers = parse_triple(triple)
+        .map_err(|_| format!("versión CEF inválida: `{input}` (se esperaba MAJOR.MINOR.PATCH)"))?;
 
     let rest: Vec<&str> = parts.collect();
     if rest.is_empty() {
@@ -106,17 +105,17 @@ fn parse_version(input: &str) -> Result<CefVersion, String> {
     let mut chromium = None;
     for part in rest {
         if let Some(token) = part.strip_prefix("chromium-") {
-            chromium = Some(parse_chromium(token).map_err(|_| {
-                format!("versión Chromium inválida en `{input}`")
-            })?);
+            chromium = Some(
+                parse_chromium(token)
+                    .map_err(|_| format!("versión Chromium inválida en `{input}`"))?,
+            );
         } else if commit.is_empty() {
             commit = part.to_string();
         }
     }
 
-    let chromium = chromium.ok_or_else(|| {
-        format!("versión CEF inválida: `{input}` (falta chromium-a.b.c.d)")
-    })?;
+    let chromium = chromium
+        .ok_or_else(|| format!("versión CEF inválida: `{input}` (falta chromium-a.b.c.d)"))?;
 
     Ok(CefVersion {
         major: numbers[0],
@@ -175,10 +174,7 @@ mod tests {
 
     #[test]
     fn chromium_from_extracts_four_tuple() {
-        assert_eq!(
-            chromium_from(SAMPLE).as_deref(),
-            Some("152.0.7977.83")
-        );
+        assert_eq!(chromium_from(SAMPLE).as_deref(), Some("152.0.7977.83"));
         assert_eq!(chromium_from("nope"), None);
         assert_eq!(chromium_from("152.0.6+g+chromium-1.2.3"), None);
     }

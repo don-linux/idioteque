@@ -83,10 +83,7 @@ pub fn strip_libcef_in_place(path: &Path) -> Result<StripReport, String> {
 
     fs::rename(&tmp, path).map_err(|error| {
         let _ = fs::remove_file(&tmp);
-        format!(
-            "No se pudo reemplazar `{}`: {error}",
-            path.display()
-        )
+        format!("No se pudo reemplazar `{}`: {error}", path.display())
     })?;
 
     let after = fs::metadata(path)
@@ -102,16 +99,10 @@ pub fn strip_libcef_in_place(path: &Path) -> Result<StripReport, String> {
 pub fn strip_elf_file(input: &Path, output: &Path) -> Result<(), String> {
     let header = parse_elf_header(input)?;
     if header.e_shentsize as usize != ELF64_SHDR_SIZE {
-        return Err(format!(
-            "e_shentsize inesperado: {}",
-            header.e_shentsize
-        ));
+        return Err(format!("e_shentsize inesperado: {}", header.e_shentsize));
     }
     if header.e_phentsize as usize != ELF64_PHDR_SIZE && header.e_phnum != 0 {
-        return Err(format!(
-            "e_phentsize inesperado: {}",
-            header.e_phentsize
-        ));
+        return Err(format!("e_phentsize inesperado: {}", header.e_phentsize));
     }
     if header.e_shnum == 0 {
         return Err("ELF sin tabla de secciones".to_string());
@@ -134,9 +125,8 @@ pub fn strip_elf_file(input: &Path, output: &Path) -> Result<(), String> {
 
     let mut keep = Vec::new();
     for (index, section) in sections.iter().enumerate() {
-        let keep_it = index == 0
-            || (section.sh_flags & SHF_ALLOC) != 0
-            || names[index] == ".shstrtab";
+        let keep_it =
+            index == 0 || (section.sh_flags & SHF_ALLOC) != 0 || names[index] == ".shstrtab";
         if keep_it {
             keep.push(index);
         }
@@ -166,13 +156,11 @@ pub fn strip_elf_file(input: &Path, output: &Path) -> Result<(), String> {
     }
 
     if let Some(parent) = output.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            format!("No se pudo crear `{}`: {error}", parent.display())
-        })?;
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("No se pudo crear `{}`: {error}", parent.display()))?;
     }
-    let mut out = File::create(output).map_err(|error| {
-        format!("No se pudo crear `{}`: {error}", output.display())
-    })?;
+    let mut out = File::create(output)
+        .map_err(|error| format!("No se pudo crear `{}`: {error}", output.display()))?;
     copy_range(&mut file, &mut out, 0, keep_end)?;
 
     let mut new_shstrtab = Vec::new();
@@ -184,9 +172,8 @@ pub fn strip_elf_file(input: &Path, output: &Path) -> Result<(), String> {
     }
 
     let shstrtab_off = keep_end;
-    out.write_all(&new_shstrtab).map_err(|error| {
-        format!("No se pudo escribir .shstrtab: {error}")
-    })?;
+    out.write_all(&new_shstrtab)
+        .map_err(|error| format!("No se pudo escribir .shstrtab: {error}"))?;
 
     let shoff = shstrtab_off + new_shstrtab.len() as u64;
     let shstrndx = keep
@@ -420,23 +407,14 @@ fn remap_index(old: u32, old_to_new: &[Option<u32>]) -> u32 {
     if old == 0 {
         return 0;
     }
-    old_to_new
-        .get(old as usize)
-        .copied()
-        .flatten()
-        .unwrap_or(0)
+    old_to_new.get(old as usize).copied().flatten().unwrap_or(0)
 }
 
 fn info_is_section_index(sh_type: u32, sh_flags: u64) -> bool {
     (sh_flags & SHF_INFO_LINK) != 0 || sh_type == SHT_REL || sh_type == SHT_RELA
 }
 
-fn patch_elf_header(
-    out: &mut File,
-    shoff: u64,
-    shnum: u16,
-    shstrndx: u16,
-) -> Result<(), String> {
+fn patch_elf_header(out: &mut File, shoff: u64, shnum: u16, shstrndx: u16) -> Result<(), String> {
     out.seek(SeekFrom::Start(40))
         .map_err(|error| format!("No se pudo parchear la cabecera ELF: {error}"))?;
     out.write_all(&shoff.to_le_bytes())
@@ -699,10 +677,7 @@ mod tests {
         let (header, sections) = load_sections(&output);
         assert_eq!(header.e_shnum as usize, sections.len());
         let names: Vec<&str> = sections.iter().map(|(n, _)| n.as_str()).collect();
-        assert_eq!(
-            names,
-            vec!["", ".text", ".dynstr", ".dynsym", ".shstrtab"]
-        );
+        assert_eq!(names, vec!["", ".text", ".dynstr", ".dynsym", ".shstrtab"]);
         assert_eq!(header.e_shstrndx, 4);
 
         let text_sec = &sections[1].1;
@@ -726,9 +701,7 @@ mod tests {
         if std::env::var("IDIOTEQUE_CEF_REAL_LIBCEF").ok().as_deref() != Some("1") {
             return;
         }
-        let src = Path::new(
-            "/workspace/src-tauri/.cef-sdk/152.0.6/cef_linux_x86_64/libcef.so",
-        );
+        let src = Path::new("/workspace/src-tauri/.cef-sdk/152.0.6/cef_linux_x86_64/libcef.so");
         if !src.is_file() {
             return;
         }

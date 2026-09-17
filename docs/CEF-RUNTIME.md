@@ -79,7 +79,8 @@ Overrides para desarrollo: `IDIOTEQUE_CEF_HOME`, `IDIOTEQUE_CEF_BASE_DIR`,
 
 ## Cómo se bundlea el base
 
-`bun run cef:prepare` (lo llaman `beforeDevCommand` y `beforeBuildCommand`):
+`bun run cef:prepare` (lo lanza `bun run tauri dev` antes de arrancar el CLI y
+`beforeBuildCommand` en `tauri build`):
 
 1. `cargo build -p cef-host --release`. El `build.rs` de `cef-dll-sys`
    descarga la dist pinneada a `src-tauri/.cef-sdk/` (una vez) y compila
@@ -90,8 +91,106 @@ Overrides para desarrollo: `IDIOTEQUE_CEF_HOME`, `IDIOTEQUE_CEF_BASE_DIR`,
    tarball contra `src-tauri/cef/base.json`, stripea `libcef.so` y escribe el
    `manifest.json` (`bundle.resources` → `cef/base/`).
 
-Nada de esto se commitea. El usuario final no descarga nada: el instalador ya
-trae el base.
+Nada de esto se commitea. Chromium no se compila nunca: `libcef.so` viene
+precompilada del índice oficial; lo único que se compila en tu máquina es
+`cef-host` y el wrapper C++ del SDK. Con la caché caliente (`.cef-sdk/`,
+`target/release/cef-host`, `cef-base/manifest.json` con la versión y tamaños
+correctos) el paso tarda segundos. El usuario final no descarga ni compila
+nada: el instalador ya trae el base.
+
+### `bun run tauri` es un envoltorio
+
+`package.json` apunta `tauri` a `scripts/tauri.ts`, no al CLI directo:
+
+- `bun run tauri dev` corre `cef:prepare` en primer plano y **después** lanza
+  `tauri dev`. El CLI abandona si el dev server no responde en 180 s; con
+  `cef:prepare` dentro de `beforeDevCommand` la primera descarga y compilación
+  de CEF agotaba ese plazo y la app nunca arrancaba. `beforeDevCommand` ahora
+  es solo `bun run dev`.
+- `bun run tauri build` corre `tauri build` (deb y rpm, con CEF dentro vía
+  `resources`/`externalBin`) y luego construye la AppImage en tres pasos:
+  1. `tauri bundle --bundles appimage --config '{"bundle":{"resources":[],"externalBin":[]}}'`:
+     la AppImage sale **sin** CEF. linuxdeploy hace `ldd` y `patchelf` de
+     todo ELF bajo `usr/bin` y `usr/lib`; con CEF dentro fallaría con
+     `libcef.so => not found` (cef-host la resuelve en runtime) y cambiaría
+     el tamaño de `libcef.so`, `libEGL.so`, `chrome-sandbox`… invalidando el
+     `manifest.json` del base.
+  2. Inyecta `src-tauri/cef-base/` en `idioteque.AppDir/usr/lib/idioteque/cef/base/`
+     y `cef-host` en `usr/bin/`, y comprueba los tamaños contra el manifest.
+  3. Reempaqueta el AppDir con `linuxdeploy-plugin-appimage` (el mismo que el
+     CLI cachea en `~/.cache/tauri/`; se descarga si falta, o se fija con
+     `IDIOTEQUE_APPIMAGE_PLUGIN`). Solo construye el squashfs: no toca ELF.
+  `--bundles` del usuario se respeta; la fase especial solo se aplica si la
+  lista incluye `appimage`. `bundle.targets` en `tauri.conf.json` es
+  `["deb", "rpm"]` a propósito: un `tauri build` sin el envoltorio no intenta
+  la AppImage (fallaría).
+- `src-tauri/build.rs` comprueba que existan `cef-base/manifest.json` y
+  `binaries/cef-host-<triple>`: en release es error (un paquete sin navegador
+  no debe salir por saltarse el pipeline), en debug solo aviso.
+
+### rpm sin compresión
+
+`bundle.linux.rpm.compression` es `none`. El CLI 2.11 empaqueta el rpm en
+proceso con `rpm-rs 0.16`, cuyo gzip tarda decenas de minutos con los ~350 MB
+del base (issues tauri-apps/tauri#11478 y #13273). Sin compresión termina en
+el orden de un minuto; el rpm pesa el doble que el deb y se acepta.
+
+### Dependencias del sistema
+
+`libcef.so` necesita librerías que no vienen con webkit2gtk/gtk3: NSS/NSPR,
+ALSA, DRM/GBM, dbus, cups y varias X11. `tauri.conf.json` las declara en
+`bundle.linux.deb.depends` (nombres clásicos de paquete; Ubuntu 24.04+ hace
+`Provides` de ellos desde los `t64`) y en `bundle.linux.rpm.depends` como
+`Requires` por soname (`libnss3.so()(64bit)`…), que resuelven dnf y zypper en
+cualquier distro. `src/lib/linux-bundle-deps.test.ts` exige que las dos listas
+cubran los mismos sonames. La AppImage no declara dependencias: linuxdeploy
+bundlea gtk y compañía, el resto está en la excludelist oficial (glibc, mesa,
+X11, fontconfig, alsa…) y solo asume NSS/NSPR (`libnss3`) del sistema, igual
+que Electron y Chrome; está en cualquier escritorio con navegador.
+
+### Navegador embebido: X11 / XWayland y sandbox
+
+El embed es una ventana hija X11. En GNOME Wayland (Ubuntu 26.04 no ofrece
+sesión Xorg) Mutter sigue levantando XWayland: idioteque fija
+`GDK_BACKEND=x11` si hay `DISPLAY` y CEF usa `--ozone-platform=x11` contra
+ese mismo display. No es embed Wayland nativo.
+
+`chrome-sandbox` solo se exporta como `CHROME_DEVEL_SANDBOX` si es setuid-root.
+En `tauri dev` el helper es del usuario; en la AppImage el squashfs no puede
+ser setuid. En Ubuntu 24.04+ (`apparmor_restrict_unprivileged_userns=1`)
+los user namespaces existen pero AppArmor transiciona `unconfined` al
+perfil `unprivileged_userns` y le quita `CAP_SYS_ADMIN`; Chromium aborta
+con “No usable sandbox!”. El ADE no se fía de `unshare -U`: prueba
+`CLONE_NEWUSER` + `CLONE_NEWPID` en un hijo (o, si el sysctl está activo
+y el perfil es `unconfined`, ni siquiera forkea). Sin helper ni userns
+usable el primer `cef-host` ya va con `--idq-no-sandbox`. No es un error
+ni un crash. Si el probe se equivoca, queda un reintento (el `fatal` de
+esa primera muerte no llega a la UI). El stderr del host queda en
+`logs/cef-host.log`; el `log_file` de Chromium, en `logs/chromium.log`
+(Chromium lo trunca al arrancar: no pueden ser el mismo archivo). Un
+sandbox de verdad (helper `4755` o perfil AppArmor `userns` para
+`cef-host`; ver
+[Chromium](https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md))
+es cosa del deb/rpm, no de este runtime.
+
+### Memoria compartida: `/dev/shm`, no `/tmp`
+
+Chromium crea su memoria compartida como ficheros en `/dev/shm`, como
+Chrome. `--disable-dev-shm-usage` la manda a `$TMPDIR`/`/tmp` y solo tiene
+sentido en contenedores con `/dev/shm` de 64 MiB (Docker, la VM de Cursor
+Cloud). En Ubuntu con systemd ≥ 258, `/tmp` es un tmpfs con `usrquota` y
+cada usuario tiene un tope del 80 %: si algo tuyo llena `/tmp` (una cache de
+compilación, por ejemplo), toda escritura da `EDQUOT` aunque `df` muestre
+espacio libre, y con el switch puesto Chromium se queda sin memoria
+compartida: `TransferBuffer::Initialize() failed`, renderers que mueren,
+`ERR_INSUFFICIENT_RESOURCES` y un `FATAL` del font service que mata el
+host. Por eso `cef-host` no ata el switch al sandbox: hace un probe real
+(reservar 128 MiB en un fichero borrado) en `/dev/shm`, después en el temp
+dir y, si ninguno sirve, usa `TMPDIR=<cache>/shm` en disco. La decisión
+está en `logs/cef-host.log` (`cef-host: shm DevShm`). Por la misma razón,
+`bun run tauri build` corre con `TMPDIR=src-tauri/target/tmp` (salvo que ya
+traigas uno): el staging del deb/rpm y la extracción del plugin de AppImage
+no pasan por `/tmp`.
 
 ## Cómo migrar el base en un release
 

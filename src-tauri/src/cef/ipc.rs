@@ -93,8 +93,7 @@ pub fn parse_event(line: &str) -> Result<HostEvent, String> {
     if line.is_empty() {
         return Err("evento CEF vacío".to_string());
     }
-    serde_json::from_str(line)
-        .map_err(|error| format!("No se pudo parsear el evento CEF: {error}"))
+    serde_json::from_str(line).map_err(|error| format!("No se pudo parsear el evento CEF: {error}"))
 }
 
 /// Una línea JSON con `\n` final.
@@ -140,7 +139,9 @@ mod tests {
 
         assert_eq!(
             parse_event(r#"{"event":"title","title":"…"}"#).unwrap(),
-            HostEvent::Title { title: "…".into() }
+            HostEvent::Title {
+                title: "…".into()
+            }
         );
         assert_eq!(
             parse_event(r#"{"event":"load-end","status":200}"#).unwrap(),
@@ -189,10 +190,8 @@ mod tests {
             }
         );
         assert_eq!(
-            parse_event(
-                r#"{"event":"info","apiVersion":15200,"cefCompiled":"152.0.6+…"}"#
-            )
-            .unwrap(),
+            parse_event(r#"{"event":"info","apiVersion":15200,"cefCompiled":"152.0.6+…"}"#)
+                .unwrap(),
             HostEvent::Info {
                 api_version: 15200,
                 cef_compiled: "152.0.6+…".into(),
@@ -215,18 +214,21 @@ mod tests {
     #[test]
     fn encode_contract_commands() {
         assert_eq!(
-            encode_command(&HostCommand::Navigate {
-                url: "…".into()
-            })
-            .trim_end(),
+            encode_command(&HostCommand::Navigate { url: "…".into() }).trim_end(),
             r#"{"cmd":"navigate","url":"…"}"#
         );
-        assert_eq!(encode_command(&HostCommand::Back).trim_end(), r#"{"cmd":"back"}"#);
+        assert_eq!(
+            encode_command(&HostCommand::Back).trim_end(),
+            r#"{"cmd":"back"}"#
+        );
         assert_eq!(
             encode_command(&HostCommand::Forward).trim_end(),
             r#"{"cmd":"forward"}"#
         );
-        assert_eq!(encode_command(&HostCommand::Stop).trim_end(), r#"{"cmd":"stop"}"#);
+        assert_eq!(
+            encode_command(&HostCommand::Stop).trim_end(),
+            r#"{"cmd":"stop"}"#
+        );
         assert_eq!(
             encode_command(&HostCommand::Reload {
                 ignore_cache: false
@@ -244,9 +246,18 @@ mod tests {
             .trim_end(),
             r#"{"cmd":"set_bounds","x":0,"y":36,"w":1200,"h":700}"#
         );
-        assert_eq!(encode_command(&HostCommand::Show).trim_end(), r#"{"cmd":"show"}"#);
-        assert_eq!(encode_command(&HostCommand::Hide).trim_end(), r#"{"cmd":"hide"}"#);
-        assert_eq!(encode_command(&HostCommand::Focus).trim_end(), r#"{"cmd":"focus"}"#);
+        assert_eq!(
+            encode_command(&HostCommand::Show).trim_end(),
+            r#"{"cmd":"show"}"#
+        );
+        assert_eq!(
+            encode_command(&HostCommand::Hide).trim_end(),
+            r#"{"cmd":"hide"}"#
+        );
+        assert_eq!(
+            encode_command(&HostCommand::Focus).trim_end(),
+            r#"{"cmd":"focus"}"#
+        );
         assert_eq!(
             encode_command(&HostCommand::Devtools).trim_end(),
             r#"{"cmd":"devtools"}"#
@@ -260,11 +271,6 @@ mod tests {
     fn parse_command_round_trip() {
         let cmd: HostCommand =
             serde_json::from_str(r#"{"cmd":"reload","ignoreCache":true}"#).unwrap();
-        assert_eq!(
-            cmd,
-            HostCommand::Reload {
-                ignore_cache: true
-            }
-        );
+        assert_eq!(cmd, HostCommand::Reload { ignore_cache: true });
     }
 }

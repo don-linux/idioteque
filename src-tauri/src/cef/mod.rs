@@ -11,6 +11,7 @@ pub mod ipc;
 pub mod manifest;
 pub mod paths;
 pub mod promote;
+pub mod sandbox;
 pub mod state;
 pub mod updater;
 pub mod version;

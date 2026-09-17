@@ -1,4 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { clearsRenderCrash, renderCrashedMessage } from "$lib/browser-errors";
 import { folderVisibility } from "$lib/folder-visibility.svelte";
 import { displayUrl, normalizeUrlInput } from "$lib/browser-url";
 import { unsavedExit } from "$lib/unsaved-exit.svelte";
@@ -275,6 +276,7 @@ class BrowserState {
         return;
       case "load-end":
         this.loading = false;
+        if (clearsRenderCrash(this.error)) this.error = null;
         return;
       case "load-error":
         if (event.code === -3) return;
@@ -286,7 +288,7 @@ class BrowserState {
         return;
       case "render-crashed":
         this.loading = false;
-        this.error = "La página se cerró inesperadamente";
+        this.error = renderCrashedMessage(event.status);
         return;
       case "fatal":
         this.booting = false;

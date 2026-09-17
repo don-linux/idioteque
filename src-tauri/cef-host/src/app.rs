@@ -46,13 +46,16 @@ pub struct AppState {
     pub health_cancel: Mutex<Option<Arc<AtomicBool>>>,
     /// Ventana X intermedia (visual por defecto) entre el hueco del ADE y CEF.
     pub shim_xid: AtomicU64,
+    /// `--disable-dev-shm-usage`: solo si `/dev/shm` no sirve (`shm::decide`).
+    pub disable_dev_shm: bool,
 }
 
 impl AppState {
-    pub fn new(args: HostArgs, manifest: Manifest) -> Arc<Self> {
+    pub fn new(args: HostArgs, manifest: Manifest, disable_dev_shm: bool) -> Arc<Self> {
         Arc::new(Self {
             args,
             manifest,
+            disable_dev_shm,
             browser: Mutex::new(None),
             main_id: AtomicI32::new(0),
             ready_sent: AtomicBool::new(false),
@@ -307,6 +310,11 @@ fn apply_switches(state: &AppState, command_line: &mut CommandLine) {
     if state.args.no_sandbox {
         add_switch(command_line, "no-sandbox");
         add_switch(command_line, "no-zygote");
+    }
+    // Shared memory goes to /dev/shm like Chrome does. The switch is only for
+    // hosts where /dev/shm is unusable (64 MiB container shm, quota), never
+    // tied to the sandbox: see shm.rs.
+    if state.disable_dev_shm {
         add_switch(command_line, "disable-dev-shm-usage");
     }
     // Software GL for X servers without DRI3 (the dev VM). A user machine that

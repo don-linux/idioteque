@@ -47,10 +47,7 @@ pub fn download_verified(
 ) -> Result<(), DownloadError> {
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent).map_err(|error| {
-            DownloadError::Io(format!(
-                "No se pudo crear `{}`: {error}",
-                parent.display()
-            ))
+            DownloadError::Io(format!("No se pudo crear `{}`: {error}", parent.display()))
         })?;
     }
 
@@ -74,10 +71,7 @@ pub fn download_verified(
         }
 
         let mut file = File::create(&part).map_err(|error| {
-            DownloadError::Io(format!(
-                "No se pudo crear `{}`: {error}",
-                part.display()
-            ))
+            DownloadError::Io(format!("No se pudo crear `{}`: {error}", part.display()))
         })?;
         let mut hasher = Sha1::new();
         let mut buf = vec![0u8; COPY_BUF];
@@ -230,9 +224,13 @@ mod tests {
         let dest = tmp.path().join("file.bin");
         let body = b"abcdefgh";
         let url = serve_body(body);
-        let error =
-            download_verified(&url, &dest, body.len() as u64, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-                .unwrap_err();
+        let error = download_verified(
+            &url,
+            &dest,
+            body.len() as u64,
+            "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        )
+        .unwrap_err();
         match error {
             DownloadError::Sha1Mismatch { .. } => {}
             other => panic!("unexpected {other:?}"),

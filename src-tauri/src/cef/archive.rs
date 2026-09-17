@@ -24,20 +24,14 @@ pub struct ExtractReport {
 /// `LICENSE.txt` al layout plano de `slot_dir`. Recrea el directorio.
 pub fn extract_runtime(tarball: &Path, slot_dir: &Path) -> Result<ExtractReport, String> {
     if slot_dir.exists() {
-        fs::remove_dir_all(slot_dir).map_err(|error| {
-            format!(
-                "No se pudo vaciar `{}`: {error}",
-                slot_dir.display()
-            )
-        })?;
+        fs::remove_dir_all(slot_dir)
+            .map_err(|error| format!("No se pudo vaciar `{}`: {error}", slot_dir.display()))?;
     }
-    fs::create_dir_all(slot_dir).map_err(|error| {
-        format!("No se pudo crear `{}`: {error}", slot_dir.display())
-    })?;
+    fs::create_dir_all(slot_dir)
+        .map_err(|error| format!("No se pudo crear `{}`: {error}", slot_dir.display()))?;
 
-    let file = File::open(tarball).map_err(|error| {
-        format!("No se pudo abrir `{}`: {error}", tarball.display())
-    })?;
+    let file = File::open(tarball)
+        .map_err(|error| format!("No se pudo abrir `{}`: {error}", tarball.display()))?;
     let decoder = MultiBzDecoder::new(BufReader::new(file));
     let mut archive = Archive::new(decoder);
     archive.set_preserve_permissions(true);
@@ -74,20 +68,15 @@ pub fn extract_runtime(tarball: &Path, slot_dir: &Path) -> Result<ExtractReport,
 
         let out_path = slot_dir.join(&mapped);
         if !out_path.starts_with(slot_dir) {
-            return Err(format!(
-                "La entrada `{}` escapa del slot",
-                path.display()
-            ));
+            return Err(format!("La entrada `{}` escapa del slot", path.display()));
         }
         if let Some(parent) = out_path.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
-                format!("No se pudo crear `{}`: {error}", parent.display())
-            })?;
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("No se pudo crear `{}`: {error}", parent.display()))?;
         }
 
-        let mut out = File::create(&out_path).map_err(|error| {
-            format!("No se pudo crear `{}`: {error}", out_path.display())
-        })?;
+        let mut out = File::create(&out_path)
+            .map_err(|error| format!("No se pudo crear `{}`: {error}", out_path.display()))?;
         let copied = copy_entry(&mut entry, &mut out)?;
         out.flush()
             .map_err(|error| format!("No se pudo escribir `{}`: {error}", out_path.display()))?;
@@ -113,9 +102,8 @@ pub fn parse_api_versions(header: &str) -> Result<(u32, u32), String> {
 pub fn parse_cef_version(header: &str) -> Result<(String, String), String> {
     let cef = define_quoted(header, "CEF_VERSION")
         .ok_or_else(|| "No se encontró CEF_VERSION".to_string())?;
-    let chromium = chrome_version_from_defines(header).unwrap_or_else(|| {
-        super::version::chromium_from(&cef).unwrap_or_default()
-    });
+    let chromium = chrome_version_from_defines(header)
+        .unwrap_or_else(|| super::version::chromium_from(&cef).unwrap_or_default());
     if chromium.is_empty() {
         return Err("No se pudo derivar la versión de Chromium".to_string());
     }
@@ -355,9 +343,8 @@ fn define_plain_u32(header: &str, name: &str) -> Option<u32> {
 
 fn walk_files(root: &Path, current: &Path) -> Result<Vec<ManifestFile>, String> {
     let mut out = Vec::new();
-    let entries = fs::read_dir(current).map_err(|error| {
-        format!("No se pudo leer `{}`: {error}", current.display())
-    })?;
+    let entries = fs::read_dir(current)
+        .map_err(|error| format!("No se pudo leer `{}`: {error}", current.display()))?;
     for entry in entries {
         let entry = entry.map_err(|error| format!("No se pudo leer el slot: {error}"))?;
         let path = entry.path();
@@ -485,9 +472,9 @@ pub(crate) const VERSION_HEADER_SNIPPET: &str = r#"#define CEF_VERSION "152.0.6+
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::manifest::{self, REQUIRED_FILES_LINUX64};
     use super::super::paths::PLATFORM;
+    use super::*;
     use tempfile::TempDir;
 
     fn sample_files() -> Vec<(&'static str, &'static [u8], u32)> {
@@ -551,12 +538,7 @@ mod tests {
     fn extract_runtime_rejects_parent_dir() {
         let tmp = TempDir::new().unwrap();
         let tarball = tmp.path().join("evil.tar.bz2");
-        write_synthetic_tarball(
-            &tarball,
-            "top",
-            &[("../evil", b"pwned", 0o644)],
-        )
-        .unwrap();
+        write_synthetic_tarball(&tarball, "top", &[("../evil", b"pwned", 0o644)]).unwrap();
         let slot = tmp.path().join("slot");
         let error = extract_runtime(&tarball, &slot).unwrap_err();
         assert!(error.contains(".."), "{error}");
@@ -640,17 +622,8 @@ mod tests {
             sha1: "9711b86c105fb590da576fe5a829802f1a79d520".into(),
             size: 321503907,
         };
-        let mut manifest = build_manifest(
-            &slot,
-            &cef,
-            &chromium,
-            PLATFORM,
-            min,
-            last,
-            &archive,
-            false,
-        )
-        .unwrap();
+        let mut manifest =
+            build_manifest(&slot, &cef, &chromium, PLATFORM, min, last, &archive, false).unwrap();
         // validate exige los archivos obligatorios; el tarball real los trae.
         for name in REQUIRED_FILES_LINUX64 {
             assert!(

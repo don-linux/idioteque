@@ -422,7 +422,9 @@ mod tests {
         assert_eq!(info.denylist.len(), 1);
         assert_eq!(info.last_check_at.as_deref(), Some("2026-09-16T23:00:00Z"));
         assert_eq!(
-            info.pending_promotion.as_ref().map(|p| p.cef_version.as_str()),
+            info.pending_promotion
+                .as_ref()
+                .map(|p| p.cef_version.as_str()),
             Some(NEWER)
         );
         assert!(info.host_alive);

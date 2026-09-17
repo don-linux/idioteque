@@ -52,8 +52,8 @@ struct BaseInfoFile {
 pub fn base_info() -> &'static BaseInfo {
     static INFO: OnceLock<BaseInfo> = OnceLock::new();
     INFO.get_or_init(|| {
-        let parsed: BaseInfoFile = serde_json::from_str(BASE_JSON)
-            .expect("src-tauri/cef/base.json debe parsear");
+        let parsed: BaseInfoFile =
+            serde_json::from_str(BASE_JSON).expect("src-tauri/cef/base.json debe parsear");
         BaseInfo {
             cef_version: parsed.cef_version,
             chromium_version: parsed.chromium_version,
@@ -94,9 +94,7 @@ impl CefPaths {
             None => app
                 .path()
                 .resource_dir()
-                .map_err(|error| {
-                    format!("No se pudo resolver el directorio de recursos: {error}")
-                })?
+                .map_err(|error| format!("No se pudo resolver el directorio de recursos: {error}"))?
                 .join("cef")
                 .join("base"),
         };
@@ -147,6 +145,12 @@ impl CefPaths {
 
 /// Sidecar `cef-host` junto al ejecutable (`.exe` en Windows).
 /// Override: `IDIOTEQUE_CEF_HOST_BIN`.
+///
+/// Se mira primero junto a `std::env::current_exe()`: dentro de una AppImage
+/// es `$APPDIR/usr/bin/idioteque`, que es donde va el sidecar, mientras que
+/// `tauri::process::current_binary` devuelve la ruta del `.AppImage` en sí
+/// (pensada para reiniciar la app) y ahí no hay ningún `cef-host`. Ese
+/// segundo candidato queda como respaldo.
 pub fn host_binary_path(app: &AppHandle) -> Result<PathBuf, String> {
     if let Some(value) = std::env::var_os("IDIOTEQUE_CEF_HOST_BIN") {
         let path = PathBuf::from(value);
@@ -159,25 +163,37 @@ pub fn host_binary_path(app: &AppHandle) -> Result<PathBuf, String> {
         ));
     }
 
-    let exe = tauri::process::current_binary(&app.env())
-        .or_else(|_| std::env::current_exe())
-        .map_err(|error| format!("No se pudo resolver el ejecutable: {error}"))?;
-    let dir = exe
-        .parent()
-        .ok_or_else(|| "Ruta del ejecutable inválida".to_string())?;
-    let name = if cfg!(windows) {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        candidates.push(exe);
+    }
+    if let Ok(exe) = tauri::process::current_binary(&app.env()) {
+        candidates.push(exe);
+    }
+    if candidates.is_empty() {
+        return Err("No se pudo resolver el ejecutable".to_string());
+    }
+
+    let paths: Vec<PathBuf> = candidates
+        .iter()
+        .filter_map(|exe| exe.parent().map(|dir| dir.join(host_binary_name())))
+        .collect();
+    if let Some(found) = paths.iter().find(|path| path.is_file()) {
+        return Ok(found.clone());
+    }
+    let searched: Vec<String> = paths.iter().map(|p| format!("`{}`", p.display())).collect();
+    Err(format!(
+        "No se encontró el binario cef-host en {}",
+        searched.join(" ni ")
+    ))
+}
+
+fn host_binary_name() -> &'static str {
+    if cfg!(windows) {
         "cef-host.exe"
     } else {
         "cef-host"
-    };
-    let path = dir.join(name);
-    if !path.is_file() {
-        return Err(format!(
-            "No se encontró el binario cef-host en `{}`",
-            path.display()
-        ));
     }
-    Ok(path)
 }
 
 fn create_dir(path: &Path) -> Result<(), String> {
@@ -192,16 +208,14 @@ mod tests {
 
     #[test]
     fn platform_is_a_known_index_key() {
-        assert!(
-            [
-                "linux64",
-                "linuxarm64",
-                "windows64",
-                "macosx64",
-                "macosarm64"
-            ]
-            .contains(&PLATFORM)
-        );
+        assert!([
+            "linux64",
+            "linuxarm64",
+            "windows64",
+            "macosx64",
+            "macosarm64"
+        ]
+        .contains(&PLATFORM));
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         assert_eq!(PLATFORM, "linux64");
     }
@@ -209,10 +223,7 @@ mod tests {
     #[test]
     fn base_info_matches_base_json() {
         let info = base_info();
-        assert_eq!(
-            info.cef_version,
-            "152.0.6+g708dc14+chromium-152.0.7977.83"
-        );
+        assert_eq!(info.cef_version, "152.0.6+g708dc14+chromium-152.0.7977.83");
         assert_eq!(info.chromium_version, "152.0.7977.83");
         assert_eq!(info.host_api_version, 15200);
         assert_eq!(info.api_version_min, 13300);

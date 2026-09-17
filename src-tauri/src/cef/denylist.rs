@@ -194,7 +194,11 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let paths = paths_in(&tmp);
         let mut list = Denylist::new(15200);
-        list.add("153.0.1+gabc+chromium-153.0.8000.10", "153.0.8000.10", "health-timeout");
+        list.add(
+            "153.0.1+gabc+chromium-153.0.8000.10",
+            "153.0.8000.10",
+            "health-timeout",
+        );
         save(&paths, &list).unwrap();
 
         let loaded = load(&paths, 15300);

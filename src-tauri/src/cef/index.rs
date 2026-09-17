@@ -138,9 +138,7 @@ pub fn fetch_index(url: &str, etag: Option<&str>) -> Result<IndexFetch, String> 
         .build()
         .map_err(|error| format!("No se pudo crear el cliente HTTP: {error}"))?;
 
-    let mut request = client
-        .get(url)
-        .header("Accept-Encoding", "gzip");
+    let mut request = client.get(url).header("Accept-Encoding", "gzip");
     if let Some(etag) = etag.filter(|value| !value.is_empty()) {
         request = request.header("If-None-Match", etag);
     }
@@ -329,12 +327,9 @@ mod tests {
     #[test]
     fn select_candidate_picks_greatest_stable_minimal() {
         let index = parse_index(SAMPLE).unwrap();
-        let chosen = select_candidate(&index, "linux64", &current(), &|_| false)
-            .expect("candidate");
-        assert_eq!(
-            chosen.version.cef_version,
-            "155.0.0+ggg+chromium-155.0.1.1"
-        );
+        let chosen =
+            select_candidate(&index, "linux64", &current(), &|_| false).expect("candidate");
+        assert_eq!(chosen.version.cef_version, "155.0.0+ggg+chromium-155.0.1.1");
         assert_eq!(chosen.file.name, "denied.tar.bz2");
     }
 
@@ -411,10 +406,7 @@ mod tests {
             body,
         );
         match fetch_index(&url, None).expect("fetch") {
-            IndexFetch::Fetched {
-                body: text,
-                etag,
-            } => {
+            IndexFetch::Fetched { body: text, etag } => {
                 assert!(text.contains("linux64"));
                 assert_eq!(etag.as_deref(), Some("\"abc123\""));
             }
