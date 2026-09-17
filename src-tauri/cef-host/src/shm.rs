@@ -362,10 +362,7 @@ mod tests {
             .status()
             .expect("spawn sudo mount");
         if status.success() {
-            return SizedTmpfs {
-                dir,
-                mounted: true,
-            };
+            return SizedTmpfs { dir, mounted: true };
         }
         let target = std::ffi::CString::new(dir.to_string_lossy().as_bytes()).unwrap();
         let fstype = std::ffi::CString::new("tmpfs").unwrap();
@@ -380,15 +377,13 @@ mod tests {
             )
         };
         assert_eq!(
-            rc, 0,
+            rc,
+            0,
             "no se pudo montar tmpfs size={size} en {} (sudo -n mount o CAP_SYS_ADMIN): {}",
             dir.display(),
             io::Error::last_os_error()
         );
-        SizedTmpfs {
-            dir,
-            mounted: true,
-        }
+        SizedTmpfs { dir, mounted: true }
     }
 
     #[test]
@@ -409,10 +404,7 @@ mod tests {
 
     #[test]
     fn official_levels_are_only_two() {
-        assert_eq!(
-            ShmPolicy::DevShm.official_level(),
-            OfficialShmLevel::DevShm
-        );
+        assert_eq!(ShmPolicy::DevShm.official_level(), OfficialShmLevel::DevShm);
         assert_eq!(
             ShmPolicy::TempDir("/var/tmp".into()).official_level(),
             OfficialShmLevel::DisableDevShmUsage
@@ -537,7 +529,10 @@ mod tests {
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o1555)).unwrap();
         let result = probe_dir(&dir, 1024);
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
-        assert!(result.is_err(), "01555 must fail; 01755 would still be owner-writable");
+        assert!(
+            result.is_err(),
+            "01555 must fail; 01755 would still be owner-writable"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -602,7 +597,10 @@ mod tests {
         let path = dir.join("f");
         let file = create_probe_file(&path).unwrap();
         write_zeros(&file, 3 * 1024 * 1024 + 17).unwrap();
-        assert_eq!(std::fs::metadata(&path).unwrap().len(), 3 * 1024 * 1024 + 17);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().len(),
+            3 * 1024 * 1024 + 17
+        );
         drop(file);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -626,7 +624,10 @@ mod tests {
             std::env::set_var("TMPDIR", &marker);
             apply_env(&ShmPolicy::DevShm).unwrap();
             apply_env(&ShmPolicy::TempDir(marker.join("unused").into())).unwrap();
-            assert_eq!(std::env::var_os("TMPDIR").as_deref(), Some(marker.as_os_str()));
+            assert_eq!(
+                std::env::var_os("TMPDIR").as_deref(),
+                Some(marker.as_os_str())
+            );
             assert!(!marker.join("unused").exists());
             let _ = std::fs::remove_dir_all(&marker);
         });
@@ -678,7 +679,10 @@ mod tests {
         let from_enospc = choose(false, temp, true, cache);
         let from_edquot = choose(false, temp, true, cache);
         assert_eq!(from_enospc, from_edquot);
-        assert_eq!(from_enospc.official_level(), OfficialShmLevel::DisableDevShmUsage);
+        assert_eq!(
+            from_enospc.official_level(),
+            OfficialShmLevel::DisableDevShmUsage
+        );
         assert!(from_enospc.disable_dev_shm());
     }
 
@@ -689,7 +693,10 @@ mod tests {
         let temp = Path::new("/tmp-quota-full");
         let cache = Path::new("/home/x/.idioteque/cef/profile");
         let policy = choose(false, temp, false, cache);
-        assert_eq!(policy.official_level(), OfficialShmLevel::DisableDevShmUsage);
+        assert_eq!(
+            policy.official_level(),
+            OfficialShmLevel::DisableDevShmUsage
+        );
         assert_eq!(
             policy.tmpdir_override(),
             Some(cache.join("shm").as_path()),
@@ -701,7 +708,10 @@ mod tests {
     fn extra_args_force_official_flag_even_when_probe_chose_dev_shm() {
         let healthy = ShmPolicy::DevShm;
         assert!(!healthy.disable_dev_shm());
-        assert!(!command_line_disables_dev_shm(healthy.disable_dev_shm(), &[]));
+        assert!(!command_line_disables_dev_shm(
+            healthy.disable_dev_shm(),
+            &[]
+        ));
 
         let forced = split_extra_switches("--disable-dev-shm-usage");
         assert!(extra_forces_disable_dev_shm(&forced));
@@ -752,10 +762,16 @@ mod tests {
         if live_ok {
             assert_eq!(policy, ShmPolicy::DevShm);
             assert_eq!(policy.official_level(), OfficialShmLevel::DevShm);
-            assert!(!command_line_disables_dev_shm(policy.disable_dev_shm(), &[]));
+            assert!(!command_line_disables_dev_shm(
+                policy.disable_dev_shm(),
+                &[]
+            ));
         } else {
             assert_ne!(policy, ShmPolicy::DevShm);
-            assert_eq!(policy.official_level(), OfficialShmLevel::DisableDevShmUsage);
+            assert_eq!(
+                policy.official_level(),
+                OfficialShmLevel::DisableDevShmUsage
+            );
             assert!(command_line_disables_dev_shm(policy.disable_dev_shm(), &[]));
         }
         let _ = std::fs::remove_dir_all(&cache);
