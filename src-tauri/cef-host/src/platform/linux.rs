@@ -387,6 +387,10 @@ mod tests {
         assert_eq!(err.exit_code(), exit::NO_X11);
         assert_eq!(err.exit_code(), 16);
         assert_eq!(err.message(), "DISPLAY is empty");
+        assert_eq!(
+            display_from_var(Ok(String::new())),
+            Err(DisplayEnvError::Empty)
+        );
     }
 
     #[test]
@@ -854,6 +858,17 @@ mod tests {
         }
     }
 
+    /// Empty `DISPLAY` → skip (no X). Set `DISPLAY` + failed open → fail the test.
+    fn require_live() -> Option<LiveX> {
+        match std::env::var("DISPLAY") {
+            Ok(name) if !name.is_empty() => Some(
+                LiveX::connect()
+                    .unwrap_or_else(|| panic!("DISPLAY={name} but XOpenDisplay failed")),
+            ),
+            _ => None,
+        }
+    }
+
     impl Drop for LiveX {
         fn drop(&mut self) {
             unsafe {
@@ -873,7 +888,7 @@ mod tests {
     #[test]
     fn live_shim_map_unmap_resize_focus() {
         let _guard = LIVE_X.lock().expect("live x11 lock");
-        let Some(mut live) = LiveX::connect() else {
+        let Some(mut live) = require_live() else {
             return;
         };
         live.reset_error();
@@ -908,7 +923,7 @@ mod tests {
     #[test]
     fn live_zero_size_shim_becomes_1x1() {
         let _guard = LIVE_X.lock().expect("live x11 lock");
-        let Some(mut live) = LiveX::connect() else {
+        let Some(mut live) = require_live() else {
             return;
         };
         live.reset_error();
@@ -923,13 +938,14 @@ mod tests {
     #[test]
     fn live_copy_from_parent_on_foreign_visual_is_badmatch_shim_is_not() {
         let _guard = LIVE_X.lock().expect("live x11 lock");
-        let Some(mut live) = LiveX::connect() else {
+        let Some(mut live) = require_live() else {
             return;
         };
         let Some(parent) = live.create_foreign_visual_parent(200, 120) else {
             // Single-visual servers cannot demonstrate the mismatch. The
             // unit test `shim_kept_even_if_parent_visual_already_default`
             // still forbids dropping the shim.
+            eprintln!("won't-test live BadMatch: server has only the default visual");
             return;
         };
 
