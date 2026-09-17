@@ -4,6 +4,12 @@
 
 use crate::exit::{self, fatal};
 
+/// CONTRACT.md §2: windows64 is prepared, not implemented.
+/// Same exit as Linux without X11 (16). Not an embed.
+pub fn unimplemented_contract() -> (i32, &'static str) {
+    (exit::NO_X11, "windows host is not implemented")
+}
+
 pub fn init_threads() {}
 
 pub fn ensure_display() {
@@ -27,5 +33,6 @@ pub fn xid_from_handle(handle: cef::sys::cef_window_handle_t) -> u64 {
 }
 
 pub fn unimplemented_platform() -> ! {
-    fatal(exit::NO_X11, "windows host is not implemented")
+    let (code, message) = unimplemented_contract();
+    fatal(code, message)
 }
