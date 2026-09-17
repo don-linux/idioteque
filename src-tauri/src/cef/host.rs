@@ -4,7 +4,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -63,6 +63,8 @@ pub struct HostProcess {
 pub struct CefState {
     host: Mutex<Option<HostProcess>>,
     pub no_sandbox: AtomicBool,
+    /// XID del hueco GDK que aloja a CEF; `0` cuando no hay ninguno.
+    hole_xid: AtomicU64,
 }
 
 impl Default for CefState {
@@ -70,6 +72,7 @@ impl Default for CefState {
         Self {
             host: Mutex::new(None),
             no_sandbox: AtomicBool::new(false),
+            hole_xid: AtomicU64::new(0),
         }
     }
 }
@@ -263,13 +266,16 @@ pub fn browser_spawn(
     on_event: Channel<HostEvent>,
 ) -> Result<BrowserBoot, String> {
     take_and_kill(&state)?;
+    destroy_hole(&state);
 
     let paths = CefPaths::from_app(&app)?;
     paths.ensure_dirs()?;
     let slot = manifest::resolve_effective(&paths)?;
     let binary = paths::host_binary_path(&app)?;
-    let physical = physical_bounds(bounds.x, bounds.y, bounds.w, bounds.h, scale);
-    let parent_xid = parent_xid(&window)?;
+    let (_, _, phys_w, phys_h) = physical_bounds(bounds.x, bounds.y, bounds.w, bounds.h, scale);
+    let (lx, ly, lw, lh) = logical_bounds(bounds.x, bounds.y, bounds.w, bounds.h);
+    let hole_xid = hole::create(&window, lx, ly, lw, lh)?;
+    state.hole_xid.store(hole_xid, Ordering::SeqCst);
 
     let no_sandbox = env_no_sandbox() || state.no_sandbox.load(Ordering::SeqCst);
     if no_sandbox {
@@ -280,8 +286,9 @@ pub fn browser_spawn(
         binary,
         cef_dir: slot.dir.clone(),
         cache_dir: paths.profile(),
-        parent_xid,
-        bounds: Some(physical),
+        parent_xid: Some(hole_xid),
+        // Dentro del hueco CEF empieza en (0, 0); el hueco ya está colocado.
+        bounds: Some((0, 0, phys_w.max(1), phys_h.max(1))),
         scale,
         url,
         health_check: false,
@@ -326,14 +333,28 @@ pub fn browser_set_bounds(
     h: f64,
     scale: f64,
 ) -> Result<(), String> {
-    let (x, y, w, h) = physical_bounds(x, y, w, h, scale);
+    let (lx, ly, lw, lh) = logical_bounds(x, y, w, h);
+    let (_, _, pw, ph) = physical_bounds(x, y, w, h, scale);
+    let xid = state.hole_xid.load(Ordering::SeqCst);
+    if xid != 0 {
+        hole::move_resize(xid, lx, ly, lw, lh);
+    }
     with_host(&state, |host| {
-        host.send(&HostCommand::SetBounds { x, y, w, h })
+        host.send(&HostCommand::SetBounds {
+            x: 0,
+            y: 0,
+            w: pw.max(1),
+            h: ph.max(1),
+        })
     })
 }
 
 #[tauri::command]
 pub fn browser_set_visible(state: State<CefState>, visible: bool) -> Result<(), String> {
+    let xid = state.hole_xid.load(Ordering::SeqCst);
+    if xid != 0 {
+        hole::set_visible(xid, visible);
+    }
     let cmd = if visible {
         HostCommand::Show
     } else {
@@ -344,7 +365,9 @@ pub fn browser_set_visible(state: State<CefState>, visible: bool) -> Result<(), 
 
 #[tauri::command]
 pub fn browser_kill(state: State<CefState>) -> Result<(), String> {
-    take_and_kill(&state)
+    let result = take_and_kill(&state);
+    destroy_hole(&state);
+    result
 }
 
 fn start_forward_thread(
@@ -481,23 +504,112 @@ fn prepend_env(cmd: &mut Command, key: &str, cef_dir: &std::path::Path, sep: &st
     cmd.env(key, value);
 }
 
+/// Ventana X11 "hueco" para CEF.
+///
+/// GDK pinta el toplevel con cairo en modo `IncludeInferiors`, así que una
+/// ventana X ajena colgada directamente del toplevel queda tapada en cada
+/// repintado. Un hijo nativo creado por GDK sí se descuenta de la región de
+/// recorte del toplevel: CEF se reparenta dentro de él. Las coordenadas del
+/// hueco son lógicas (CSS px); dentro, CEF ocupa `(0, 0)` en píxeles físicos.
 #[cfg(target_os = "linux")]
-fn parent_xid(window: &tauri::Window) -> Result<Option<u64>, String> {
+mod hole {
+    use gtk::glib::Cast;
     use gtk::prelude::*;
 
-    let gtk_window = window
-        .gtk_window()
-        .map_err(|_| X11_REQUIRED.to_string())?;
-    let gdk_window = gtk_window.window().ok_or_else(|| X11_REQUIRED.to_string())?;
-    let x11_window = gdk_window
-        .downcast::<gdkx11::X11Window>()
-        .map_err(|_| X11_REQUIRED.to_string())?;
-    Ok(Some(x11_window.xid() as u64))
+    use super::X11_REQUIRED;
+
+    fn lookup(xid: u64) -> Option<gdk::Window> {
+        let display = gdk::Display::default()?;
+        let x11_display = display.downcast_ref::<gdkx11::X11Display>()?;
+        gdkx11::X11Window::lookup_for_display(x11_display, xid as _).map(|w| w.upcast())
+    }
+
+    pub fn create(window: &tauri::Window, x: i32, y: i32, w: i32, h: i32) -> Result<u64, String> {
+        let gtk_window = window
+            .gtk_window()
+            .map_err(|_| X11_REQUIRED.to_string())?;
+        let parent = gtk_window
+            .window()
+            .ok_or_else(|| "La ventana de idioteque aún no está realizada".to_string())?;
+        if parent.downcast_ref::<gdkx11::X11Window>().is_none() {
+            return Err(X11_REQUIRED.to_string());
+        }
+
+        let attrs = gdk::WindowAttr {
+            window_type: gdk::WindowType::Child,
+            wclass: gdk::WindowWindowClass::InputOutput,
+            x: Some(x),
+            y: Some(y),
+            width: w.max(1),
+            height: h.max(1),
+            visual: Some(parent.visual()),
+            event_mask: gdk::EventMask::empty(),
+            ..Default::default()
+        };
+        let hole = gdk::Window::new(Some(&parent), &attrs);
+        if !hole.ensure_native() {
+            hole.destroy();
+            return Err("GDK no pudo crear la ventana nativa para el navegador".to_string());
+        }
+        hole.show();
+        hole.raise();
+
+        let xid = hole
+            .downcast_ref::<gdkx11::X11Window>()
+            .ok_or_else(|| X11_REQUIRED.to_string())?
+            .xid();
+        Ok(xid as u64)
+    }
+
+    pub fn move_resize(xid: u64, x: i32, y: i32, w: i32, h: i32) {
+        if let Some(hole) = lookup(xid) {
+            hole.move_resize(x, y, w.max(1), h.max(1));
+        }
+    }
+
+    pub fn set_visible(xid: u64, visible: bool) {
+        if let Some(hole) = lookup(xid) {
+            if visible {
+                hole.show();
+                hole.raise();
+            } else {
+                hole.hide();
+            }
+        }
+    }
+
+    pub fn destroy(xid: u64) {
+        if let Some(hole) = lookup(xid) {
+            hole.hide();
+            hole.destroy();
+        }
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
-fn parent_xid(_window: &tauri::Window) -> Result<Option<u64>, String> {
-    Ok(None)
+mod hole {
+    pub fn create(_window: &tauri::Window, _x: i32, _y: i32, _w: i32, _h: i32) -> Result<u64, String> {
+        Err("El navegador embebido solo está implementado en Linux/X11".to_string())
+    }
+    pub fn move_resize(_xid: u64, _x: i32, _y: i32, _w: i32, _h: i32) {}
+    pub fn set_visible(_xid: u64, _visible: bool) {}
+    pub fn destroy(_xid: u64) {}
+}
+
+fn logical_bounds(x: f64, y: f64, w: f64, h: f64) -> (i32, i32, i32, i32) {
+    (
+        x.round() as i32,
+        y.round() as i32,
+        w.round().max(1.0) as i32,
+        h.round().max(1.0) as i32,
+    )
+}
+
+fn destroy_hole(state: &CefState) {
+    let xid = state.hole_xid.swap(0, Ordering::SeqCst);
+    if xid != 0 {
+        hole::destroy(xid);
+    }
 }
 
 #[cfg(test)]
