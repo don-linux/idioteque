@@ -18,7 +18,7 @@ function key(
   }> = {},
 ) {
   return {
-    code: "KeyB",
+    code: "KeyT",
     ctrlKey: true,
     metaKey: false,
     shiftKey: false,
@@ -31,9 +31,10 @@ function key(
 }
 
 describe("isTreeToggleShortcut", () => {
-  it("matches only plain Ctrl+B", () => {
+  it("matches only plain Ctrl+T", () => {
     expect(isTreeToggleShortcut(key())).toBe(true);
     expect(isTreeToggleShortcut(key({ code: "KeyJ" }))).toBe(false);
+    expect(isTreeToggleShortcut(key({ code: "KeyB" }))).toBe(false);
     expect(isTreeToggleShortcut(key({ ctrlKey: false }))).toBe(false);
     expect(isTreeToggleShortcut(key({ metaKey: true }))).toBe(false);
     expect(isTreeToggleShortcut(key({ shiftKey: true }))).toBe(false);
@@ -43,7 +44,7 @@ describe("isTreeToggleShortcut", () => {
   // `code` has to match whole, not by suffix or substring: a looser comparison
   // would hand unrelated physical keys the tree toggle.
   it("compares the whole code, not part of it", () => {
-    for (const code of ["IntlB", "KeyBB", "BracketLeftB", "keyb", "Key", "B", ""]) {
+    for (const code of ["IntlT", "KeyTT", "BracketLeftT", "keyt", "Key", "T", ""]) {
       expect(isTreeToggleShortcut(key({ code }))).toBe(false);
       expect(isTreeToggleAnywhereShortcut(key({ code, shiftKey: true }))).toBe(false);
     }
@@ -51,12 +52,13 @@ describe("isTreeToggleShortcut", () => {
 });
 
 describe("isTreeToggleAnywhereShortcut", () => {
-  it("matches only Ctrl+Shift+B", () => {
+  it("matches only Ctrl+Shift+T", () => {
     expect(isTreeToggleAnywhereShortcut(key({ shiftKey: true }))).toBe(true);
     expect(isTreeToggleAnywhereShortcut(key())).toBe(false);
     expect(isTreeToggleAnywhereShortcut(key({ shiftKey: true, altKey: true }))).toBe(false);
     expect(isTreeToggleAnywhereShortcut(key({ shiftKey: true, metaKey: true }))).toBe(false);
     expect(isTreeToggleAnywhereShortcut(key({ code: "KeyJ", shiftKey: true }))).toBe(false);
+    expect(isTreeToggleAnywhereShortcut(key({ code: "KeyB", shiftKey: true }))).toBe(false);
   });
 
   it("does not overlap with the plain chord", () => {
@@ -88,7 +90,7 @@ describe("handleTreeToggleShortcut", () => {
     expect(event.preventDefault).not.toHaveBeenCalled();
   });
 
-  it("leaves Ctrl+B alone inside the terminal, so tmux keeps its prefix", () => {
+  it("leaves Ctrl+T alone inside the terminal", () => {
     const event = key();
     const toggleTree = vi.fn();
 
@@ -99,7 +101,7 @@ describe("handleTreeToggleShortcut", () => {
     expect(event.stopPropagation).not.toHaveBeenCalled();
   });
 
-  it("still toggles from inside the terminal with Ctrl+Shift+B", () => {
+  it("still toggles from inside the terminal with Ctrl+Shift+T", () => {
     const event = key({ shiftKey: true });
     const toggleTree = vi.fn();
 
@@ -109,7 +111,7 @@ describe("handleTreeToggleShortcut", () => {
     expect(event.preventDefault).toHaveBeenCalledTimes(1);
   });
 
-  it("accepts Ctrl+Shift+B outside the terminal too", () => {
+  it("accepts Ctrl+Shift+T outside the terminal too", () => {
     const event = key({ shiftKey: true });
     const toggleTree = vi.fn();
 
@@ -139,7 +141,7 @@ describe("handleTreeToggleShortcut", () => {
   });
 
   // How the layout wires it: the target of the keydown decides `insideTerminal`.
-  it("lets tmux keep Ctrl+B when the event came from an xterm surface", () => {
+  it("lets the terminal keep Ctrl+T when the event came from an xterm surface", () => {
     const target = { closest: (selector: string) => (selector === ".xterm" ? {} : null) };
     const event = key();
     const toggleTree = vi.fn();
@@ -163,7 +165,7 @@ describe("handleTreeToggleShortcut", () => {
     expect(toggleTree).toHaveBeenCalledTimes(1);
   });
 
-  it("toggles on Ctrl+B when the event came from the editor", () => {
+  it("toggles on Ctrl+T when the event came from the editor", () => {
     const target = { closest: () => null };
     const event = key();
     const toggleTree = vi.fn();
@@ -215,7 +217,7 @@ describe("isGitToggleShortcut", () => {
     expect(isGitToggleShortcut(key({ code: "KeyG", ctrlKey: false }))).toBe(false);
   });
 
-  // Same trap as Ctrl+B: `includes("KeyG")` or `endsWith("G")` would accept
+  // Same trap as Ctrl+T: `includes("KeyG")` or `endsWith("G")` would accept
   // unrelated physical keys.
   it("compares the whole code, not part of it", () => {
     for (const code of ["IntlG", "KeyGG", "Key", "G", "keyg", ""]) {
@@ -264,7 +266,7 @@ describe("handleGitToggleShortcut", () => {
   });
 
   it("does not steal Ctrl+B", () => {
-    const event = key();
+    const event = key({ code: "KeyB" });
     const toggleGit = vi.fn();
 
     handleGitToggleShortcut(event, { hasWorkspace: true, insideTerminal: false, toggleGit });

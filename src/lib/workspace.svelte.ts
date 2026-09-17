@@ -29,6 +29,7 @@ import {
   shouldShowFolderVisibilityToast,
 } from "$lib/folder-visibility";
 import { folderVisibility } from "$lib/folder-visibility.svelte";
+import { browser } from "$lib/browser.svelte";
 import { terminal } from "$lib/terminal.svelte";
 import { toasts } from "$lib/toast.svelte";
 import { unsavedExit } from "$lib/unsaved-exit.svelte";
@@ -743,6 +744,7 @@ class Workspace {
   async #leaveSession(): Promise<void> {
     await this.#stopWatch();
     await terminal.teardown();
+    await browser.teardown();
   }
 
   async #startWatch(root: string): Promise<void> {

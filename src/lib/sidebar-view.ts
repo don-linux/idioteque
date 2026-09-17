@@ -5,7 +5,7 @@ export interface SidebarState {
   view: SidebarView;
 }
 
-/** Ctrl+B / PanelLeft: always land on the file tree. Hide only when the tree is already showing. */
+/** Ctrl+T / PanelLeft: always land on the file tree. Hide only when the tree is already showing. */
 export function applyTreeToggle(state: SidebarState): SidebarState {
   if (!state.visible || state.view === "git") {
     return { visible: true, view: "tree" };

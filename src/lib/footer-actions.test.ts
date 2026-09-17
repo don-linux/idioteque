@@ -12,38 +12,63 @@ describe("DEFAULT_FOOTER_ACTION_ORDER", () => {
       "folder",
       "settings",
       "terminal",
+      "browser",
       "git",
     ]);
   });
 });
 
 describe("footerActionIntent", () => {
-  it("keeps home, folder, settings, terminal, and git as real actions", () => {
+  it("keeps home, folder, settings, terminal, browser, and git as real actions", () => {
     expect(footerActionIntent("home")).toBe("home");
     expect(footerActionIntent("folder")).toBe("folder");
     expect(footerActionIntent("settings")).toBe("settings");
     expect(footerActionIntent("terminal")).toBe("terminal");
+    expect(footerActionIntent("browser")).toBe("browser");
     expect(footerActionIntent("git")).toBe("git");
     expect(footerActionIntent("git")).not.toBe("idle");
     expect(footerActionIntent("git")).not.toBe("terminal");
+    expect(footerActionIntent("browser")).not.toBe("terminal");
   });
 
-  it("routes git like the other live icons", () => {
+  it("routes browser like the other live icons", () => {
     const calls: string[] = [];
     const actions = {
       home: () => calls.push("home"),
       folder: () => calls.push("folder"),
       terminal: () => calls.push("terminal"),
+      browser: () => calls.push("browser"),
       git: () => calls.push("git"),
     };
 
     runFooterAction("home", actions);
     runFooterAction("folder", actions);
     runFooterAction("terminal", actions);
+    runFooterAction("browser", actions);
     runFooterAction("settings", actions);
     runFooterAction("git", actions);
 
-    expect(calls).toEqual(["home", "folder", "terminal", "git"]);
+    expect(calls).toEqual(["home", "folder", "terminal", "browser", "git"]);
+  });
+
+  it("invokes only browser when the icon is browser", () => {
+    const actions = {
+      home: (): void => {
+        throw new Error("home");
+      },
+      folder: (): void => {
+        throw new Error("folder");
+      },
+      terminal: (): void => {
+        throw new Error("terminal");
+      },
+      browser: (): void => undefined,
+      git: (): void => {
+        throw new Error("git");
+      },
+    };
+
+    expect(() => runFooterAction("browser", actions)).not.toThrow();
   });
 
   it("invokes only git when the icon is git", () => {
@@ -56,6 +81,9 @@ describe("footerActionIntent", () => {
       },
       terminal: (): void => {
         throw new Error("terminal");
+      },
+      browser: (): void => {
+        throw new Error("browser");
       },
       git: (): void => undefined,
     };

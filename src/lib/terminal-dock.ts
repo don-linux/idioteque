@@ -54,7 +54,7 @@ export function handleTerminalShortcut(
   event: TerminalShortcutEvent,
   ctx: {
     hasWorkspace: boolean;
-    surface?: "editor" | "terminals";
+    surface?: "editor" | "terminals" | "browser";
     toggle: (dock: TerminalDock) => void;
   },
 ): void {
