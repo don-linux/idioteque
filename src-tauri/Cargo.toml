@@ -1,3 +1,6 @@
+[workspace]
+members = ["cef-host"]
+
 [package]
 name = "idioteque"
 version = "0.1.0"
@@ -27,4 +30,20 @@ portable-pty = "0.8"
 notify = "6.1"
 notify-debouncer-mini = "0.4"
 fontdb = "0.23"
+# Navegador CEF (src/cef): descarga, verificación y extracción del runtime.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "gzip"] }
+tar = "0.4"
+bzip2 = "0.5"
+sha1 = "0.10"
+sha2 = "0.10"
+hex = "0.4"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# XID de la ventana Tauri para reparentar la ventana de cef-host (mismas versiones que tao).
+gtk = "0.18"
+gdk = "0.18"
+gdkx11 = "0.18"
+
+[dev-dependencies]
+tempfile = "3"
 

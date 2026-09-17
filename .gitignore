@@ -9,4 +9,9 @@ node_modules
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 /docs/drafts
+
+# Runtime CEF: nunca se commitea (se descarga y se stripea en la build)
+/src-tauri/.cef-sdk
+/src-tauri/cef-base
+/src-tauri/binaries
 .tmp-preview

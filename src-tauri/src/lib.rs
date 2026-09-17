@@ -1,4 +1,5 @@
 mod app_config;
+mod cef;
 mod fonts;
 mod git;
 mod pty;
