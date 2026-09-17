@@ -155,7 +155,7 @@ pub fn check_slot(slot: &Path) -> Result<Manifest, FatalError> {
         ));
     }
 
-    for rel in REQUIRED {
+    for rel in required_files() {
         let p = join_slot(slot, rel)?;
         if !p.is_file() {
             return Err(FatalError::new(

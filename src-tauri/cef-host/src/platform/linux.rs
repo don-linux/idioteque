@@ -78,6 +78,7 @@ pub(crate) fn xopen_display_failed_message() -> &'static str {
 
 /// Native Wayland parent windows are out of scope (CEF #2804). Embed is X11
 /// or XWayland (`DISPLAY` + `--ozone-platform=x11`).
+#[cfg(test)]
 pub(crate) fn embed_protocol() -> &'static str {
     "x11"
 }
@@ -283,6 +284,7 @@ pub(crate) struct ShimWindowSpec {
 /// hole-gdk may request the system visual on the hole. That is a second
 /// belt, not a license to drop this one: a GL hole or a colormap mismatch
 /// still BadMatches (CEF #2804). Policy: keep the shim.
+#[cfg(test)]
 pub(crate) fn copy_from_parent_colormap_badmatch(parent_visual_is_default: bool) -> bool {
     !parent_visual_is_default
 }
@@ -293,12 +295,13 @@ pub(crate) fn shim_required(parent: u64, parent_visual_is_default: bool) -> bool
 }
 
 pub(crate) fn plan_shim(parent: u64, w: i32, h: i32) -> Option<ShimWindowSpec> {
-    if !xid_usable(parent) {
+    // Visual is unused: the shim is required whenever the parent xid is usable.
+    if !shim_required(parent, true) {
         return None;
     }
     Some(ShimWindowSpec {
-        x: 0,
-        y: 0,
+        x: SHIM_CHILD_X,
+        y: SHIM_CHILD_Y,
         width: clamp_extent(w),
         height: clamp_extent(h),
         border_width: 0,

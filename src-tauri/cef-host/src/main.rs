@@ -49,6 +49,7 @@ fn argv_is_cef_subprocess<S: AsRef<str>>(argv: &[S]) -> bool {
 }
 
 /// `--idq-info` / `--idq-info=…` as a flag token (not `--idq-information`).
+#[cfg(test)]
 fn argv_requests_idq_info<S: AsRef<str>>(argv: &[S]) -> bool {
     argv.iter().skip(1).any(|a| {
         let a = a.as_ref();

@@ -39,6 +39,7 @@ pub const PROBE_BYTES: u64 = 128 * 1024 * 1024;
 
 /// Default `--shm-size` de Docker/dockerd cuando se omite. No es umbral de
 /// producto: la decisión es el probe, no `size == 64 MiB`.
+#[cfg(test)]
 pub const DOCKER_DEFAULT_SHM_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Chromium `kDisableDevShmUsage` (sin `--`).
@@ -46,6 +47,7 @@ pub const DISABLE_DEV_SHM_USAGE: &str = "disable-dev-shm-usage";
 
 /// Los dos niveles que documenta Chromium. `CacheDir` es el extra de
 /// idioteque y se proyecta al segundo.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OfficialShmLevel {
     /// Default Chrome: ficheros anónimos en `/dev/shm`.
@@ -77,6 +79,7 @@ impl ShmPolicy {
         }
     }
 
+    #[cfg(test)]
     pub fn official_level(&self) -> OfficialShmLevel {
         if self.disable_dev_shm() {
             OfficialShmLevel::DisableDevShmUsage
@@ -171,7 +174,7 @@ pub fn probe_dir(dir: &Path, bytes: u64) -> io::Result<()> {
 
 /// ChromeDriver `EnsureSharedMemory()`: solo `access(W_OK|X_OK)`, sin
 /// reservar. Un `/dev/shm` de 64 MiB escribible pasa este check.
-#[cfg(unix)]
+#[cfg(all(test, unix))]
 pub fn dir_accessible_wx(dir: &Path) -> bool {
     use std::os::unix::ffi::OsStrExt;
     let Ok(c) = std::ffi::CString::new(dir.as_os_str().as_bytes()) else {
@@ -182,6 +185,7 @@ pub fn dir_accessible_wx(dir: &Path) -> bool {
 
 /// `ENOSPC` / `EDQUOT`: el directorio no puede respaldar la reserva.
 /// `statvfs`/`df` pueden mentir con `usrquota`; el probe no.
+#[cfg(test)]
 pub fn is_shm_capacity_error(error: &io::Error) -> bool {
     matches!(
         error.raw_os_error(),
@@ -189,19 +193,12 @@ pub fn is_shm_capacity_error(error: &io::Error) -> bool {
     )
 }
 
+#[cfg(test)]
 pub fn is_shm_permission_error(error: &io::Error) -> bool {
     matches!(
         error.raw_os_error(),
         Some(libc::EACCES) | Some(libc::EPERM) | Some(libc::EROFS)
     )
-}
-
-/// Mismo split por whitespace que `IDIOTEQUE_CEF_ARGS` en `args.rs`.
-pub fn split_extra_switches(raw: &str) -> Vec<String> {
-    raw.split_whitespace()
-        .filter(|t| !t.is_empty())
-        .map(str::to_string)
-        .collect()
 }
 
 pub fn extra_switch_name(raw: &str) -> &str {
@@ -726,31 +723,31 @@ mod tests {
             &[]
         ));
 
-        let forced = split_extra_switches("--disable-dev-shm-usage");
+        let forced = crate::args::split_extra_args("--disable-dev-shm-usage");
         assert!(extra_forces_disable_dev_shm(&forced));
         assert!(command_line_disables_dev_shm(
             healthy.disable_dev_shm(),
             &forced
         ));
 
-        let mixed = split_extra_switches("--disable-gpu --disable-dev-shm-usage --no-sandbox");
+        let mixed = crate::args::split_extra_args("--disable-gpu --disable-dev-shm-usage --no-sandbox");
         assert!(command_line_disables_dev_shm(false, &mixed));
 
-        let bare = split_extra_switches("disable-dev-shm-usage");
+        let bare = crate::args::split_extra_args("disable-dev-shm-usage");
         assert!(command_line_disables_dev_shm(false, &bare));
 
-        let equals = split_extra_switches("--disable-dev-shm-usage=1");
+        let equals = crate::args::split_extra_args("--disable-dev-shm-usage=1");
         assert!(command_line_disables_dev_shm(false, &equals));
     }
 
     #[test]
     fn extra_args_without_the_flag_do_not_disable_healthy_shm() {
-        let extras = split_extra_switches("--disable-gpu --use-gl=angle");
+        let extras = crate::args::split_extra_args("--disable-gpu --use-gl=angle");
         assert!(!extra_forces_disable_dev_shm(&extras));
         assert!(!command_line_disables_dev_shm(false, &extras));
         assert!(!command_line_disables_dev_shm(
             false,
-            &split_extra_switches("")
+            &crate::args::split_extra_args("")
         ));
     }
 
@@ -759,7 +756,7 @@ mod tests {
         // no_sandbox no entra en la decisión. TempDir pone el flag; DevShm no.
         assert!(!command_line_disables_dev_shm(
             ShmPolicy::DevShm.disable_dev_shm(),
-            &split_extra_switches("--no-sandbox")
+            &crate::args::split_extra_args("--no-sandbox")
         ));
         assert!(command_line_disables_dev_shm(
             ShmPolicy::TempDir("/tmp".into()).disable_dev_shm(),
@@ -940,7 +937,7 @@ mod tests {
         let cache = temp_dir("force-cache");
         let policy = decide_from(&large.dir, &temp, &cache, PROBE_BYTES);
         assert_eq!(policy, ShmPolicy::DevShm);
-        let extras = split_extra_switches("--disable-dev-shm-usage");
+        let extras = crate::args::split_extra_args("--disable-dev-shm-usage");
         assert!(command_line_disables_dev_shm(
             policy.disable_dev_shm(),
             &extras

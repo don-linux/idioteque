@@ -49,6 +49,7 @@ pub fn helper_usable(path: &Path) -> bool {
     }
 }
 
+#[cfg(test)]
 pub fn devel_sandbox_env(slot: &Path) -> Option<PathBuf> {
     let path = slot.join("chrome-sandbox");
     if helper_usable(&path) {

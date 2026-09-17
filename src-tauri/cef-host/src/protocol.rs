@@ -129,6 +129,7 @@ pub fn emit(event: &HostEvent) {
 }
 
 /// CONTRACT §4.4 / §4.7: stdin EOF, a stdin read error, or `close` → exit 0.
+#[cfg(test)]
 fn exit_code_for_stdin_stop(stop: StdinStop) -> i32 {
     match stop {
         StdinStop::Eof | StdinStop::ReadError | StdinStop::CloseCommand => 0,

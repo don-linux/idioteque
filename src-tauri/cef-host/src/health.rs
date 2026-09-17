@@ -139,6 +139,7 @@ pub fn window_info() -> WindowInfo {
 }
 
 /// Contract 4.5: health is windowless; `parent` is 0.
+#[cfg(test)]
 pub fn health_window_is_windowless() -> bool {
     true
 }

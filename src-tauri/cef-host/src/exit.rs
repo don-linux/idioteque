@@ -41,6 +41,7 @@ pub fn fatal_event(error: &FatalError) -> HostEvent {
 }
 
 /// One JSON object, no trailing newline. Same payload `protocol::emit` writes.
+#[cfg(test)]
 pub fn encode_fatal(error: &FatalError) -> String {
     serde_json::to_string(&fatal_event(error)).expect("fatal event is always serializable")
 }
