@@ -337,6 +337,22 @@ mod tests {
     }
 
     #[test]
+    fn emit_after_init_survives_broken_pipe() {
+        use std::os::fd::{FromRawFd, IntoRawFd};
+        let (reader, writer) = io::pipe().expect("pipe");
+        drop(reader);
+        let file = unsafe { File::from_raw_fd(writer.into_raw_fd()) };
+        let _ = WRITER.set(Mutex::new(file));
+        emit(&HostEvent::Fatal {
+            message: "ade-gone".into(),
+            code: 11,
+        });
+        emit(&HostEvent::Title {
+            title: "second-write-also-swallowed".into(),
+        });
+    }
+
+    #[test]
     fn stdin_eof_posts_close_only() {
         let (cmds, stop) = posted("");
         assert_eq!(stop, StdinStop::Eof);
