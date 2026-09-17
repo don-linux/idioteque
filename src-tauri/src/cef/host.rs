@@ -57,6 +57,7 @@ pub struct HostProcess {
     child: Arc<Mutex<Child>>,
     stdin: Mutex<ChildStdin>,
     events: Option<Receiver<HostEvent>>,
+    #[allow(dead_code)]
     pid: u32,
 }
 
@@ -241,6 +242,7 @@ impl HostProcess {
         }
     }
 
+    #[allow(dead_code)]
     pub fn pid(&self) -> u32 {
         self.pid
     }
@@ -370,10 +372,37 @@ pub fn browser_focus_app(window: tauri::Window) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn browser_kill(state: State<CefState>) -> Result<(), String> {
+pub fn browser_kill(app: AppHandle, state: State<CefState>) -> Result<(), String> {
     let result = take_and_kill(&state);
     destroy_hole(&state);
+    promote_pending_after_close(&app);
     result
+}
+
+/// Un candidate que pasó el health check mientras el navegador estaba abierto
+/// se promueve ahora que el host ya no corre (CONTRACT 8).
+fn promote_pending_after_close(app: &AppHandle) {
+    use tauri::Emitter;
+
+    let Ok(paths) = CefPaths::from_app(app) else {
+        return;
+    };
+    if super::state::load(&paths).pending_promotion.is_none() {
+        return;
+    }
+    match super::promote::promote_candidate(&paths, false) {
+        Ok(super::promote::PromoteResult::Promoted(promoted)) => {
+            let _ = app.emit(
+                "cef-update",
+                super::updater::UpdateEvent::Updated {
+                    chromium: promoted.chromium_version,
+                    cef: promoted.cef_version,
+                },
+            );
+        }
+        Ok(_) => {}
+        Err(error) => eprintln!("[cef] promoción pendiente: {error}"),
+    }
 }
 
 fn start_forward_thread(

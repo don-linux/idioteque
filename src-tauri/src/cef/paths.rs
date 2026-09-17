@@ -31,6 +31,7 @@ const BASE_JSON: &str = include_str!("../../cef/base.json");
 
 /// Metadatos del base bundleado (`src-tauri/cef/base.json`).
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct BaseInfo {
     pub cef_version: String,
     pub chromium_version: String,
@@ -72,6 +73,7 @@ pub struct CefPaths {
 }
 
 impl CefPaths {
+    #[allow(dead_code)]
     pub fn new(home: PathBuf, bundled_base: PathBuf) -> Self {
         Self { home, bundled_base }
     }
