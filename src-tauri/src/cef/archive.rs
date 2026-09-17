@@ -457,6 +457,127 @@ pub(crate) fn write_synthetic_tarball(
     Ok(())
 }
 
+/// Entrada cruda (ruta de archivo tal cual, sin prefijo de directorio raíz).
+#[cfg(test)]
+#[derive(Clone, Copy)]
+enum SyntheticEntry<'a> {
+    File {
+        path: &'a str,
+        contents: &'a [u8],
+        mode: u32,
+    },
+    Symlink {
+        path: &'a str,
+        target: &'a str,
+    },
+    Hardlink {
+        path: &'a str,
+        target: &'a str,
+    },
+}
+
+#[cfg(test)]
+fn write_gnu_name(header: &mut tar::Header, archive_path: &str) -> Result<(), String> {
+    let gnu = header
+        .as_gnu_mut()
+        .ok_or_else(|| "cabecera GNU inválida".to_string())?;
+    gnu.name = [0; 100];
+    let bytes = archive_path.as_bytes();
+    if bytes.len() >= gnu.name.len() {
+        return Err(format!("ruta tar demasiado larga: {archive_path}"));
+    }
+    gnu.name[..bytes.len()].copy_from_slice(bytes);
+    Ok(())
+}
+
+#[cfg(test)]
+fn write_gnu_link_name(header: &mut tar::Header, target: &str) -> Result<(), String> {
+    let gnu = header
+        .as_gnu_mut()
+        .ok_or_else(|| "cabecera GNU inválida".to_string())?;
+    gnu.linkname = [0; 100];
+    let bytes = target.as_bytes();
+    if bytes.len() >= gnu.linkname.len() {
+        return Err(format!("linkname tar demasiado largo: {target}"));
+    }
+    gnu.linkname[..bytes.len()].copy_from_slice(bytes);
+    Ok(())
+}
+
+#[cfg(test)]
+fn write_synthetic_archive(dest: &Path, entries: &[SyntheticEntry<'_>]) -> Result<(), String> {
+    use bzip2::write::BzEncoder;
+    use bzip2::Compression;
+    use tar::{Builder, Header};
+
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let file = File::create(dest).map_err(|e| e.to_string())?;
+    let encoder = BzEncoder::new(file, Compression::default());
+    let mut builder = Builder::new(encoder);
+    for entry in entries {
+        match *entry {
+            SyntheticEntry::File {
+                path,
+                contents,
+                mode,
+            } => {
+                let mut header = Header::new_gnu();
+                header.set_size(contents.len() as u64);
+                header.set_mode(mode);
+                header.set_entry_type(tar::EntryType::Regular);
+                write_gnu_name(&mut header, path)?;
+                header.set_cksum();
+                builder
+                    .append(&header, contents)
+                    .map_err(|e| e.to_string())?;
+            }
+            SyntheticEntry::Symlink { path, target } => {
+                let mut header = Header::new_gnu();
+                header.set_size(0);
+                header.set_mode(0o777);
+                header.set_entry_type(tar::EntryType::Symlink);
+                write_gnu_name(&mut header, path)?;
+                write_gnu_link_name(&mut header, target)?;
+                header.set_cksum();
+                builder
+                    .append(&header, &[] as &[u8])
+                    .map_err(|e| e.to_string())?;
+            }
+            SyntheticEntry::Hardlink { path, target } => {
+                let mut header = Header::new_gnu();
+                header.set_size(0);
+                header.set_mode(0o644);
+                header.set_entry_type(tar::EntryType::Link);
+                write_gnu_name(&mut header, path)?;
+                write_gnu_link_name(&mut header, target)?;
+                header.set_cksum();
+                builder
+                    .append(&header, &[] as &[u8])
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    let encoder = builder.into_inner().map_err(|e| e.to_string())?;
+    encoder.finish().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[cfg(test)]
+fn write_bz2_of_bytes(dest: &Path, payload: &[u8]) -> Result<(), String> {
+    use bzip2::write::BzEncoder;
+    use bzip2::Compression;
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let file = File::create(dest).map_err(|e| e.to_string())?;
+    let mut encoder = BzEncoder::new(file, Compression::default());
+    encoder.write_all(payload).map_err(|e| e.to_string())?;
+    encoder.finish().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) const API_HEADER_SNIPPET: &str = r#"#define CEF_API_VERSION_MIN CEF_API_VERSION_13300
 #define CEF_API_VERSION_LAST CEF_API_VERSION_15200
@@ -634,5 +755,301 @@ mod tests {
         manifest::save(&slot, &manifest).unwrap();
         manifest = manifest::load(&slot).unwrap();
         manifest::validate(&slot, &manifest).expect("validate");
+    }
+
+    #[cfg(unix)]
+    fn same_inode(a: &Path, b: &Path) -> bool {
+        use std::os::unix::fs::MetadataExt;
+        let Ok(ma) = fs::symlink_metadata(a) else {
+            return false;
+        };
+        let Ok(mb) = fs::symlink_metadata(b) else {
+            return false;
+        };
+        ma.dev() == mb.dev() && ma.ino() == mb.ino()
+    }
+
+    fn is_symlink(path: &Path) -> bool {
+        fs::symlink_metadata(path)
+            .map(|meta| meta.file_type().is_symlink())
+            .unwrap_or(false)
+    }
+
+    fn assert_no_escape(canary: &Path, canary_bytes: &[u8], escaped: &Path) {
+        assert_eq!(
+            fs::read(canary).unwrap_or_default(),
+            canary_bytes,
+            "el extractor no debe tocar el canario fuera del slot"
+        );
+        assert!(
+            !escaped.exists(),
+            "zip-slip: se escribió `{}` fuera del slot",
+            escaped.display()
+        );
+    }
+
+    #[test]
+    fn extract_runtime_rejects_garbage_and_truncated_tarball() {
+        let tmp = TempDir::new().unwrap();
+        let slot = tmp.path().join("slot");
+
+        let garbage = tmp.path().join("garbage.tar.bz2");
+        fs::write(&garbage, b"esto no es bzip2 ni tar").unwrap();
+        let error = extract_runtime(&garbage, &slot).unwrap_err();
+        assert!(
+            error.contains("tarball") || error.contains("Entrada") || error.contains("leer"),
+            "{error}"
+        );
+
+        let tarball = tmp.path().join("ok.tar.bz2");
+        write_synthetic_tarball(&tarball, "cef_binary_test_linux64_minimal", &sample_files())
+            .unwrap();
+        let bytes = fs::read(&tarball).unwrap();
+        assert!(bytes.len() > 32, "tarball sintético demasiado corto");
+        let truncated = tmp.path().join("truncated.tar.bz2");
+        fs::write(&truncated, &bytes[..bytes.len() / 2]).unwrap();
+        let error = extract_runtime(&truncated, &slot).unwrap_err();
+        assert!(!error.is_empty(), "{error}");
+        assert!(
+            !tmp.path().join("evil").exists(),
+            "un tar truncado no debe escribir fuera del slot"
+        );
+    }
+
+    #[test]
+    fn extract_runtime_rejects_corrupt_tar_mid_entry() {
+        use tar::{Builder, Header};
+
+        let tmp = TempDir::new().unwrap();
+        let mut tar_bytes = Vec::new();
+        {
+            let mut builder = Builder::new(&mut tar_bytes);
+            let mut header = Header::new_gnu();
+            header.set_size(7);
+            header.set_mode(0o644);
+            header.set_entry_type(tar::EntryType::Regular);
+            write_gnu_name(&mut header, "top/LICENSE.txt").unwrap();
+            header.set_cksum();
+            builder.append(&header, &b"license"[..]).unwrap();
+
+            let payload = vec![0xABu8; 96 * 1024];
+            let mut header = Header::new_gnu();
+            header.set_size(payload.len() as u64);
+            header.set_mode(0o644);
+            header.set_entry_type(tar::EntryType::Regular);
+            write_gnu_name(&mut header, "top/Release/libcef.so").unwrap();
+            header.set_cksum();
+            builder.append(&header, payload.as_slice()).unwrap();
+            builder.finish().unwrap();
+        }
+        // Corta a mitad de libcef.so: cabecera + LICENSE caben; el payload grande no.
+        let cut = tar_bytes.len().saturating_sub(48 * 1024).max(512);
+        let truncated_tar = &tar_bytes[..cut];
+        let tarball = tmp.path().join("mid.tar.bz2");
+        write_bz2_of_bytes(&tarball, truncated_tar).unwrap();
+
+        let slot = tmp.path().join("slot");
+        let error = extract_runtime(&tarball, &slot).unwrap_err();
+        assert!(
+            error.contains("tarball")
+                || error.contains("Entrada")
+                || error.contains("leer")
+                || error.contains("extraer"),
+            "{error}"
+        );
+        assert!(!tmp.path().join("libcef.so").exists());
+    }
+
+    #[test]
+    fn extract_runtime_skips_symlink_without_escaping() {
+        let tmp = TempDir::new().unwrap();
+        let canary = tmp.path().join("outside_secret");
+        fs::write(&canary, b"keep-me").unwrap();
+        let escaped = tmp.path().join("escaped_via_symlink");
+        let tarball = tmp.path().join("sym.tar.bz2");
+        write_synthetic_archive(
+            &tarball,
+            &[
+                SyntheticEntry::File {
+                    path: "top/LICENSE.txt",
+                    contents: b"license",
+                    mode: 0o644,
+                },
+                SyntheticEntry::File {
+                    path: "top/Release/libcef.so",
+                    contents: b"real-lib",
+                    mode: 0o644,
+                },
+                SyntheticEntry::Symlink {
+                    path: "top/Release/stolen",
+                    target: canary.to_str().unwrap(),
+                },
+                SyntheticEntry::Symlink {
+                    path: "top/Release/libcef.so",
+                    target: canary.to_str().unwrap(),
+                },
+            ],
+        )
+        .unwrap();
+
+        let slot = tmp.path().join("slot");
+        let result = extract_runtime(&tarball, &slot);
+        assert_no_escape(&canary, b"keep-me", &escaped);
+        match result {
+            Ok(_) => {
+                assert!(slot.join("LICENSE.txt").is_file());
+                assert_eq!(fs::read(slot.join("libcef.so")).unwrap(), b"real-lib");
+                assert!(
+                    !slot.join("stolen").exists() && !is_symlink(&slot.join("stolen")),
+                    "symlink `stolen` no debe crearse"
+                );
+                assert!(!is_symlink(&slot.join("libcef.so")));
+            }
+            Err(error) => {
+                assert!(
+                    error.to_lowercase().contains("enlace")
+                        || error.to_lowercase().contains("link")
+                        || error.to_lowercase().contains("symlink"),
+                    "{error}"
+                );
+            }
+        }
+        assert_eq!(fs::read(&canary).unwrap(), b"keep-me");
+    }
+
+    #[test]
+    fn extract_runtime_skips_hardlink_without_escaping() {
+        let tmp = TempDir::new().unwrap();
+        let canary = tmp.path().join("outside_hard");
+        fs::write(&canary, b"inode-keep").unwrap();
+        let escaped = tmp.path().join("escaped_via_hardlink");
+        let tarball = tmp.path().join("hard.tar.bz2");
+        write_synthetic_archive(
+            &tarball,
+            &[
+                SyntheticEntry::File {
+                    path: "top/LICENSE.txt",
+                    contents: b"license",
+                    mode: 0o644,
+                },
+                SyntheticEntry::File {
+                    path: "top/Release/libcef.so",
+                    contents: b"real-lib",
+                    mode: 0o644,
+                },
+                SyntheticEntry::Hardlink {
+                    path: "top/Release/stolen",
+                    target: canary.to_str().unwrap(),
+                },
+                SyntheticEntry::Hardlink {
+                    path: "top/Release/alias.so",
+                    target: "top/Release/libcef.so",
+                },
+            ],
+        )
+        .unwrap();
+
+        let slot = tmp.path().join("slot");
+        let result = extract_runtime(&tarball, &slot);
+        assert_no_escape(&canary, b"inode-keep", &escaped);
+        assert_eq!(fs::read(&canary).unwrap(), b"inode-keep");
+        if result.is_ok() {
+            assert_eq!(fs::read(slot.join("libcef.so")).unwrap(), b"real-lib");
+            assert!(!slot.join("stolen").exists());
+            assert!(!slot.join("alias.so").exists());
+            #[cfg(unix)]
+            {
+                assert!(!same_inode(&canary, &slot.join("stolen")));
+                if slot.join("libcef.so").exists() {
+                    assert!(!same_inode(&canary, &slot.join("libcef.so")));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn extract_runtime_rejects_absolute_zip_slip() {
+        let tmp = TempDir::new().unwrap();
+        let escaped = tmp.path().join("abs_pwned");
+        let tarball = tmp.path().join("abs.tar.bz2");
+        write_synthetic_archive(
+            &tarball,
+            &[
+                SyntheticEntry::File {
+                    path: "top/LICENSE.txt",
+                    contents: b"license",
+                    mode: 0o644,
+                },
+                SyntheticEntry::File {
+                    path: escaped.to_str().unwrap(),
+                    contents: b"pwned",
+                    mode: 0o644,
+                },
+            ],
+        )
+        .unwrap();
+        let slot = tmp.path().join("slot");
+        let error = extract_runtime(&tarball, &slot).unwrap_err();
+        assert!(
+            error.contains("absoluta") || error.contains("..") || error.contains("escapa"),
+            "{error}"
+        );
+        assert!(!escaped.exists(), "ruta absoluta no debe materializarse");
+    }
+
+    #[test]
+    fn extract_runtime_rejects_nested_parent_zip_slip() {
+        let tmp = TempDir::new().unwrap();
+        let escaped = tmp.path().join("nested_pwned");
+        let tarball = tmp.path().join("nested.tar.bz2");
+        write_synthetic_archive(
+            &tarball,
+            &[
+                SyntheticEntry::File {
+                    path: "cef/Release/../../nested_pwned",
+                    contents: b"pwned",
+                    mode: 0o644,
+                },
+                SyntheticEntry::File {
+                    path: "cef/Resources/locales/../../../nested_pwned",
+                    contents: b"pwned2",
+                    mode: 0o644,
+                },
+                SyntheticEntry::File {
+                    path: "cef/Release/./../../nested_pwned",
+                    contents: b"pwned3",
+                    mode: 0o644,
+                },
+            ],
+        )
+        .unwrap();
+        let slot = tmp.path().join("slot");
+        let error = extract_runtime(&tarball, &slot).unwrap_err();
+        assert!(error.contains(".."), "{error}");
+        assert!(!escaped.exists());
+        assert!(!tmp.path().join("nested_pwned").exists());
+        assert!(!slot.join("nested_pwned").exists());
+    }
+
+    #[test]
+    fn extract_runtime_rejects_double_slash_and_dotdot_zip_slip() {
+        let tmp = TempDir::new().unwrap();
+        let slot = tmp.path().join("slot");
+        let tarball = tmp.path().join("slash.tar.bz2");
+        write_synthetic_archive(
+            &tarball,
+            &[SyntheticEntry::File {
+                path: "//etc/idioteque-cef-should-not-write",
+                contents: b"pwned",
+                mode: 0o644,
+            }],
+        )
+        .unwrap();
+        let error = extract_runtime(&tarball, &slot).unwrap_err();
+        assert!(
+            error.contains("absoluta") || error.contains("..") || error.contains("escapa"),
+            "{error}"
+        );
+        assert!(!Path::new("/etc/idioteque-cef-should-not-write").exists());
     }
 }
