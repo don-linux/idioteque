@@ -639,6 +639,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let paths = paths_in(&tmp);
         write_slot(&paths.bundled_base, BUNDLED, SlotSource::Bundled, true);
+        fs::create_dir_all(&paths.home).unwrap();
         fs::write(paths.current(), b"i-am-a-file").unwrap();
 
         let slot = resolve_effective(&paths).unwrap();
@@ -653,6 +654,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let paths = paths_in(&tmp);
         write_slot(&paths.bundled_base, BUNDLED, SlotSource::Bundled, true);
+        fs::create_dir_all(&paths.home).unwrap();
         std::os::unix::fs::symlink(&paths.bundled_base, paths.current()).unwrap();
 
         let slot = resolve_effective(&paths).unwrap();
