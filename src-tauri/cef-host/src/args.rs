@@ -207,7 +207,7 @@ pub fn parse_bounds(raw: &str) -> Option<Bounds> {
 }
 
 pub fn parse_scale(raw: &str) -> Option<f64> {
-    let value = raw.parse::<f64>().ok()?;
+    let value = raw.trim().parse::<f64>().ok()?;
     value.is_finite().then_some(value)
 }
 
@@ -338,6 +338,7 @@ mod tests {
         assert_eq!(parse_xid("0xffffffffffffffff"), Some(u64::MAX));
         assert_eq!(parse_xid("  0x10  "), Some(0x10));
         assert_eq!(parse_xid(" 99 "), Some(99));
+        assert_eq!(parse_xid("+123"), Some(123));
         assert_eq!(parse(&["--idq-parent=0x1a2b"]).parent, Some(0x1a2b));
         assert_eq!(parse(&["--idq-parent", "12345"]).parent, Some(12345));
         assert_eq!(parse(&["--idq-parent=0"]).parent, Some(0));
@@ -351,7 +352,6 @@ mod tests {
             "0xG",
             "0x 10",
             "-1",
-            "+123",
             "0o12",
             "0b10",
             "deadbeef",
