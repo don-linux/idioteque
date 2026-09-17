@@ -10,10 +10,11 @@
 
   function attachUrl(node: HTMLInputElement): void {
     $effect(() => {
-      void browser.focusUrlRequested;
+      const requested = browser.focusUrlRequested;
+      if (requested === 0) return;
       if (surface.current !== "browser") return;
-      // The CEF child may hold the X11 focus: reclaim it before focusing the field.
-      void browser.focusApp();
+      // CEF `shortcut` already calls claimUrlBar; this is the increment backup.
+      browser.claimUrlBar();
       node.focus();
       node.select();
     });

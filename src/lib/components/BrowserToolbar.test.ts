@@ -92,6 +92,7 @@ function fakeBrowser(overrides: Record<string, unknown> = {}) {
     focusApp: vi.fn().mockImplementation(async function (this: { focusOwner: string }) {
       this.focusOwner = "app";
     }),
+    claimUrlBar: vi.fn(),
     focus: vi.fn().mockResolvedValue(undefined),
     navigate: vi.fn().mockResolvedValue(undefined),
     back: vi.fn(),
@@ -173,14 +174,25 @@ describe("BrowserToolbar", () => {
     expect(browser.focus).not.toHaveBeenCalled();
   });
 
+  it("workspace layout captures Ctrl+L and claims the URL bar", () => {
+    const layout = fileURLToPath(new URL("../../routes/workspace/+layout.svelte", import.meta.url));
+    const source = readFileSync(layout, "utf8");
+    expect(source).toMatch(/handleBrowserFocusUrlShortcut/);
+    expect(source).toMatch(/browser\.claimUrlBar\(\)/);
+    expect(source).toMatch(/surface\.current === "browser"/);
+    expect(source).toMatch(/onkeydowncapture=\{onWindowKeydown\}/);
+  });
+
   it("reclaims X11 before focusing the URL on Ctrl+L, even if the host is dead", () => {
     const js = compileToolbar();
     const attach = extractFunction(js, "attachUrl");
 
     expect(attach).toMatch(/browser\.focusUrlRequested/);
+    expect(attach).toMatch(/requested === 0/);
     expect(attach).toMatch(/surface\.current !== "browser"/);
-    expect(attach.indexOf("browser.focusApp()")).toBeGreaterThan(-1);
-    expect(attach.indexOf("browser.focusApp()")).toBeLessThan(attach.indexOf("node.focus()"));
+    expect(attach).toMatch(/browser\.claimUrlBar\(\)/);
+    expect(attach.indexOf("browser.claimUrlBar()")).toBeGreaterThan(-1);
+    expect(attach.indexOf("browser.claimUrlBar()")).toBeLessThan(attach.indexOf("node.focus()"));
     expect(attach.indexOf("node.focus()")).toBeLessThan(attach.indexOf("node.select()"));
     expect(attach).not.toMatch(/alive/);
     expect(attach).not.toMatch(/browser\.focus\(/);

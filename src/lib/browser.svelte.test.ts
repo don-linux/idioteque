@@ -26,8 +26,14 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: tauri.invoke,
 }));
 
-const { browser, isAppKeyboardTarget, shouldClaimAppFocus, shouldGiftCefFocus } =
-  await import("./browser.svelte");
+const {
+  browser,
+  isAppKeyboardTarget,
+  isUrlBarElement,
+  shouldClaimAppFocus,
+  shouldGiftCefFocus,
+  shouldInvokeFocusApp,
+} = await import("./browser.svelte");
 
 const BOUNDS: BrowserBounds = { x: 8, y: 40, w: 1200, h: 700 };
 const INCOMPATIBLE = "El motor Chromium no es compatible con esta versión de idioteque";
@@ -419,6 +425,7 @@ describe("browser.svelte.ts state", () => {
         loading: true,
       });
       hung.channel?.onmessage({ event: "title", title: "live" });
+      browser.focusUrlRequested = 3;
 
       const teardown = browser.teardown();
       hung.channel?.onmessage({
@@ -449,6 +456,7 @@ describe("browser.svelte.ts state", () => {
       expect(browser.boot).toBeNull();
       expect(browser.noSandbox).toBe(false);
       expect(browser.focusOwner).toBe("browser");
+      expect(browser.focusUrlRequested).toBe(0);
       expect(tauri.invoke).toHaveBeenCalledWith("browser_kill");
     });
 
@@ -531,6 +539,114 @@ describe("browser.svelte.ts state", () => {
       expect(blur).toHaveBeenCalledTimes(1);
       expect(browser.focusOwner).toBe("browser");
       expect(tauri.invoke).not.toHaveBeenCalledWith("browser_focus_app");
+    });
+
+    it("focuses the URL when CEF reports focus owner=app next=true and calls focusApp once", async () => {
+      const gate = await spawnLive();
+      tauri.invoke.mockClear();
+      const url = { focus: vi.fn(), tagName: "INPUT" };
+      const last = { focus: vi.fn(), tagName: "BUTTON" };
+      const toolbar = {
+        querySelector: (sel: string) => (sel === "[data-browser-url]" ? url : last),
+      };
+      (globalThis as { document?: unknown }).document = {
+        activeElement: null,
+        querySelector: (sel: string) => (sel === "[data-browser-toolbar]" ? toolbar : null),
+      };
+      browser.focusOwner = "browser";
+      gate.channel?.onmessage({ event: "focus", owner: "app", next: true });
+      expect(url.focus).toHaveBeenCalledTimes(1);
+      expect(last.focus).not.toHaveBeenCalled();
+      expect(browser.focusOwner).toBe("app");
+      expect(tauri.invoke.mock.calls.filter((call) => call[0] === "browser_focus_app")).toHaveLength(
+        1,
+      );
+    });
+
+    it("handles shortcut ctrl+l by focusing the URL and calling focusApp once", async () => {
+      const gate = await spawnLive();
+      tauri.invoke.mockClear();
+      const url = {
+        tagName: "INPUT",
+        focus: vi.fn(),
+        select: vi.fn(),
+        closest: (sel: string) => (sel === "[data-browser-url]" ? {} : null),
+      };
+      (globalThis as { document?: unknown }).document = {
+        activeElement: null,
+        querySelector: (sel: string) => (sel === "[data-browser-url]" ? url : null),
+      };
+      browser.focusOwner = "browser";
+      gate.channel?.onmessage({ event: "shortcut", chord: "ctrl+l" });
+      expect(url.focus).toHaveBeenCalledTimes(1);
+      expect(url.select).toHaveBeenCalledTimes(1);
+      expect(browser.focusOwner).toBe("app");
+      expect(browser.focusUrlRequested).toBe(1);
+      expect(tauri.invoke.mock.calls.filter((call) => call[0] === "browser_focus_app")).toHaveLength(
+        1,
+      );
+    });
+
+    it("does not send a second browser_focus_app when Ctrl+L arrives twice", async () => {
+      const gate = await spawnLive();
+      tauri.invoke.mockClear();
+      const url = {
+        tagName: "INPUT",
+        focus: vi.fn(),
+        select: vi.fn(),
+        closest: (sel: string) => (sel === "[data-browser-url]" ? {} : null),
+      };
+      let active: unknown = null;
+      url.focus.mockImplementation(() => {
+        active = url;
+      });
+      (globalThis as { document?: unknown }).document = {
+        get activeElement() {
+          return active;
+        },
+        querySelector: (sel: string) => (sel === "[data-browser-url]" ? url : null),
+      };
+      browser.focusOwner = "browser";
+      gate.channel?.onmessage({ event: "shortcut", chord: "ctrl+l" });
+      gate.channel?.onmessage({ event: "shortcut", chord: "ctrl+l" });
+      expect(url.focus).toHaveBeenCalledTimes(2);
+      expect(url.select).toHaveBeenCalledTimes(2);
+      expect(tauri.invoke.mock.calls.filter((call) => call[0] === "browser_focus_app")).toHaveLength(
+        1,
+      );
+    });
+
+    it("skips a second focusApp when owner=app focus arrives twice", async () => {
+      const gate = await spawnLive();
+      tauri.invoke.mockClear();
+      const url = { focus: vi.fn(), tagName: "INPUT" };
+      const last = { focus: vi.fn(), tagName: "BUTTON" };
+      const toolbar = {
+        querySelector: (sel: string) => (sel === "[data-browser-url]" ? url : last),
+      };
+      (globalThis as { document?: unknown }).document = {
+        activeElement: null,
+        querySelector: (sel: string) => (sel === "[data-browser-toolbar]" ? toolbar : null),
+      };
+      browser.focusOwner = "browser";
+      gate.channel?.onmessage({ event: "focus", owner: "app", next: true });
+      gate.channel?.onmessage({ event: "focus", owner: "app", next: true });
+      expect(url.focus).toHaveBeenCalledTimes(2);
+      expect(tauri.invoke.mock.calls.filter((call) => call[0] === "browser_focus_app")).toHaveLength(
+        1,
+      );
+    });
+
+    it("invokes focusApp for Ctrl+L only when the URL is not already the owner", () => {
+      expect(shouldInvokeFocusApp("browser", false)).toBe(true);
+      expect(shouldInvokeFocusApp("browser", true)).toBe(true);
+      expect(shouldInvokeFocusApp("app", false)).toBe(true);
+      expect(shouldInvokeFocusApp("app", true)).toBe(false);
+      expect(isUrlBarElement({ closest: (sel: string) => (sel === "[data-browser-url]" ? {} : null) })).toBe(
+        true,
+      );
+      expect(isUrlBarElement({ closest: () => null })).toBe(false);
+      expect(isUrlBarElement(null)).toBe(false);
     });
 
     it("focuses the last toolbar control when CEF reports focus owner=app next=false", async () => {

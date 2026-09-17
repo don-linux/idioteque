@@ -140,6 +140,83 @@ fn emit_chrome_ui_event(health_check: bool, is_main: bool) -> bool {
     !health_check && is_main
 }
 
+/// Alloy native children wrap Tab inside the document, so `OnTakeFocus` often
+/// never fires. The main frame injects a capture trap that beacons this prefix.
+const TAKE_FOCUS_BEACON: &str = "idioteque:take-focus:";
+
+const TAKE_FOCUS_SCRIPT: &str = r#"(function(){
+  if (window.__idiotequeTakeFocus) return;
+  window.__idiotequeTakeFocus = 1;
+  function visible(el){
+    if (el.tabIndex < 0) return false;
+    var st = window.getComputedStyle(el);
+    if (!st || st.visibility === 'hidden' || st.display === 'none') return false;
+    return el.getClientRects().length > 0;
+  }
+  function list(){
+    var sel = 'a[href],button:not([disabled]),input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+    return Array.prototype.filter.call(document.querySelectorAll(sel), visible);
+  }
+  function beacon(next){
+    try { console.info('idioteque:take-focus:' + (next ? '1' : '0')); } catch (e) {}
+  }
+  document.addEventListener('keydown', function(e){
+    if (e.key !== 'Tab' || e.ctrlKey || e.altKey || e.metaKey || e.isComposing) return;
+    var items = list();
+    var active = document.activeElement;
+    var forward = !e.shiftKey;
+    var empty = items.length === 0;
+    var first = empty ? null : items[0];
+    var last = empty ? null : items[items.length - 1];
+    var atStart = empty || !active || active === document.body || active === document.documentElement || active === first;
+    var atEnd = empty || active === last;
+    if ((forward && atEnd) || (!forward && atStart)) {
+      e.preventDefault();
+      e.stopPropagation();
+      beacon(forward);
+    }
+  }, true);
+})();"#;
+
+fn parse_take_focus_beacon(message: &str) -> Option<bool> {
+    let rest = message.trim().strip_prefix(TAKE_FOCUS_BEACON)?;
+    match rest {
+        "1" => Some(true),
+        "0" => Some(false),
+        _ => None,
+    }
+}
+
+fn take_focus_from_console(health_check: bool, is_main: bool, message: &str) -> Option<HostEvent> {
+    parse_take_focus_beacon(message)
+        .and_then(|next| focus_handoff_event(health_check, is_main, FocusHandoff::App { next }))
+}
+
+fn should_inject_take_focus_trap(
+    health_check: bool,
+    is_main_browser: bool,
+    is_main_frame: bool,
+) -> bool {
+    !health_check && is_main_browser && is_main_frame
+}
+
+fn inject_take_focus_trap(frame: &Frame) {
+    frame.execute_java_script(
+        Some(&cef_str(TAKE_FOCUS_SCRIPT)),
+        Some(&cef_str("idioteque-take-focus-trap")),
+        1,
+    );
+}
+
+fn shortcut_event(health_check: bool, is_main: bool, chord: &str) -> Option<HostEvent> {
+    if !emit_chrome_ui_event(health_check, is_main) {
+        return None;
+    }
+    Some(HostEvent::Shortcut {
+        chord: chord.to_string(),
+    })
+}
+
 /// Keyboard handoff from `CefFocusHandler`. Main browser only, same filter as nav/title.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FocusHandoff {
@@ -350,11 +427,9 @@ impl AppState {
     }
 
     fn emit_focus(&self, browser: &Browser, handoff: FocusHandoff) {
-        if let Some(event) = focus_handoff_event(
-            self.args.health_check,
-            self.is_main(browser),
-            handoff,
-        ) {
+        if let Some(event) =
+            focus_handoff_event(self.args.health_check, self.is_main(browser), handoff)
+        {
             protocol::emit(&event);
         }
     }
@@ -973,6 +1048,14 @@ wrap_load_handler! {
                 }
                 return;
             }
+            let is_main_browser = browser
+                .as_ref()
+                .map(|b| self.state.is_main(b))
+                .unwrap_or(true);
+            if should_inject_take_focus_trap(self.state.args.health_check, is_main_browser, true)
+            {
+                inject_take_focus_trap(frame);
+            }
             let _ = browser;
             protocol::emit(&HostEvent::LoadEnd {
                 status: http_status_code,
@@ -1040,6 +1123,32 @@ wrap_display_handler! {
                 title: title.map(|t| t.to_string()).unwrap_or_default(),
             });
         }
+
+        fn on_console_message(
+            &self,
+            browser: Option<&mut Browser>,
+            _level: LogSeverity,
+            message: Option<&CefString>,
+            _source: Option<&CefString>,
+            _line: ::std::os::raw::c_int,
+        ) -> ::std::os::raw::c_int {
+            let Some(message) = message else {
+                return 0;
+            };
+            let is_main = browser
+                .as_ref()
+                .map(|b| self.state.is_main(b))
+                .unwrap_or(true);
+            let Some(event) = take_focus_from_console(
+                self.state.args.health_check,
+                is_main,
+                &message.to_string(),
+            ) else {
+                return 0;
+            };
+            protocol::emit(&event);
+            1
+        }
     }
 }
 
@@ -1093,9 +1202,15 @@ wrap_keyboard_handler! {
             match action {
                 PreKeyAction::Ignore => 0,
                 PreKeyAction::Shortcut(chord) => {
-                    protocol::emit(&HostEvent::Shortcut {
-                        chord: chord.to_string(),
-                    });
+                    let is_main = browser
+                        .as_ref()
+                        .map(|b| self.state.is_main(b))
+                        .unwrap_or(true);
+                    if let Some(event) =
+                        shortcut_event(self.state.args.health_check, is_main, chord)
+                    {
+                        protocol::emit(&event);
+                    }
                     1
                 }
                 PreKeyAction::ToggleDevtools => {
@@ -1510,6 +1625,91 @@ mod tests {
                 next: None,
             })
         );
+    }
+
+    #[test]
+    fn shortcut_ctrl_l_emits_only_for_main_browser() {
+        assert_eq!(
+            shortcut_event(false, true, "ctrl+l"),
+            Some(HostEvent::Shortcut {
+                chord: "ctrl+l".into()
+            })
+        );
+        assert_eq!(
+            shortcut_event(true, true, "ctrl+l"),
+            None,
+            "health-check must not emit chrome shortcuts"
+        );
+        assert_eq!(
+            shortcut_event(false, false, "ctrl+l"),
+            None,
+            "DevTools / popup must not emit ctrl+l"
+        );
+        assert_eq!(
+            shortcut_event(false, true, "ctrl+b"),
+            Some(HostEvent::Shortcut {
+                chord: "ctrl+b".into()
+            })
+        );
+    }
+
+    #[test]
+    fn take_focus_console_emits_owner_app_for_main_browser() {
+        assert_eq!(
+            take_focus_from_console(false, true, "idioteque:take-focus:1"),
+            Some(HostEvent::Focus {
+                owner: FocusOwner::App,
+                next: Some(true),
+            })
+        );
+        assert_eq!(
+            take_focus_from_console(false, true, "idioteque:take-focus:0"),
+            Some(HostEvent::Focus {
+                owner: FocusOwner::App,
+                next: Some(false),
+            })
+        );
+        assert_ne!(
+            take_focus_from_console(false, true, "idioteque:take-focus:1"),
+            take_focus_from_console(false, true, "idioteque:take-focus:0")
+        );
+        assert_eq!(
+            take_focus_from_console(true, true, "idioteque:take-focus:1"),
+            None
+        );
+        assert_eq!(
+            take_focus_from_console(false, false, "idioteque:take-focus:0"),
+            None
+        );
+    }
+
+    #[test]
+    fn take_focus_beacon_rejects_page_noise() {
+        assert_eq!(
+            parse_take_focus_beacon("idioteque:take-focus:1"),
+            Some(true)
+        );
+        assert_eq!(
+            parse_take_focus_beacon("  idioteque:take-focus:0\n"),
+            Some(false)
+        );
+        assert_eq!(parse_take_focus_beacon("idioteque:take-focus:2"), None);
+        assert_eq!(parse_take_focus_beacon("idioteque:take-focus:"), None);
+        assert_eq!(parse_take_focus_beacon("take-focus:1"), None);
+        assert_eq!(parse_take_focus_beacon("console.info"), None);
+        assert_eq!(parse_take_focus_beacon(""), None);
+        assert!(TAKE_FOCUS_SCRIPT.contains(TAKE_FOCUS_BEACON));
+        assert!(TAKE_FOCUS_SCRIPT.contains("keydown"));
+        assert!(TAKE_FOCUS_SCRIPT.contains("Tab"));
+        assert!(TAKE_FOCUS_SCRIPT.contains("preventDefault"));
+        assert!(TAKE_FOCUS_SCRIPT.contains("__idiotequeTakeFocus"));
+        assert!(should_inject_take_focus_trap(false, true, true));
+        assert!(
+            !should_inject_take_focus_trap(true, true, true),
+            "health-check must not inject the Tab trap"
+        );
+        assert!(!should_inject_take_focus_trap(false, false, true));
+        assert!(!should_inject_take_focus_trap(false, true, false));
     }
 
     #[test]

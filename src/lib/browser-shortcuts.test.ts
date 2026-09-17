@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { isTerminalTarget } from "./panel-shortcuts";
 import {
+  handleBrowserFocusUrlShortcut,
   handleBrowserShortcut,
+  isBrowserFocusUrlShortcut,
   isBrowserToggleAnywhereShortcut,
   isBrowserToggleShortcut,
 } from "./browser-shortcuts";
@@ -266,5 +268,71 @@ describe("handleBrowserShortcut", () => {
     expect(toggleBrowser).not.toHaveBeenCalled();
     expect(isBrowserToggleAnywhereShortcut(alt)).toBe(false);
     expect(isBrowserToggleAnywhereShortcut(meta)).toBe(false);
+  });
+});
+
+describe("isBrowserFocusUrlShortcut", () => {
+  it("matches only plain Ctrl+L", () => {
+    expect(isBrowserFocusUrlShortcut(key({ code: "KeyL" }))).toBe(true);
+    expect(isBrowserFocusUrlShortcut(key({ code: "KeyL", shiftKey: true }))).toBe(false);
+    expect(isBrowserFocusUrlShortcut(key({ code: "KeyL", altKey: true }))).toBe(false);
+    expect(isBrowserFocusUrlShortcut(key({ code: "KeyL", metaKey: true }))).toBe(false);
+    expect(isBrowserFocusUrlShortcut(key({ code: "KeyL", ctrlKey: false }))).toBe(false);
+    expect(isBrowserFocusUrlShortcut(key({ code: "KeyB" }))).toBe(false);
+    expect(isBrowserFocusUrlShortcut(key({ code: "l" }))).toBe(false);
+    expect(isBrowserFocusUrlShortcut(key({ code: "KeyLL" }))).toBe(false);
+  });
+});
+
+describe("handleBrowserFocusUrlShortcut", () => {
+  it("claims the URL while the browser surface is active", () => {
+    const event = key({ code: "KeyL" });
+    const focusUrl = vi.fn();
+
+    handleBrowserFocusUrlShortcut(event, { browserSurface: true, focusUrl });
+
+    expect(focusUrl).toHaveBeenCalledTimes(1);
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(event.stopPropagation).toHaveBeenCalledTimes(1);
+    expect(event.stopImmediatePropagation).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves Ctrl+L alone on the editor surface", () => {
+    const event = key({ code: "KeyL" });
+    const focusUrl = vi.fn();
+
+    handleBrowserFocusUrlShortcut(event, { browserSurface: false, focusUrl });
+
+    expect(focusUrl).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("does not treat Ctrl+Shift+L as location-bar focus", () => {
+    const event = key({ code: "KeyL", shiftKey: true });
+    const focusUrl = vi.fn();
+
+    handleBrowserFocusUrlShortcut(event, { browserSurface: true, focusUrl });
+
+    expect(focusUrl).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("still swallows Ctrl+L when stopImmediatePropagation is missing", () => {
+    const event = {
+      code: "KeyL",
+      ctrlKey: true,
+      metaKey: false,
+      shiftKey: false,
+      altKey: false,
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+    };
+    const focusUrl = vi.fn();
+
+    handleBrowserFocusUrlShortcut(event, { browserSurface: true, focusUrl });
+
+    expect(focusUrl).toHaveBeenCalledTimes(1);
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(event.stopPropagation).toHaveBeenCalledTimes(1);
   });
 });

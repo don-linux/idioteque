@@ -53,6 +53,8 @@ export type KeyboardTarget = {
   closest?: (selector: string) => unknown;
   blur?: () => void;
   focus?: () => void;
+  select?: () => void;
+  querySelector?: (selector: string) => KeyboardTarget | null;
 };
 
 export function isAppKeyboardTarget(el: KeyboardTarget | null | undefined): boolean {
@@ -81,11 +83,18 @@ export function resolveChromeTarget(
   return toolbar.querySelector(next ? "[data-browser-url]" : "[data-browser-chrome-last]");
 }
 
+/** Second Ctrl+L / wry+CEF race must not send another `browser_focus_app`. */
+export function shouldInvokeFocusApp(owner: FocusOwner, urlAlreadyFocused: boolean): boolean {
+  return owner !== "app" || !urlAlreadyFocused;
+}
+
+export function isUrlBarElement(el: KeyboardTarget | null | undefined): boolean {
+  return Boolean(el && typeof el.closest === "function" && el.closest("[data-browser-url]"));
+}
+
 function pageDocument(): {
   activeElement?: KeyboardTarget | null;
-  querySelector?: (
-    selector: string,
-  ) => { querySelector?: (selector: string) => KeyboardTarget | null } | null;
+  querySelector?: (selector: string) => KeyboardTarget | null;
 } | null {
   if (typeof document === "undefined") return null;
   return document;
@@ -100,6 +109,10 @@ function blurActiveAppKeyboard(): void {
 function focusToolbarChrome(next: boolean): void {
   const toolbar = pageDocument()?.querySelector?.("[data-browser-toolbar]") ?? null;
   resolveChromeTarget(toolbar, next)?.focus?.();
+}
+
+function urlBarElement(): KeyboardTarget | null {
+  return pageDocument()?.querySelector?.("[data-browser-url]") ?? null;
 }
 
 function messageFrom(error: unknown): string {
@@ -286,6 +299,22 @@ class BrowserState {
     }
   }
 
+  /**
+   * Ctrl+L (wry capture or CEF `shortcut`): one `browser_focus_app`, then
+   * focus+select the URL. Does not depend on the toolbar `$effect`.
+   */
+  claimUrlBar(): void {
+    const active = pageDocument()?.activeElement ?? null;
+    if (shouldInvokeFocusApp(this.focusOwner, isUrlBarElement(active))) {
+      void this.focusApp();
+    } else {
+      this.focusOwner = "app";
+    }
+    const url = urlBarElement();
+    url?.focus?.();
+    url?.select?.();
+  }
+
   async teardown(): Promise<void> {
     await this.#shutdown({ restoreSurface: true });
   }
@@ -306,6 +335,7 @@ class BrowserState {
     this.canGoForward = false;
     this.boot = null;
     this.noSandbox = false;
+    this.focusUrlRequested = 0;
     this.focusOwner = "browser";
 
     if (options.restoreSurface && surface.current === "browser") {
@@ -405,8 +435,11 @@ class BrowserState {
       blurActiveAppKeyboard();
       return;
     }
-    this.focusOwner = "app";
-    void this.focusApp();
+    if (shouldClaimAppFocus(this.focusOwner)) {
+      void this.focusApp();
+    } else {
+      this.focusOwner = "app";
+    }
     focusToolbarChrome(event.next !== false);
   }
 
@@ -418,6 +451,7 @@ class BrowserState {
     }
     if (chord === "ctrl+l") {
       this.focusUrlRequested += 1;
+      this.claimUrlBar();
     }
   }
 }

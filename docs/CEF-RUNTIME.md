@@ -161,7 +161,12 @@ Foco X11 entre el toplevel y el hijo CEF: cefclient GTK envía
 para la barra: `browser_focus_app` hace `XSetInputFocus` sobre el toplevel
 de Tauri y manda `{"cmd":"unfocus"}` (`set_focus(false)`). `CefFocusHandler`
 avisa cuando el hijo gana (`owner=browser`) o cede (`owner=app`) el foco.
-No se elimina el manejo de `WM_TAKE_FOCUS` si Chromium lo entrega; no es el
+En este embed el hijo Ozone **no** toma el InputFocus de X11 (`getwindowfocus`
+sigue en el toplevel aunque el caret esté en la página); las teclas llegan
+a CEF por GTK. Alloy nativo recicla Tab dentro del HTML, así que
+`OnTakeFocus` casi nunca dispara: el host inyecta un trap en `load_end` que
+emite el mismo `focus owner=app`. Ctrl+L lo captura también el wry. No se
+elimina el manejo de `WM_TAKE_FOCUS` si Chromium lo entrega; no es el
 camino de la barra.
 
 `chrome-sandbox` solo se exporta como `CHROME_DEVEL_SANDBOX` si es setuid-root.

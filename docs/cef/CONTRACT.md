@@ -285,8 +285,11 @@ Cada mensaje es un objeto JSON con `event`:
 - `{"event":"focus","owner":"browser"}` — `CefFocusHandler::OnGotFocus` del
   browser principal. El ADE/Svelte hace blur del input de la barra para que
   solo CEF reciba teclas.
-- `{"event":"focus","owner":"app","next":true}` — `OnTakeFocus`: Tab (o
-  Shift+Tab con `next:false`) salió de la página. El ADE enfoca la URL o el
+- `{"event":"focus","owner":"app","next":true}` — Tab (o Shift+Tab con
+  `next:false`) salió de la página. En Alloy nativo el HTML recicla el Tab
+  y `OnTakeFocus` casi nunca dispara: el host inyecta un trap en el frame
+  principal (`idioteque:take-focus:0|1` por consola) y emite el mismo
+  evento. Si `OnTakeFocus` sí llega, también. El ADE enfoca la URL o el
   último control de la barra y reclama X11.
 - `nav`, `title`, `load-end`, `load-error` y `focus` solo se emiten para el
   browser principal: la ventana de DevTools y otros popups no alimentan la
@@ -335,7 +338,10 @@ EOF en stdin = el ADE murió → cierre ordenado y exit 0.
 
 `on_pre_key_event` con `KEYEVENT_RAWKEYDOWN`:
 
-- `Ctrl+B`, `Ctrl+Shift+B`, `Ctrl+L` → emitir `shortcut` y consumir.
+- `Ctrl+B`, `Ctrl+Shift+B`, `Ctrl+L` → emitir `shortcut` (solo browser
+  principal) y consumir. Ctrl+L también lo captura el wry (`keydown` en
+  el toplevel): el hijo Ozone no toma el foco X11, así que WebKit ve el
+  acorde antes que CEF.
 - `F12`, `Ctrl+Shift+I` → DevTools (toggle) y consumir.
 - `F5`, `Ctrl+R` → reload; `Ctrl+Shift+R` → reload ignorando caché.
 - `Alt+←` / `Alt+→` → back / forward.
@@ -350,9 +356,12 @@ principal (una sola pestaña). DevTools sí abre su ventana propia.
 
 Un solo dueño de teclado: o el chrome wry/Svelte o el hijo CEF, nunca los
 dos. `browser_focus_app` hace `XSetInputFocus(toplevel)` y después
-`unfocus`. Un clic en la página emite `focus owner=browser` y el frontend
-hace blur del campo URL. `{"cmd":"focus"}` entrega a CEF tanto X11 como
-`set_focus(true)`.
+`unfocus`, y escribe `[cef] browser_focus_app` en el stderr del ADE. Un
+clic en la página emite `focus owner=browser` y el frontend hace blur del
+campo URL. `{"cmd":"focus"}` entrega a CEF tanto X11 como `set_focus(true)`.
+El Ozone child suele no tomar el InputFocus de X11: las teclas llegan a
+CEF por el toplevel GTK. El handoff Tab/Ctrl+L no depende de que
+`getwindowfocus` cambie.
 
 ### 4.7 Códigos de salida
 
@@ -389,10 +398,11 @@ Todos devuelven `Result<_, String>` con mensajes en español, como `pty_*`.
 - `browser_set_visible { visible: bool }` → oculta/muestra el hueco GDK y manda
   `show`/`hide`.
 - `browser_focus_app` — devuelve el foco X11 al toplevel de idioteque
-  (`XSetInputFocus`) y, en el mismo comando, manda `unfocus` al host. Mientras
-  la ventana de CEF tiene el foco, el webview no recibe teclas; el frontend lo
-  llama una vez por `focusin` de la barra Svelte (si `focusOwner` no es ya
-  `app`) y tras un `shortcut` del host (Ctrl+L).
+  (`XSetInputFocus`) y, en el mismo comando, manda `unfocus` al host.
+  Escribe `[cef] browser_focus_app` en stderr para que el Lab lo cuente.
+  El frontend lo llama una vez por `focusin` de la barra (si `focusOwner`
+  no es ya `app`), tras `focus owner=app`, y en Ctrl+L (`claimUrlBar`,
+  wry y/o `shortcut` del host; el segundo se deduce).
 - `browser_kill` — `close`, espera 2 s, `SIGKILL` si sigue.
 - `cef_runtime_info -> CefRuntimeInfo`:
   `{ current: SlotInfo, base: SlotInfo, candidate: SlotInfo | null, denylist: DenyEntry[], lastCheckAt: string | null, pendingPromotion: {...} | null, hostApiVersion: 15200, platform: "linux64", hostAlive: bool }`

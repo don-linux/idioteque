@@ -385,10 +385,16 @@ fn reclaim_app_keyboard(
     }
 }
 
+/// Line the Lab greps to count URL-bar reclaim. Keep this exact.
+fn browser_focus_app_log() -> &'static str {
+    "[cef] browser_focus_app"
+}
+
 /// El usuario pulsó en la UI Svelte (barra de URL, botones): el foco X11 vuelve
 /// al toplevel y CEF suelta el foco lógico (`unfocus`).
 #[tauri::command]
 pub fn browser_focus_app(window: tauri::Window, state: State<CefState>) -> Result<(), String> {
+    eprintln!("{}", browser_focus_app_log());
     reclaim_app_keyboard(
         || on_gtk(move || hole::focus_toplevel(&window))?,
         |cmd| with_host(&state, |host| host.send(cmd)),
@@ -1612,6 +1618,15 @@ exit 0
     }
 
     #[test]
+    fn browser_focus_app_logs_stable_line() {
+        assert_eq!(browser_focus_app_log(), "[cef] browser_focus_app");
+        assert!(
+            browser_focus_app_log().contains("browser_focus_app"),
+            "Lab counts this exact token in the ADE log"
+        );
+    }
+
+    #[test]
     fn reclaim_app_keyboard_sends_unfocus_once_after_x11() {
         let mut x11 = 0;
         let mut cmds = Vec::new();
@@ -1642,13 +1657,19 @@ exit 0
         )
         .expect_err("x11 must abort the command");
         assert_eq!(err, "no X11");
-        assert!(cmds.is_empty(), "unfocus must not run before XSetInputFocus");
+        assert!(
+            cmds.is_empty(),
+            "unfocus must not run before XSetInputFocus"
+        );
     }
 
     #[test]
     fn reclaim_app_keyboard_swallows_missing_host() {
-        reclaim_app_keyboard(|| Ok(()), |_| Err("No hay un navegador en ejecución".into()))
-            .expect("chrome already has X11");
+        reclaim_app_keyboard(
+            || Ok(()),
+            |_| Err("No hay un navegador en ejecución".into()),
+        )
+        .expect("chrome already has X11");
     }
 
     #[cfg(unix)]
@@ -1657,15 +1678,14 @@ exit 0
         let tmp = TempDir::new().unwrap();
         let cache = tmp.path().join("cache-unfocus");
         let binary = write_script(tmp.path(), "record-cmds", RECORD_CMDS);
-        let mut host = spawn_host(&launch(binary, tmp.path().to_path_buf(), cache.clone()))
-            .expect("spawn");
+        let mut host =
+            spawn_host(&launch(binary, tmp.path().to_path_buf(), cache.clone())).expect("spawn");
         let events = host.take_events();
         let _ = events.recv_timeout(Duration::from_secs(3)).expect("ready");
         let state = CefState::default();
         state.set_host_for_test(host);
 
-        reclaim_app_keyboard(|| Ok(()), |cmd| with_host(&state, |h| h.send(cmd)))
-            .expect("unfocus");
+        reclaim_app_keyboard(|| Ok(()), |cmd| with_host(&state, |h| h.send(cmd))).expect("unfocus");
 
         // The child appends after the write+flush from HostProcess::send.
         let cmds_path = cache.join("cmds");
@@ -1688,7 +1708,10 @@ exit 0
             "browser_focus_app must send unfocus exactly once: {recorded:?}"
         );
         assert_eq!(
-            lines.iter().filter(|line| **line == r#"{"cmd":"unfocus"}"#).count(),
+            lines
+                .iter()
+                .filter(|line| **line == r#"{"cmd":"unfocus"}"#)
+                .count(),
             1
         );
         take_and_kill(&state).expect("cleanup");

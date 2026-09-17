@@ -187,6 +187,12 @@ mod tests {
             }
         );
         assert_eq!(
+            parse_event(r#"{"event":"shortcut","chord":"ctrl+l"}"#).unwrap(),
+            HostEvent::Shortcut {
+                chord: "ctrl+l".into()
+            }
+        );
+        assert_eq!(
             parse_event(r#"{"event":"focus","owner":"browser"}"#).unwrap(),
             HostEvent::Focus {
                 owner: FocusOwner::Browser,

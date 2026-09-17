@@ -931,6 +931,18 @@ mod tests {
             ForwardAction::Send,
             "focus is forwarded like nav once the host is ready"
         );
+        let shortcut = HostEvent::Shortcut {
+            chord: "ctrl+l".into(),
+        };
+        assert_eq!(
+            forward_action(&shortcut, false, false, false),
+            ForwardAction::Drop
+        );
+        assert_eq!(
+            forward_action(&shortcut, true, false, false),
+            ForwardAction::Send,
+            "ctrl+l shortcut is forwarded like focus once the host is ready"
+        );
         assert_eq!(
             forward_action(&fatal(15), false, false, true),
             ForwardAction::Send
