@@ -598,8 +598,9 @@ mod tests {
         );
 
         let tied = parse_index(&wrap_linux(&format!("{newer_chromium},{older_chromium}"))).unwrap();
-        let current = CefVersion::parse("152.0.6+gcur+chromium-152.0.7977.8").unwrap();
-        let chosen = select_candidate(&tied, "linux64", &current, &|_| false).expect("chromium");
+        let older_than_both = CefVersion::parse("152.0.6+gcur+chromium-152.0.7977.8").unwrap();
+        let chosen =
+            select_candidate(&tied, "linux64", &older_than_both, &|_| false).expect("chromium");
         assert_eq!(chosen.file.name, "new-cr.tar.bz2");
 
         let current_already_newer =
