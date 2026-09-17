@@ -4,6 +4,7 @@ import {
   SETTINGS_SAVED_TOAST,
   TOAST_DURATION_MS,
   createHintToast,
+  createNoticeToast,
   createSuccessToast,
   toastsForPlacement,
   withoutToast,
@@ -31,6 +32,35 @@ describe("createHintToast", () => {
   });
 });
 
+describe("createNoticeToast", () => {
+  it("builds a sticky notice at the bottom right", () => {
+    expect(createNoticeToast(5, "aviso")).toEqual({
+      id: 5,
+      message: "aviso",
+      type: "notice",
+      placement: "bottom-right",
+      sticky: true,
+    });
+  });
+
+  it("keeps optional detail and action when provided", () => {
+    expect(
+      createNoticeToast(6, "aviso", {
+        detail: "Candidato: 1\nActual: 2",
+        action: { label: "Abrir issue", href: "https://example.com" },
+      }),
+    ).toEqual({
+      id: 6,
+      message: "aviso",
+      type: "notice",
+      placement: "bottom-right",
+      sticky: true,
+      detail: "Candidato: 1\nActual: 2",
+      action: { label: "Abrir issue", href: "https://example.com" },
+    });
+  });
+});
+
 describe("withoutToast", () => {
   const first = createSuccessToast(1, "uno");
   const second = createSuccessToast(2, "dos");
@@ -47,10 +77,19 @@ describe("withoutToast", () => {
 describe("toastsForPlacement", () => {
   const success = createSuccessToast(1, "abajo");
   const hint = createHintToast(2, "arriba");
+  const notice = createNoticeToast(3, "aviso");
 
   it("splits hosts so settings stay at the bottom", () => {
     expect(toastsForPlacement([success, hint], "bottom-right")).toEqual([success]);
     expect(toastsForPlacement([success, hint], "top-right")).toEqual([hint]);
+  });
+
+  it("keeps notices with success toasts at the bottom right", () => {
+    expect(toastsForPlacement([success, hint, notice], "bottom-right")).toEqual([
+      success,
+      notice,
+    ]);
+    expect(toastsForPlacement([success, hint, notice], "top-right")).toEqual([hint]);
   });
 });
 

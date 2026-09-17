@@ -5,9 +5,11 @@
   import ToastHost from "$lib/components/ToastHost.svelte";
   import UnsavedExitModal from "$lib/components/UnsavedExitModal.svelte";
   import { appConfig } from "$lib/app-config.svelte";
+  import { cefUpdates } from "$lib/cef-update.svelte";
   import { settingsEditor } from "$lib/settings-editor.svelte";
   import { unsavedExit } from "$lib/unsaved-exit.svelte";
   import { applyTheme } from "$lib/ui-theme";
+  import { surface } from "$lib/workspace-surface.svelte";
   import { workspace } from "$lib/workspace.svelte";
 
   let { children }: { children: Snippet } = $props();
@@ -16,8 +18,22 @@
     applyTheme(document.documentElement, settingsEditor.uiTheme);
   });
 
+  $effect(() => {
+    if (surface.current !== "browser") cefUpdates.flush();
+  });
+
   onMount(() => {
     void appConfig.load();
+
+    let unlistenCef: (() => void) | undefined;
+    let cefStopped = false;
+    void cefUpdates.start().then((fn) => {
+      if (cefStopped) {
+        fn();
+        return;
+      }
+      unlistenCef = fn;
+    });
 
     let unlisten: (() => void) | undefined;
     try {
@@ -37,7 +53,11 @@
       // Browser preview without the Tauri runtime.
     }
 
-    return () => unlisten?.();
+    return () => {
+      cefStopped = true;
+      unlistenCef?.();
+      unlisten?.();
+    };
   });
 </script>
 

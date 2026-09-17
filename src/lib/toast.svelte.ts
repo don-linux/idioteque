@@ -2,8 +2,10 @@ import {
   HINT_TOAST_DURATION_MS,
   TOAST_DURATION_MS,
   createHintToast,
+  createNoticeToast,
   createSuccessToast,
   withoutToast,
+  type NoticeToastOpts,
   type ToastItem,
 } from "$lib/toast";
 
@@ -16,8 +18,18 @@ class ToastBus {
     return this.#push(createSuccessToast(++this.#nextId, message), TOAST_DURATION_MS);
   }
 
+  successLong(message: string): number {
+    return this.#push(createSuccessToast(++this.#nextId, message), HINT_TOAST_DURATION_MS);
+  }
+
   hint(message: string): number {
     return this.#push(createHintToast(++this.#nextId, message), HINT_TOAST_DURATION_MS);
+  }
+
+  notice(message: string, opts: NoticeToastOpts = {}): number {
+    const toast = createNoticeToast(++this.#nextId, message, opts);
+    this.items = [...this.items, toast];
+    return toast.id;
   }
 
   dismiss(id: number): void {

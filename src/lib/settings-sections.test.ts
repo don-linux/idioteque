@@ -12,7 +12,7 @@ describe("SETTINGS_SECTIONS", () => {
     }
   });
 
-  it("includes Terminal and Temas in order", () => {
+  it("includes Terminal, Temas and Navegador in order", () => {
     expect(SETTINGS_SECTIONS[0]).toEqual({
       id: "terminal",
       label: "Terminal",
@@ -23,6 +23,11 @@ describe("SETTINGS_SECTIONS", () => {
       label: "Temas",
       href: "/configuracion/temas",
     });
+    expect(SETTINGS_SECTIONS[2]).toEqual({
+      id: "navegador",
+      label: "Navegador",
+      href: "/configuracion/navegador",
+    });
   });
 });
 
@@ -30,6 +35,7 @@ describe("settingsSectionFromPath", () => {
   it("resolves a known section href", () => {
     expect(settingsSectionFromPath("/configuracion/terminal")?.id).toBe("terminal");
     expect(settingsSectionFromPath("/configuracion/temas")?.id).toBe("temas");
+    expect(settingsSectionFromPath("/configuracion/navegador")?.id).toBe("navegador");
   });
 
   it("returns null when no section is selected", () => {

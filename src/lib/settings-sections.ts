@@ -1,6 +1,7 @@
 export const SETTINGS_SECTIONS = [
   { id: "terminal", label: "Terminal", href: "/configuracion/terminal" },
   { id: "temas", label: "Temas", href: "/configuracion/temas" },
+  { id: "navegador", label: "Navegador", href: "/configuracion/navegador" },
 ] as const;
 
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
