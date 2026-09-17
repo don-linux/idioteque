@@ -30,6 +30,7 @@
 
     if (event.key === "Enter") {
       event.preventDefault();
+      if (!browser.alive) return;
       void browser.navigate(browser.inputUrl);
       return;
     }
