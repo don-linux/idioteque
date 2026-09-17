@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,7 @@ use super::paths::{CefPaths, PLATFORM};
 
 const SCHEMA: u32 = 1;
 const STATE_TMP_NAME: &str = ".state.json.idioteque.tmp";
+static STATE_TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -173,13 +175,33 @@ fn atomic_write(path: &Path, contents: &str, tmp_name: &str) -> Result<(), Strin
         .ok_or_else(|| "Ruta de estado inválida".to_string())?;
     fs::create_dir_all(parent)
         .map_err(|error| format!("No se pudo crear `{}`: {error}", parent.display()))?;
-    let temporary = parent.join(tmp_name);
-    fs::write(&temporary, contents)
-        .map_err(|error| format!("No se pudo escribir el estado del updater: {error}"))?;
+    // Un crash previo puede dejar el nombre fijo como directorio o symlink;
+    // no se reutiliza: cada save usa un tmp único (pid + seq).
+    remove_path_best_effort(&parent.join(tmp_name));
+    let temporary = parent.join(format!(
+        "{tmp_name}.{}.{}",
+        std::process::id(),
+        STATE_TMP_SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::write(&temporary, contents).map_err(|error| {
+        let _ = fs::remove_file(&temporary);
+        format!("No se pudo escribir el estado del updater: {error}")
+    })?;
     fs::rename(&temporary, path).map_err(|error| {
         let _ = fs::remove_file(&temporary);
         format!("No se pudo guardar el estado del updater: {error}")
     })
+}
+
+fn remove_path_best_effort(path: &Path) {
+    let Ok(meta) = path.symlink_metadata() else {
+        return;
+    };
+    if meta.is_dir() {
+        let _ = fs::remove_dir_all(path);
+    } else {
+        let _ = fs::remove_file(path);
+    }
 }
 
 /// Civil date from Unix seconds, UTC. Howard Hinnant's `civil_from_days`.
@@ -289,14 +311,69 @@ mod tests {
         assert_eq!(state.last_outcome, None);
     }
 
+    fn pending(cef: &str, chromium: &str) -> PendingPromotion {
+        PendingPromotion {
+            cef_version: cef.into(),
+            chromium_version: chromium.into(),
+        }
+    }
+
+    fn deferred_state() -> UpdaterState {
+        UpdaterState {
+            schema: 1,
+            last_check_at: Some("2026-09-16T23:00:00Z".into()),
+            index_etag: Some("\"72725877b82897a3019cd6aabf3b23a1\"".into()),
+            pending_promotion: Some(pending(NEWER, "153.0.8000.10")),
+            last_outcome: Some("deferred".into()),
+        }
+    }
+
     #[test]
     fn corrupt_file_is_default() {
+        let cases: &[(&str, &[u8])] = &[
+            ("empty", b""),
+            ("whitespace", b" \n\t"),
+            ("not-json", b"{not json"),
+            ("truncated", b"{\"schema\":1,"),
+            ("null", b"null"),
+            ("array", b"[]"),
+            ("bool", b"true"),
+            ("schema-string", br#"{"schema":"1"}"#),
+            ("schema-float", br#"{"schema":1.5}"#),
+            (
+                "pending-string",
+                br#"{"schema":1,"pendingPromotion":"yes"}"#,
+            ),
+            (
+                "pending-empty-obj",
+                br#"{"schema":1,"pendingPromotion":{}}"#,
+            ),
+            ("pending-array", br#"{"schema":1,"pendingPromotion":[]}"#),
+            (
+                "pending-missing-chromium",
+                br#"{"schema":1,"pendingPromotion":{"cefVersion":"153.0.1"}}"#,
+            ),
+            ("last-check-number", br#"{"schema":1,"lastCheckAt":1}"#),
+            ("trailing-junk", br#"{"schema":1}{}"#),
+            ("utf8-bom", b"\xef\xbb\xbf{\"schema\":1}"),
+            ("invalid-utf8", &[0xff, 0xfe, 0x00, 0x7b]),
+            ("json-comment", br#"{/*x*/"schema":1}"#),
+        ];
+        for (name, bytes) in cases {
+            let tmp = TempDir::new().unwrap();
+            let paths = paths_in(&tmp);
+            fs::create_dir_all(&paths.home).unwrap();
+            fs::write(paths.state_file(), bytes).unwrap();
+            assert_eq!(load(&paths), default_state(), "corrupt case {name}");
+        }
+    }
+
+    #[test]
+    fn state_json_directory_is_default() {
         let tmp = TempDir::new().unwrap();
         let paths = paths_in(&tmp);
-        fs::create_dir_all(&paths.home).unwrap();
-        fs::write(paths.state_file(), b"{not json").unwrap();
-        let state = load(&paths);
-        assert_eq!(state, default_state());
+        fs::create_dir_all(paths.state_file()).unwrap();
+        assert_eq!(load(&paths), default_state());
     }
 
     #[test]
@@ -326,6 +403,182 @@ mod tests {
     }
 
     #[test]
+    fn pending_promotion_survives_save_of_other_fields() {
+        let tmp = TempDir::new().unwrap();
+        let paths = paths_in(&tmp);
+        let original = deferred_state();
+        save(&paths, &original).expect("save");
+
+        let mut loaded = load(&paths);
+        assert_eq!(loaded.pending_promotion, original.pending_promotion);
+        loaded.last_check_at = Some("2026-09-17T08:00:00Z".into());
+        loaded.last_outcome = Some("no-newer".into());
+        loaded.index_etag = Some("\"etag-after-cycle\"".into());
+        save(&paths, &loaded).expect("save after finish()");
+
+        let again = load(&paths);
+        assert_eq!(
+            again.pending_promotion, original.pending_promotion,
+            "finish()/save no debe borrar pendingPromotion si el caller lo dejó"
+        );
+        assert_eq!(again.last_check_at.as_deref(), Some("2026-09-17T08:00:00Z"));
+        assert_eq!(again.last_outcome.as_deref(), Some("no-newer"));
+        assert_eq!(again.index_etag.as_deref(), Some("\"etag-after-cycle\""));
+
+        let disk = fs::read_to_string(paths.state_file()).unwrap();
+        assert!(disk.contains("\"pendingPromotion\""));
+        assert!(disk.contains("\"cefVersion\""));
+        assert!(disk.contains(NEWER));
+        assert!(disk.contains("153.0.8000.10"));
+    }
+
+    #[test]
+    fn explicit_clear_writes_null_pending_promotion() {
+        let tmp = TempDir::new().unwrap();
+        let paths = paths_in(&tmp);
+        save(&paths, &deferred_state()).expect("save");
+
+        let mut loaded = load(&paths);
+        loaded.pending_promotion = None;
+        loaded.last_outcome = Some("updated".into());
+        save(&paths, &loaded).expect("clear");
+
+        let again = load(&paths);
+        assert_eq!(again.pending_promotion, None);
+        assert_eq!(again.last_outcome.as_deref(), Some("updated"));
+        let disk = fs::read_to_string(paths.state_file()).unwrap();
+        assert!(disk.contains("\"pendingPromotion\": null"));
+    }
+
+    #[test]
+    fn extra_fields_and_schema_zero_keep_pending() {
+        let tmp = TempDir::new().unwrap();
+        let paths = paths_in(&tmp);
+        fs::create_dir_all(&paths.home).unwrap();
+        fs::write(
+            paths.state_file(),
+            r#"{
+  "schema": 0,
+  "lastCheckAt": "2026-09-16T23:00:00Z",
+  "pendingPromotion": {
+    "cefVersion": "153.0.1+gabc+chromium-153.0.8000.10",
+    "chromiumVersion": "153.0.8000.10",
+    "ignored": true
+  },
+  "futureField": 1
+}"#,
+        )
+        .unwrap();
+
+        let state = load(&paths);
+        assert_eq!(state.schema, 1);
+        assert_eq!(
+            state.pending_promotion,
+            Some(pending(NEWER, "153.0.8000.10"))
+        );
+        assert_eq!(state.last_check_at.as_deref(), Some("2026-09-16T23:00:00Z"));
+    }
+
+    #[test]
+    fn crlf_and_null_pending_are_valid() {
+        let tmp = TempDir::new().unwrap();
+        let paths = paths_in(&tmp);
+        fs::create_dir_all(&paths.home).unwrap();
+        fs::write(
+            paths.state_file(),
+            b"{\r\n  \"schema\": 1,\r\n  \"pendingPromotion\": null,\r\n  \"lastOutcome\": \"no-newer\"\r\n}\r\n",
+        )
+        .unwrap();
+        let state = load(&paths);
+        assert_eq!(state.schema, 1);
+        assert_eq!(state.pending_promotion, None);
+        assert_eq!(state.last_outcome.as_deref(), Some("no-newer"));
+    }
+
+    #[test]
+    fn snake_case_pending_key_is_not_pending() {
+        let tmp = TempDir::new().unwrap();
+        let paths = paths_in(&tmp);
+        fs::create_dir_all(&paths.home).unwrap();
+        fs::write(
+            paths.state_file(),
+            r#"{"schema":1,"pending_promotion":{"cefVersion":"x","chromiumVersion":"y"}}"#,
+        )
+        .unwrap();
+        let state = load(&paths);
+        assert_eq!(state.schema, 1);
+        assert_eq!(
+            state.pending_promotion, None,
+            "el contrato 3.7 es camelCase; snake_case no cuenta como pending"
+        );
+    }
+
+    #[test]
+    fn leftover_state_tmp_directory_does_not_block_save() {
+        let tmp = TempDir::new().unwrap();
+        let paths = paths_in(&tmp);
+        fs::create_dir_all(&paths.home).unwrap();
+        let stale = paths.home.join(STATE_TMP_NAME);
+        fs::create_dir_all(&stale).unwrap();
+        fs::write(stale.join("stuck"), b"x").unwrap();
+
+        let state = deferred_state();
+        save(&paths, &state).expect("un .tmp huérfano (dir) no debe impedir save");
+        assert_eq!(load(&paths).pending_promotion, state.pending_promotion);
+        assert_eq!(load(&paths), state);
+        assert!(
+            !stale.exists(),
+            "save debe limpiar el tmp fijo huérfano antes de persistir"
+        );
+    }
+
+    #[test]
+    fn leftover_state_tmp_is_ignored_on_load() {
+        let tmp = TempDir::new().unwrap();
+        let paths = paths_in(&tmp);
+        let state = deferred_state();
+        save(&paths, &state).expect("save");
+        fs::write(
+            paths.home.join(STATE_TMP_NAME),
+            br#"{"schema":1,"pendingPromotion":null,"lastOutcome":"torn"}"#,
+        )
+        .unwrap();
+        assert_eq!(load(&paths), state);
+    }
+
+    #[test]
+    fn concurrent_saves_do_not_tear_pending_promotion() {
+        let tmp = TempDir::new().unwrap();
+        let paths = std::sync::Arc::new(paths_in(&tmp));
+        let expected = pending(NEWER, "153.0.8000.10");
+        let mut threads = Vec::new();
+        for i in 0..8 {
+            let paths = std::sync::Arc::clone(&paths);
+            let expected = expected.clone();
+            threads.push(std::thread::spawn(move || {
+                for j in 0..8 {
+                    let state = UpdaterState {
+                        schema: 1,
+                        last_check_at: Some(format!("2026-09-16T23:{:02}:{:02}Z", i, j)),
+                        index_etag: Some(format!("\"etag-{i}-{j}\"")),
+                        pending_promotion: Some(expected.clone()),
+                        last_outcome: Some("deferred".into()),
+                    };
+                    save(&paths, &state).expect("save");
+                }
+            }));
+        }
+        for thread in threads {
+            thread.join().expect("thread");
+        }
+        let disk = fs::read_to_string(paths.state_file()).expect("state.json");
+        let parsed: UpdaterState =
+            serde_json::from_str(&disk).expect("state.json no debe quedar a medias");
+        assert_eq!(parsed.pending_promotion.as_ref(), Some(&expected));
+        assert_eq!(load(&paths).pending_promotion.as_ref(), Some(&expected));
+    }
+
+    #[test]
     fn remove_health_caches_only_drops_matching_dirs() {
         let tmp = TempDir::new().unwrap();
         let paths = paths_in(&tmp);
@@ -333,29 +586,102 @@ mod tests {
 
         let cache_a = paths.home.join("health-cache-1");
         let cache_b = paths.home.join("health-cache-123");
+        let cache_zero = paths.home.join("health-cache-0");
+        let nested = cache_a.join("nested").join("deep");
         let other_dir = paths.home.join("not-a-cache");
         let cache_lookalike = paths.home.join("health-cache");
         let cache_suffix = paths.home.join("health-caches");
+        let prefix_inside = paths.home.join("xx-health-cache-1");
         let other_file = paths.home.join("health-cache-note.txt");
-        fs::create_dir_all(&cache_a).unwrap();
+        let cache_as_file = paths.home.join("health-cache-1.file");
+        let cache_file_exact = paths.home.join("health-cache-999");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("x"), b"1").unwrap();
         fs::create_dir_all(&cache_b).unwrap();
+        fs::create_dir_all(&cache_zero).unwrap();
         fs::create_dir_all(&other_dir).unwrap();
         fs::create_dir_all(&cache_lookalike).unwrap();
         fs::create_dir_all(&cache_suffix).unwrap();
-        fs::write(cache_a.join("x"), b"1").unwrap();
+        fs::create_dir_all(&prefix_inside).unwrap();
         fs::write(&other_file, b"keep").unwrap();
+        fs::write(&cache_as_file, b"not-a-dir").unwrap();
+        fs::write(&cache_file_exact, b"leftover-file").unwrap();
         fs::write(paths.home.join("state.json"), b"{}").unwrap();
+        fs::write(paths.home.join("denylist.json"), b"{}").unwrap();
+
+        let current_cache = paths.current().join("health-cache-1");
+        fs::create_dir_all(&current_cache).unwrap();
+        fs::write(current_cache.join("slot"), b"keep").unwrap();
+        let logs_cache = paths.logs_dir().join("health-cache-1");
+        fs::create_dir_all(&logs_cache).unwrap();
+        fs::create_dir_all(paths.candidate()).unwrap();
+        fs::create_dir_all(paths.current_old()).unwrap();
 
         remove_health_caches(&paths);
 
         assert!(!cache_a.exists());
         assert!(!cache_b.exists());
+        assert!(!cache_zero.exists());
         assert!(other_dir.is_dir());
         assert!(cache_lookalike.is_dir());
         assert!(cache_suffix.is_dir());
+        assert!(prefix_inside.is_dir());
         assert!(other_file.is_file());
+        assert!(cache_as_file.is_file());
+        assert!(
+            cache_file_exact.is_file(),
+            "solo se borran directorios health-cache-*, no ficheros"
+        );
         assert!(paths.profile().is_dir());
         assert!(paths.state_file().is_file());
+        assert!(paths.home.join("denylist.json").is_file());
+        assert!(
+            current_cache.join("slot").is_file(),
+            "no recursar dentro de current/"
+        );
+        assert!(logs_cache.is_dir(), "no recursar dentro de logs/");
+        assert!(paths.candidate().is_dir());
+        assert!(paths.current_old().is_dir());
+    }
+
+    #[test]
+    fn remove_health_caches_missing_home_is_a_noop() {
+        let tmp = TempDir::new().unwrap();
+        let paths = paths_in(&tmp);
+        remove_health_caches(&paths);
+        assert!(!paths.home.exists());
+    }
+
+    #[test]
+    fn remove_health_caches_home_file_is_a_noop() {
+        let tmp = TempDir::new().unwrap();
+        let paths = paths_in(&tmp);
+        fs::write(&paths.home, b"not-a-dir").unwrap();
+        remove_health_caches(&paths);
+        assert!(paths.home.is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remove_health_caches_does_not_follow_symlink_into_profile() {
+        let tmp = TempDir::new().unwrap();
+        let paths = paths_in(&tmp);
+        paths.ensure_dirs().unwrap();
+        let marker = paths.profile().join("keep-me");
+        fs::write(&marker, b"safe").unwrap();
+        let link = paths.home.join("health-cache-symlink");
+        std::os::unix::fs::symlink(&paths.profile(), &link).unwrap();
+
+        remove_health_caches(&paths);
+
+        assert!(
+            marker.is_file(),
+            "no debe borrar profile a través de un symlink health-cache-*"
+        );
+        assert!(
+            !link.exists(),
+            "el leftover health-cache-* (symlink) sí se limpia"
+        );
     }
 
     #[test]
@@ -428,5 +754,19 @@ mod tests {
             Some(NEWER)
         );
         assert!(info.host_alive);
+    }
+
+    #[test]
+    fn runtime_info_corrupt_state_does_not_drop_slots() {
+        let tmp = TempDir::new().unwrap();
+        let paths = paths_in(&tmp);
+        write_slot(&paths.bundled_base, BUNDLED, SlotSource::Bundled);
+        fs::create_dir_all(&paths.home).unwrap();
+        fs::write(paths.state_file(), b"{not json").unwrap();
+
+        let info = runtime_info(&paths, 15200, false).expect("info");
+        assert_eq!(info.current.cef_version, BUNDLED);
+        assert_eq!(info.pending_promotion, None);
+        assert_eq!(info.last_check_at, None);
     }
 }
