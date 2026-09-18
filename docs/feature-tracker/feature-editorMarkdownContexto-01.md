@@ -28,7 +28,7 @@ arrastrar código muerto.
 
 **2. Abrir una carpeta**
 
-Se abre desde el diálogo nativo del sistema operativo, el mismo que usa cualquier otro
+Se abre desde el diálogo nativo de Linux, el mismo que usa cualquier otro
 programa.
 
 **3. Árbol lateral de archivos**

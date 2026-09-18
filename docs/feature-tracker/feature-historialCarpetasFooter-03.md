@@ -11,7 +11,7 @@ Ahora la pantalla de inicio es una grilla con el historial de las carpetas que
 ya abriste. Clic y vuelves a entrar. Abajo, en todas las pantallas, queda
 siempre visible la palabra “idioteque”.
 
-Esa lista se guarda en un archivo de config que puedes copiar a otra máquina.
+Esa lista se guarda en `~/.idioteque/config.json`.
 
 ## Implementado exitosamente
 
@@ -43,16 +43,12 @@ En la home y en el editor hay un pie siempre visible con la palabra
 
 Si bajas en la grilla, el logo se queda abajo.
 
-**4. Persistencia portable**
+**4. Persistencia**
 
-Las configs viven en `~/.idioteque/config.json`. Se crea al primer guardado.
+Las configs viven en `~/.idioteque/config.json`
+(`/home/<user>/.idioteque/config.json`). Se crea al primer guardado.
 
-- Linux: `/home/<user>/.idioteque/config.json`
-- macOS: `/Users/<user>/.idioteque/config.json`
-- Windows: `C:\Users\<user>\.idioteque\config.json`
-
-Es un JSON que se puede copiar entre máquinas. No se usa el directorio de
-config de Tauri ni un plugin de store.
+No se usa el directorio de config de Tauri ni un plugin de store.
 
 Si el archivo no existe o está roto, la app arranca vacía y no se rompe.
 
@@ -73,5 +69,5 @@ Esto se dejó fuera a propósito, no son fallas:
 
 - No se reabre sola la última carpeta al arrancar (la home es la grilla)
 - No hay favoritos ni pines
-- No hay sync automático entre máquinas
+- No hay sync automático entre equipos
 - No se usa SQLite ni plugin de store

@@ -1,6 +1,7 @@
 # Decisiones de diseño
 
 Bitácora de cómo se ve idioteque y por qué. No es el detalle de implementación.
+idioteque es un editor de escritorio para Linux x86_64. Atajos con Ctrl.
 
 ## Paleta y tipografía
 

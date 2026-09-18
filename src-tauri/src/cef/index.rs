@@ -522,7 +522,7 @@ mod tests {
         assert_eq!(chosen.file.name, "first.tar.bz2");
     }
 
-    /// Sin clave de plataforma no se toma prestada otra (ni `linux64` ni Windows).
+    /// Sin clave de plataforma no se toma prestada otra clave del índice.
     #[test]
     fn select_candidate_missing_platform_does_not_fallback() {
         let linux = stable_minimal(

@@ -1,7 +1,16 @@
-# Tauri + SvelteKit + TypeScript
+# idioteque
 
-This template should help get you started developing with Tauri, SvelteKit and TypeScript in Vite.
+Editor markdown de escritorio para **Linux x86_64**. Tauri v2 (Rust) +
+SvelteKit / Svelte 5 (Vite) + CodeMirror.
 
-## Recommended IDE Setup
+No hay builds para Windows, macOS ni Linux ARM.
 
-[VS Code](https://code.visualstudio.com/) + [Svelte](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer).
+## Desarrollo
+
+Ver `AGENTS.md`. Comandos habituales:
+
+- `bun run dev` — frontend en el puerto 1420
+- `bun run tauri dev` — app de escritorio (incluye el frontend)
+- `bun run check` — svelte-check
+- `bun run test` — Vitest
+- `cargo test --manifest-path src-tauri/Cargo.toml` — tests Rust

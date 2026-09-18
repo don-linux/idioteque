@@ -489,9 +489,8 @@ export const UI_THEMES: readonly UiThemeDefinition[] = [
   }),
 
   /**
-   * Windows Terminal built-in "One Half Dark" (defaults.json).
-   * Chrome and syntax from that ANSI palette. Foreground #dcdfe4 is what
-   * separates it from Atom One Dark (#abb2bf).
+   * One Half Dark. Chrome and syntax from that ANSI palette. Foreground
+   * #dcdfe4 is what separates it from Atom One Dark (#abb2bf).
    */
   darkTheme({
     id: "one-half-dark",
@@ -634,9 +633,8 @@ export const UI_THEMES: readonly UiThemeDefinition[] = [
   }),
 
   /**
-   * Windows Terminal built-in "Campbell" (defaults.json).
-   * Chrome and syntax from that ANSI palette. Accent is brightBlue: #0037da
-   * does not hold contrast on #0c0c0c.
+   * Campbell. Chrome and syntax from that ANSI palette. Accent is
+   * brightBlue: #0037da does not hold contrast on #0c0c0c.
    */
   darkTheme({
     id: "campbell",
