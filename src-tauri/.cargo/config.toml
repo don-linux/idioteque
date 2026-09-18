@@ -1,0 +1,6 @@
+# La dist de CEF que usa `cef-dll-sys` para compilar y enlazar `cef-host`.
+# Relativo a `src-tauri/`: queda en `src-tauri/.cef-sdk/<version>/<os_arch>/` (gitignored).
+# La primera build descarga ~320 MB desde cef-builds.spotifycdn.com y compila
+# `libcef_dll_wrapper` con cmake + ninja.
+[env]
+CEF_PATH = { value = ".cef-sdk", relative = true }

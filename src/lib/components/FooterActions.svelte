@@ -1,11 +1,13 @@
 <script lang="ts">
   import Folder from "@lucide/svelte/icons/folder";
   import GitBranch from "@lucide/svelte/icons/git-branch";
+  import Globe from "@lucide/svelte/icons/globe";
   import House from "@lucide/svelte/icons/house";
   import Settings from "@lucide/svelte/icons/settings";
   import SquareTerminal from "@lucide/svelte/icons/square-terminal";
   import { goto } from "$app/navigation";
   import { ROUTES } from "$lib/app-routes";
+  import { browser } from "$lib/browser.svelte";
   import {
     DEFAULT_FOOTER_ACTION_ORDER,
     runFooterAction,
@@ -21,6 +23,7 @@
   import { dockFromAlt } from "$lib/terminal-dock";
   import { terminal } from "$lib/terminal.svelte";
   import { panels } from "$lib/workspace-panels.svelte";
+  import { surface } from "$lib/workspace-surface.svelte";
   import { workspace } from "$lib/workspace.svelte";
 
   const labels: Record<FooterActionId, string> = {
@@ -28,6 +31,7 @@
     folder: "Cambiar",
     settings: "Configuración",
     terminal: "Terminal",
+    browser: "Navegador",
     git: "Git (Ctrl+G)",
   };
 
@@ -36,6 +40,7 @@
     folder: "Cambiar carpeta",
     settings: "Configuración",
     terminal: "Terminal (Ctrl+J) · a la derecha (Ctrl+Alt+J) · pantalla (Ctrl+Shift+J)",
+    browser: "Navegador (Ctrl+B) · desde la terminal, Ctrl+Shift+B",
     git: "Git (Ctrl+G)",
   };
 
@@ -78,6 +83,9 @@
       terminal: () => {
         panels.toggleTerminal(dockFromAlt(event.altKey));
       },
+      browser: () => {
+        browser.toggle();
+      },
       git: () => {
         panels.toggleGit();
       },
@@ -107,14 +115,17 @@
             {
               active:
                 (id === "terminal" && (terminal.open || terminal.surface === "terminals")) ||
+                (id === "browser" && surface.current === "browser") ||
                 (id === "git" && panels.gitVisible),
             },
           ]}
           aria-pressed={id === "terminal"
             ? terminal.open || terminal.surface === "terminals"
-            : id === "git"
-              ? panels.gitVisible
-              : undefined}
+            : id === "browser"
+              ? surface.current === "browser"
+              : id === "git"
+                ? panels.gitVisible
+                : undefined}
           aria-label={labels[id]}
           title={id === "git" ? gitTitle : titles[id]}
           onpointerenter={() => {
@@ -128,6 +139,8 @@
             <Folder size={16} strokeWidth={1.75} aria-hidden="true" />
           {:else if id === "git"}
             <GitBranch size={16} strokeWidth={1.75} aria-hidden="true" />
+          {:else if id === "browser"}
+            <Globe size={16} strokeWidth={1.75} aria-hidden="true" />
           {:else}
             <SquareTerminal size={16} strokeWidth={1.75} aria-hidden="true" />
           {/if}

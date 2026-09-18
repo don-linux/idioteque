@@ -3,6 +3,7 @@
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import { appConfig } from "$lib/app-config.svelte";
+  import { isBrowserToggleAnywhereShortcut } from "$lib/browser-shortcuts";
   import { isSaveShortcut } from "$lib/save-shortcut";
   import { isTerminalDockShortcut, isTerminalSurfaceShortcut } from "$lib/terminal-dock";
   import { terminal } from "$lib/terminal.svelte";
@@ -65,6 +66,7 @@
     xterm.loadAddon(fitAddon);
     xterm.attachCustomKeyEventHandler((event) => {
       if (isTerminalDockShortcut(event) || isTerminalSurfaceShortcut(event)) return false;
+      if (isBrowserToggleAnywhereShortcut(event)) return false;
       if (isSaveShortcut(event) && terminal.surface === "editor") return false;
       return true;
     });

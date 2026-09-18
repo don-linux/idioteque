@@ -4,6 +4,8 @@
   import PanelLeft from "@lucide/svelte/icons/panel-left";
   import FooterActions from "$lib/components/FooterActions.svelte";
   import FooterTransient from "$lib/components/FooterTransient.svelte";
+  import { browser } from "$lib/browser.svelte";
+  import { handleBrowserFocusUrlShortcut, handleBrowserShortcut } from "$lib/browser-shortcuts";
   import { FOLDER_VISIBILITY_LABEL } from "$lib/folder-visibility";
   import {
     handleGitToggleShortcut,
@@ -16,6 +18,7 @@
   import { requestTerminalSurface } from "$lib/terminal-surface";
   import { unsavedExit } from "$lib/unsaved-exit.svelte";
   import { panels } from "$lib/workspace-panels.svelte";
+  import { surface } from "$lib/workspace-surface.svelte";
   import { workspace } from "$lib/workspace.svelte";
 
   let { children }: { children: Snippet } = $props();
@@ -32,7 +35,7 @@
   }
 
   function onWindowKeydown(event: KeyboardEvent): void {
-    if (terminal.surface !== "terminals") {
+    if (surface.current === "editor") {
       handleSaveShortcut(event, { save: () => void workspace.save() });
     }
 
@@ -44,6 +47,15 @@
     handleTerminalSurfaceShortcut(event, {
       hasWorkspace: workspace.root !== null,
       toggleSurface: () => void toggleSurface(),
+    });
+    handleBrowserShortcut(event, {
+      hasWorkspace: workspace.root !== null,
+      insideTerminal: isTerminalTarget(event.target),
+      toggleBrowser: () => browser.toggle(),
+    });
+    handleBrowserFocusUrlShortcut(event, {
+      browserSurface: surface.current === "browser",
+      focusUrl: () => browser.claimUrlBar(),
     });
     handleTreeToggleShortcut(event, {
       hasWorkspace: workspace.root !== null,
@@ -72,8 +84,8 @@
           <button
             type="button"
             class="action"
-            aria-label="Árbol de archivos (Ctrl+B) · dentro de la terminal, Ctrl+Shift+B"
-            title="Árbol de archivos (Ctrl+B) · dentro de la terminal, Ctrl+Shift+B"
+            aria-label="Árbol de archivos (Ctrl+T) · dentro de la terminal, Ctrl+Shift+T"
+            title="Árbol de archivos (Ctrl+T) · dentro de la terminal, Ctrl+Shift+T"
             onclick={() => panels.toggleTree()}
           >
             <PanelLeft size={16} strokeWidth={1.75} aria-hidden="true" />

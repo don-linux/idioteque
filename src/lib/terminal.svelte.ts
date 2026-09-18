@@ -12,11 +12,10 @@ import {
 } from "$lib/panel-resize";
 import { MAX_TERMINAL_SESSIONS, workspacePtyId } from "$lib/pty";
 import { nextDockToggle, type TerminalDock } from "$lib/terminal-dock";
+import { surface, type WorkspaceSurface } from "$lib/workspace-surface.svelte";
 
-export type { TerminalDock };
+export type { TerminalDock, WorkspaceSurface };
 export { MAX_TERMINAL_SESSIONS };
-
-export type WorkspaceSurface = "editor" | "terminals";
 
 export interface TerminalSession {
   id: string;
@@ -31,7 +30,14 @@ function messageFrom(error: unknown): string {
 }
 
 class TerminalPanelState {
-  surface = $state<WorkspaceSurface>("editor");
+  get surface(): WorkspaceSurface {
+    return surface.current;
+  }
+
+  set surface(value: WorkspaceSurface) {
+    surface.set(value);
+  }
+
   open = $state(false);
   started = $state(false);
   dock = $state<TerminalDock>("bottom");

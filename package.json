@@ -9,8 +9,9 @@
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-    "tauri": "tauri",
-    "test": "vitest run"
+    "tauri": "bun run scripts/tauri.ts",
+    "test": "vitest run",
+    "cef:prepare": "bun run scripts/cef-prepare.ts"
   },
   "license": "MIT",
   "dependencies": {

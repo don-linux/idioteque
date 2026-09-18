@@ -4,11 +4,12 @@
   import Undo2 from "@lucide/svelte/icons/undo-2";
   import { editorSession } from "$lib/editor-session.svelte";
   import { terminal } from "$lib/terminal.svelte";
+  import { surface } from "$lib/workspace-surface.svelte";
   import { workspace } from "$lib/workspace.svelte";
 </script>
 
 <div class="transient">
-  {#if terminal.surface === "terminals"}
+  {#if surface.current === "terminals"}
     <button
       type="button"
       class="action"
@@ -19,7 +20,7 @@
     >
       <SquarePlus size={16} strokeWidth={1.75} aria-hidden="true" />
     </button>
-  {:else}
+  {:else if surface.current !== "browser"}
     {#if editorSession.canUndo}
       <button
         type="button"

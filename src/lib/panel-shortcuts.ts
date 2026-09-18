@@ -28,10 +28,10 @@ export function isGitToggleShortcut(event: Chord): boolean {
   );
 }
 
-/** Ctrl+B, like Visual Studio Code. Not delivered while the terminal has focus. */
+/** Ctrl+T. Not delivered while the terminal has focus. */
 export function isTreeToggleShortcut(event: Chord): boolean {
   return (
-    event.code === "KeyB" &&
+    event.code === "KeyT" &&
     event.ctrlKey &&
     !event.metaKey &&
     !event.shiftKey &&
@@ -39,10 +39,10 @@ export function isTreeToggleShortcut(event: Chord): boolean {
   );
 }
 
-/** Ctrl+Shift+B: the one that also works from inside the terminal. */
+/** Ctrl+Shift+T: the one that also works from inside the terminal. */
 export function isTreeToggleAnywhereShortcut(event: Chord): boolean {
   return (
-    event.code === "KeyB" &&
+    event.code === "KeyT" &&
     event.ctrlKey &&
     event.shiftKey &&
     !event.metaKey &&
@@ -63,7 +63,7 @@ export function handleTreeToggleShortcut(
 
   if (!anywhere && !plain) return;
   if (!ctx.hasWorkspace) return;
-  // Ctrl+B is the tmux prefix, so a focused terminal keeps it. Ctrl+Shift+B is ours.
+  // A focused terminal keeps Ctrl+T. Ctrl+Shift+T is ours.
   if (plain && ctx.insideTerminal) return;
 
   event.preventDefault();
