@@ -175,8 +175,8 @@ fn bundled_base_from_resource_dir(resource_dir: &Path) -> PathBuf {
 
 /// Sidecar junto a cada candidato a ejecutable.
 ///
-/// Workaround AppImage (conservar): `current_exe` va primero porque dentro del
-/// squash es `$APPDIR/usr/bin/idioteque`; `current_binary` apunta al `.AppImage`
+/// AppImage: `current_exe` va primero porque dentro del squash es
+/// `$APPDIR/usr/bin/idioteque`; `current_binary` apunta al `.AppImage`
 /// y ahí no hay `cef-host`. No se usa `std::env::var("APPDIR")`.
 fn resolve_host_binary(
     env_override: Option<PathBuf>,
@@ -397,7 +397,7 @@ mod tests {
 
     #[test]
     fn appimage_prefers_current_exe_under_appdir_over_appimage_file() {
-        // Contrato 3.1 / workaround: current_exe = $APPDIR/usr/bin/idioteque.
+        // Contrato 3.1: current_exe = $APPDIR/usr/bin/idioteque.
         // No se lee la env APPDIR; el layout es el que produce el squash.
         let tmp = TempDir::new().expect("tmp");
         let appdir = tmp.path().join("squash");

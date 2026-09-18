@@ -87,7 +87,6 @@ pub fn run() {
             cef::host::browser_command,
             cef::host::browser_set_bounds,
             cef::host::browser_set_visible,
-            cef::host::browser_focus_app,
             cef::host::browser_kill,
             cef::state::cef_runtime_info,
             cef::updater::cef_check_updates

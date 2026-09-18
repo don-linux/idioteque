@@ -16,7 +16,7 @@ use super::ipc::HostEvent;
 
 /// Códigos con los que el ADE reintenta una vez sin sandbox (contrato 5).
 /// `1` es un abort (SIGABRT: `ExitStatus::code() == None` → 1).
-/// No recortar esta lista: el retry es el workaround si el probe falla.
+/// No recortar esta lista: si el probe falla, el ADE reintenta una vez.
 pub const SANDBOX_RETRY_CODES: &[i32] = &[1, 11, 15];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -377,7 +377,6 @@ pub fn forward_action(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cef::ipc::FocusOwner;
     use std::path::{Path, PathBuf};
     use tempfile::TempDir;
 
@@ -393,7 +392,6 @@ mod tests {
             cef: "x".into(),
             chromium: "y".into(),
             api_version: 15200,
-            xid: 1,
         }
     }
 
@@ -783,7 +781,7 @@ mod tests {
     }
 
     #[test]
-    fn retry_codes_keep_1_11_15_workaround() {
+    fn retry_codes_keep_1_11_15() {
         assert_eq!(SANDBOX_RETRY_CODES, &[1, 11, 15]);
         assert!(is_sandbox_retry_exit(1));
         assert!(is_sandbox_retry_exit(11));
@@ -895,10 +893,6 @@ mod tests {
     #[test]
     fn drop_other_events_while_retry_possible() {
         let nav = HostEvent::Title { title: "x".into() };
-        let focus = HostEvent::Focus {
-            owner: FocusOwner::Browser,
-            next: None,
-        };
         assert_eq!(
             forward_action(&nav, false, false, false),
             ForwardAction::Drop
@@ -907,17 +901,8 @@ mod tests {
             forward_action(&nav, true, false, false),
             ForwardAction::Send
         );
-        assert_eq!(
-            forward_action(&focus, false, false, false),
-            ForwardAction::Drop
-        );
-        assert_eq!(
-            forward_action(&focus, true, false, false),
-            ForwardAction::Send,
-            "focus is forwarded like nav once the host is ready"
-        );
         let shortcut = HostEvent::Shortcut {
-            chord: "ctrl+l".into(),
+            chord: "ctrl+b".into(),
         };
         assert_eq!(
             forward_action(&shortcut, false, false, false),
@@ -926,17 +911,7 @@ mod tests {
         assert_eq!(
             forward_action(&shortcut, true, false, false),
             ForwardAction::Send,
-            "ctrl+l shortcut is forwarded like focus once the host is ready"
-        );
-        let keys = HostEvent::Keys { text: "a".into() };
-        assert_eq!(
-            forward_action(&keys, false, false, false),
-            ForwardAction::Drop
-        );
-        assert_eq!(
-            forward_action(&keys, true, false, false),
-            ForwardAction::Send,
-            "keys swallowed by the host are forwarded after ready"
+            "ctrl+b shortcut is forwarded once the host is ready"
         );
         assert_eq!(
             forward_action(&fatal(15), false, false, true),

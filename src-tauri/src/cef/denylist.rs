@@ -19,8 +19,8 @@ static TMP_SEQ: AtomicU64 = AtomicU64::new(1);
 /// Contrato 3.6: solo estos motivos se persisten.
 ///
 /// `health-spawn` no está en la lista del contrato, pero el updater ya lo usa
-/// vía `HealthFailure::Spawn` — se conserva (workaround: quitarlo rompería el
-/// denylist de un candidate que ni llega a arrancar).
+/// vía `HealthFailure::Spawn` — se conserva: quitarlo rompería el denylist
+/// de un candidate que ni llega a arrancar.
 ///
 /// Nunca: descarga corrupta, hash malo, falta de disco o fallo de strip.
 pub fn is_persistable_reason(reason: &str) -> bool {

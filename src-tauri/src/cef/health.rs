@@ -66,7 +66,6 @@ pub fn run_health_check(run: &HealthRun) -> HealthOutcome {
         binary: run.binary.to_path_buf(),
         cef_dir: run.slot_dir.to_path_buf(),
         cache_dir: run.cache_dir.to_path_buf(),
-        parent_xid: None,
         bounds: None,
         scale: 1.0,
         url: "about:blank".into(),
@@ -548,7 +547,7 @@ exit 1
             "noisy-host",
             &format!(
                 r#"#!/bin/sh
-printf '%s\n' '{{"event":"ready","cef":"x","chromium":"y","apiVersion":15200,"xid":1}}'
+printf '%s\n' '{{"event":"ready","cef":"x","chromium":"y","apiVersion":15200}}'
 printf '%s\n' 'not json'
 printf '%s\n' '{{"event":"title","title":"blank"}}'
 printf '%s\n' '{}'
@@ -604,7 +603,7 @@ exit 0
             tmp.path(),
             "ready-only",
             r#"#!/bin/sh
-printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200,"xid":1}'
+printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200}'
 exit 0
 "#,
         );

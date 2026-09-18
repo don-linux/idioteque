@@ -11,7 +11,6 @@ pub enum HostEvent {
         cef: String,
         chromium: String,
         api_version: u32,
-        xid: u64,
     },
     #[serde(rename_all = "camelCase")]
     Nav {
@@ -33,14 +32,6 @@ pub enum HostEvent {
     },
     Shortcut {
         chord: String,
-    },
-    Keys {
-        text: String,
-    },
-    Focus {
-        owner: FocusOwner,
-        #[serde(default)]
-        next: Option<bool>,
     },
     RenderCrashed {
         status: String,
@@ -91,20 +82,8 @@ pub enum HostCommand {
     },
     Show,
     Hide,
-    Focus,
-    Unfocus,
-    /// Page click while chrome owns keys: `set_focus(true)`, no `XSetInputFocus`.
-    Activate,
     Devtools,
     Close,
-}
-
-/// Who should own the keyboard after a host `focus` event.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum FocusOwner {
-    App,
-    Browser,
 }
 
 /// Tope de una línea host→ADE. Holgado respecto al máximo de URL de Chromium
@@ -137,7 +116,7 @@ mod tests {
     #[test]
     fn parse_contract_events() {
         let ready = parse_event(
-            r#"{"event":"ready","cef":"152.0.6+…","chromium":"152.0.7977.83","apiVersion":15200,"xid":123456}"#,
+            r#"{"event":"ready","cef":"152.0.6+…","chromium":"152.0.7977.83","apiVersion":15200}"#,
         )
         .unwrap();
         assert_eq!(
@@ -146,7 +125,6 @@ mod tests {
                 cef: "152.0.6+…".into(),
                 chromium: "152.0.7977.83".into(),
                 api_version: 15200,
-                xid: 123456,
             }
         );
 
@@ -192,34 +170,9 @@ mod tests {
             }
         );
         assert_eq!(
-            parse_event(r#"{"event":"shortcut","chord":"ctrl+l"}"#).unwrap(),
+            parse_event(r#"{"event":"shortcut","chord":"ctrl+shift+b"}"#).unwrap(),
             HostEvent::Shortcut {
-                chord: "ctrl+l".into()
-            }
-        );
-        assert_eq!(
-            parse_event(r#"{"event":"keys","text":"A"}"#).unwrap(),
-            HostEvent::Keys { text: "A".into() }
-        );
-        assert_eq!(
-            parse_event(r#"{"event":"focus","owner":"browser"}"#).unwrap(),
-            HostEvent::Focus {
-                owner: FocusOwner::Browser,
-                next: None,
-            }
-        );
-        assert_eq!(
-            parse_event(r#"{"event":"focus","owner":"app","next":true}"#).unwrap(),
-            HostEvent::Focus {
-                owner: FocusOwner::App,
-                next: Some(true),
-            }
-        );
-        assert_eq!(
-            parse_event(r#"{"event":"focus","owner":"app","next":false}"#).unwrap(),
-            HostEvent::Focus {
-                owner: FocusOwner::App,
-                next: Some(false),
+                chord: "ctrl+shift+b".into()
             }
         );
         assert_eq!(
@@ -259,6 +212,40 @@ mod tests {
             parse_event(r#"{"event":"exit","code":15}"#).unwrap(),
             HostEvent::Exit { code: 15 }
         );
+        assert_eq!(
+            parse_event(r#"{"event":"fatal","message":"sin compositor Wayland","code":16}"#)
+                .unwrap(),
+            HostEvent::Fatal {
+                message: "sin compositor Wayland".into(),
+                code: 16,
+            }
+        );
+    }
+
+    #[test]
+    fn dropped_protocol_names_are_unknown_or_rejected() {
+        assert_eq!(
+            parse_event(r#"{"event":"keys","text":"A"}"#).unwrap(),
+            HostEvent::Unknown
+        );
+        assert_eq!(
+            parse_event(r#"{"event":"focus","owner":"browser"}"#).unwrap(),
+            HostEvent::Unknown
+        );
+        assert_eq!(
+            parse_event(r#"{"event":"focus","owner":"app","next":true}"#).unwrap(),
+            HostEvent::Unknown
+        );
+        for line in [
+            r#"{"cmd":"focus"}"#,
+            r#"{"cmd":"unfocus"}"#,
+            r#"{"cmd":"activate"}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<HostCommand>(line).is_err(),
+                "{line}"
+            );
+        }
     }
 
     fn assert_parse_err(line: &str) {
@@ -337,9 +324,8 @@ mod tests {
     fn known_event_with_bad_payload_is_err_not_unknown() {
         for line in [
             r#"{"event":"ready"}"#,
-            r#"{"event":"ready","cef":"152.0.6","chromium":"152.0.7977.83","apiVersion":15200}"#,
-            r#"{"event":"ready","cef":"x","chromium":"y","apiVersion":15200,"xid":-1}"#,
-            r#"{"event":"ready","cef":"x","chromium":"y","apiVersion":15200,"xid":123456.5}"#,
+            r#"{"event":"ready","cef":"x","chromium":"y"}"#,
+            r#"{"event":"ready","cef":"x","chromium":"y","apiVersion":"15200"}"#,
             r#"{"event":"nav","url":"https://x","canGoBack":true,"canGoForward":false}"#,
             r#"{"event":"nav","url":1,"canGoBack":true,"canGoForward":false,"loading":true}"#,
             r#"{"event":"nav","url":"https://x","canGoBack":true,"canGoForward":false,"loading":1}"#,
@@ -349,9 +335,6 @@ mod tests {
             r#"{"event":"load-end","status":"200"}"#,
             r#"{"event":"load-error","code":-105,"text":"ERR","url":null}"#,
             r#"{"event":"shortcut"}"#,
-            r#"{"event":"focus"}"#,
-            r#"{"event":"focus","owner":"nope"}"#,
-            r#"{"event":"focus","next":true}"#,
             r#"{"event":"render-crashed"}"#,
             r#"{"event":"health","ok":"true","cef":"x","chromium":"y","apiVersion":15200}"#,
             r#"{"event":"fatal","message":"boom"}"#,
@@ -370,12 +353,14 @@ mod tests {
             r#"{"event":"future-thing","foo":1}"#,
             r#"{"event":"loadend","status":200}"#,
             r#"{"event":"load_end","status":200}"#,
-            r#"{"event":"Ready","cef":"x","chromium":"y","apiVersion":15200,"xid":1}"#,
+            r#"{"event":"Ready","cef":"x","chromium":"y","apiVersion":15200}"#,
             r#"{"event":"NAV","url":"https://x","canGoBack":true,"canGoForward":false,"loading":true}"#,
             r#"{"event":""}"#,
             r#"{"event":"nav "}"#,
             r#"{"event":"unknown"}"#,
             r#"{"event":"devtools-opened"}"#,
+            r#"{"event":"keys","text":"A"}"#,
+            r#"{"event":"focus","owner":"app"}"#,
         ] {
             assert_eq!(parse_event(line).expect(line), HostEvent::Unknown, "{line}");
         }
@@ -390,7 +375,7 @@ mod tests {
     #[test]
     fn known_event_ignores_unknown_fields() {
         let ready = parse_event(
-            r#"{"event":"ready","cef":"152.0.6","chromium":"1","apiVersion":15200,"xid":9,"extra":true}"#,
+            r#"{"event":"ready","cef":"152.0.6","chromium":"1","apiVersion":15200,"extra":true}"#,
         )
         .unwrap();
         assert_eq!(
@@ -399,7 +384,6 @@ mod tests {
                 cef: "152.0.6".into(),
                 chromium: "1".into(),
                 api_version: 15200,
-                xid: 9,
             }
         );
     }
@@ -536,12 +520,12 @@ mod tests {
         assert_eq!(
             encode_command(&HostCommand::SetBounds {
                 x: 0,
-                y: 36,
+                y: 0,
                 w: 1200,
-                h: 700
+                h: 800
             })
             .trim_end(),
-            r#"{"cmd":"set_bounds","x":0,"y":36,"w":1200,"h":700}"#
+            r#"{"cmd":"set_bounds","x":0,"y":0,"w":1200,"h":800}"#
         );
         assert_eq!(
             encode_command(&HostCommand::Show).trim_end(),
@@ -550,26 +534,6 @@ mod tests {
         assert_eq!(
             encode_command(&HostCommand::Hide).trim_end(),
             r#"{"cmd":"hide"}"#
-        );
-        assert_eq!(
-            encode_command(&HostCommand::Focus).trim_end(),
-            r#"{"cmd":"focus"}"#
-        );
-        assert_eq!(
-            encode_command(&HostCommand::Unfocus).trim_end(),
-            r#"{"cmd":"unfocus"}"#
-        );
-        assert_eq!(
-            encode_command(&HostCommand::Activate).trim_end(),
-            r#"{"cmd":"activate"}"#
-        );
-        assert_ne!(
-            encode_command(&HostCommand::Unfocus),
-            encode_command(&HostCommand::Focus)
-        );
-        assert_ne!(
-            encode_command(&HostCommand::Activate),
-            encode_command(&HostCommand::Focus)
         );
         assert_eq!(
             encode_command(&HostCommand::Devtools).trim_end(),
@@ -596,6 +560,9 @@ mod tests {
             r#"{"cmd":"navigate"}"#,
             r#"{"cmd":"reload","ignoreCache":"yes"}"#,
             r#"{"cmd":"set_bounds","x":0,"y":0,"w":1}"#,
+            r#"{"cmd":"focus"}"#,
+            r#"{"cmd":"unfocus"}"#,
+            r#"{"cmd":"activate"}"#,
         ] {
             assert!(serde_json::from_str::<HostCommand>(line).is_err(), "{line}");
         }
