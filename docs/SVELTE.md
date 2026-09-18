@@ -1,22 +1,60 @@
-# Svelte MCP / autofixer (pase local)
+# Svelte MCP / autofixer (pases locales)
 
-Cloud Agent **no** corre el MCP de Svelte. `svelte-autofixer`, `list-sections` y `get-documentation` fallan o piden auth ahí. El frontend de la entrega CEF se cierra en Cloud con `bun run check` y tests. Este archivo es el **prompt** para el pase que sí usa esas herramientas, en una máquina local donde el MCP responde.
+Cloud Agent **no** corre el MCP de Svelte. `svelte-autofixer`, `list-sections` y `get-documentation` fallan o piden auth (`needsAuth`; el login hace timeout). El frontend en Cloud se cierra con `bun run check` y tests. Este archivo guarda los **prompts** para pasar esas herramientas en una máquina local donde el MCP responde.
 
-No es una guía de producto. No monta la toolbar. No crea superficie interna de página.
+Usa **solo** el modelo `cursor-grok-4.6-xhigh-fast`. Prohibido `inherit` u otro slug. El subagente `svelte-file-editor` y cualquier resume llevan `model: "cursor-grok-4.6-xhigh-fast"`.
 
----
-
-## Cuándo
-
-Cuando la implementación CEF (ventana Alloy propia, editor al lado) ya está en tu working tree local. Antes de eso no hay archivos nuevos que pasar.
-
-Modelo: el mismo que el resto de esa entrega (`cursor-grok-4.6-xhigh-fast`), o el que uses en Cursor local.
+Hay dos pases. Copia **uno**. No mezcles inventarios.
 
 ---
 
-## Prompt para pegar en Cursor local
+## 1. Tras el recorte Linux x86_64
 
-Copia desde «CONTEXTO» hasta el final. Única instrucción. No implementes CEF. No toques Rust ni `cef-host`. No abras el backup de la toolbar como código vivo.
+Copia desde «Objetivo» hasta el final de esta sección, en un plan de Cursor local.
+
+### Objetivo
+
+Pasar el autofixer de Svelte 5 sobre los `.svelte` que el recorte Linux x86_64 tocó o que aún mencionen otro OS, hasta **cero issues**. No es un rediseño: no toques paletas, IDs de tema ni HEX.
+
+### Herramientas (obligatorio, en este orden)
+
+1. MCP Svelte `list-sections`.
+2. `get-documentation` de las secciones que apliquen (Svelte 5 runes, `$props`, components, styling).
+3. `svelte-autofixer` sobre cada archivo de la lista, en bucle hasta que no devuelva issues.
+4. Skill `svelte-code-writer` / subagente `svelte-file-editor` (mismo modelo).
+
+Si el autofixer pide un cambio que no es Linux64 (por ejemplo volver a partir paths por `\`), no lo apliques; anótalo y sigue.
+
+### Archivos de este recorte
+
+- `src/lib/components/RecentGrid.svelte` — `splitPath` solo con `/`. Un nombre con `\` es el basename, no un padre.
+- `src/routes/+layout.svelte` — stack Inter / JetBrains Mono / `system-ui` / `ui-monospace`. Sin `-apple-system` ni `SF Mono`. Deja `-webkit-font-smoothing`.
+
+### Grep local (añade lo que salga)
+
+Cualquier `.svelte` con `\\` como separador, `-apple-system`, `SF Mono`, `Cmd`, `Windows`, `macOS`.
+
+No toques `-webkit-user-select` ni `-webkit-font-smoothing` en `FileTreeRow.svelte`, `FileTreePanel.svelte`, `MarkdownEditor.svelte`.
+
+### Comprobar
+
+- Runes Svelte 5 (`$props`, `$state`) siguen válidos tras el recorte de paths.
+- `bun run check` y `bun run test` verdes.
+- No reintroducir créditos a productos de otro OS.
+
+### Fuera
+
+- No desacoplar CEF.
+- No renombrar `campbell` / `one-half-dark`.
+- No editar lockfiles.
+
+---
+
+## 2. Tras la implementación CEF (ventana Alloy)
+
+Copia desde «CONTEXTO» hasta el final de esta sección. Única instrucción de ese plan. No implementes CEF. No toques Rust ni `cef-host`. No abras el backup de la toolbar como código vivo.
+
+Cuando la implementación CEF (ventana Alloy propia, editor al lado) ya está en el working tree local. Antes no hay archivos nuevos de esa entrega que pasar.
 
 ### CONTEXTO
 
@@ -30,7 +68,7 @@ Revisar y, si hace falta, corregir **solo** los módulos Svelte de esa entrega h
 
 ### HERRAMIENTAS (obligatorias en local)
 
-Usar **todas**. Si MCP no autentica en esta sesión, parar y pedirlo; no fingir el pase.
+Usar **todas**. Si MCP no autentica en esta sesión, parar y pedirlo; no fingir el pase. Mismo modelo: `cursor-grok-4.6-xhigh-fast`.
 
 1. Subagente `svelte-file-editor` para cada `.svelte` o `.svelte.ts` (o un grupo chico que no se pise).
 2. Skill `svelte-code-writer`.
@@ -71,6 +109,7 @@ Completar con `git diff origin/main -- '*.svelte' '*.svelte.ts'` (o el base de l
 - `docs/cef/backup-toolbar/` (archivo muerto; no es runtime)
 - `BrowserToolbar.svelte` / `BrowserView.svelte` si solo están en el backup
 - Rust, `cef-host`, tests que no sean Svelte, docs de CEF salvo que un autofix obligue un import
+- El pase 1 (recorte Linux): no lo mezcles aquí
 
 ### QUÉ NO HACER
 
@@ -79,6 +118,7 @@ Completar con `git diff origin/main -- '*.svelte' '*.svelte.ts'` (o el base de l
 - No cambiar atajos, IPC, ni copy de producto.
 - No reintroducir la lista prohibida del plan CEF (el mismo barrido que el grupo C). No documentar backends de display ajenos a Wayland ni protocolos de foco compartido.
 - No “mejorar” UI de paso.
+- No tocar paletas, IDs de tema ni HEX.
 
 ### GATES
 
