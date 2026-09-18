@@ -334,6 +334,44 @@ fn drop_browser_focus_plan() -> BrowserFocusPlan {
     }
 }
 
+/// First page click while chrome owns keys: SetFocus(true), never XSetInputFocus.
+fn page_click_activate_plan() -> BrowserFocusPlan {
+    BrowserFocusPlan {
+        x11: false,
+        set_focus: 1,
+    }
+}
+
+fn should_activate_page_from_chrome(app_owns_keyboard: bool) -> bool {
+    app_owns_keyboard
+}
+
+fn activate_page_log() -> &'static str {
+    "[cef] activate page from chrome"
+}
+
+/// One `set_focus(1)` + `focus owner=browser` after unfocus. Second click is a no-op.
+fn try_activate_page_from_chrome(state: &AppState, browser: Option<&Browser>) -> bool {
+    if !should_activate_page_from_chrome(state.app_owns_keyboard.load(Ordering::SeqCst)) {
+        return false;
+    }
+    if state
+        .app_owns_keyboard
+        .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return false;
+    }
+    eprintln!("{}", activate_page_log());
+    apply_browser_focus(state, page_click_activate_plan());
+    if let Some(browser) = browser {
+        state.emit_focus(browser, FocusHandoff::Browser);
+    } else if let Some(browser) = state.lock_browser() {
+        state.emit_focus(&browser, FocusHandoff::Browser);
+    }
+    true
+}
+
 fn should_ungrab_on_unfocus() -> bool {
     true
 }
@@ -396,9 +434,17 @@ fn keys_event(health_check: bool, is_main: bool, text: String) -> Option<HostEve
 }
 
 fn apply_browser_focus(state: &AppState, plan: BrowserFocusPlan) {
+    let was = state.app_owns_keyboard.load(Ordering::SeqCst);
     state
         .app_owns_keyboard
         .store(plan.set_focus == 0, Ordering::SeqCst);
+    eprintln!(
+        "[cef] apply_browser_focus set_focus={} x11={} app_owns_keyboard {}->{}",
+        plan.set_focus,
+        plan.x11,
+        was,
+        plan.set_focus == 0
+    );
     if plan.x11 {
         platform::focus_window(state.xid());
     }
@@ -819,6 +865,9 @@ pub fn dispatch(cmd: &HostCommand) {
         }
         HostCommand::Focus => apply_browser_focus(state, give_browser_focus_plan()),
         HostCommand::Unfocus => apply_browser_focus(state, drop_browser_focus_plan()),
+        HostCommand::Activate => {
+            let _ = try_activate_page_from_chrome(state, None);
+        }
         HostCommand::Devtools => state.toggle_devtools(None),
         HostCommand::Close => state.request_close(),
     }
@@ -1180,6 +1229,26 @@ wrap_life_span_handler! {
                 api_version,
                 xid,
             });
+            #[cfg(target_os = "linux")]
+            {
+                let state = self.state.clone();
+                platform::start_page_input_watch(
+                    platform::page_click_watch_xids(
+                        xid,
+                        state.shim_xid.load(Ordering::SeqCst),
+                        state.args.parent.unwrap_or(0),
+                    ),
+                    move |event| {
+                        eprintln!(
+                            "[cef] native page {event:?} app_owns_keyboard={}",
+                            state.app_owns_keyboard.load(Ordering::SeqCst)
+                        );
+                        if state.app_owns_keyboard.load(Ordering::SeqCst) {
+                            post_cmd(HostCommand::Activate);
+                        }
+                    },
+                );
+            }
         }
 
         fn on_before_close(&self, browser: Option<&mut Browser>) {
@@ -1401,10 +1470,32 @@ wrap_focus_handler! {
             let Some(browser) = browser else {
                 return;
             };
+            eprintln!(
+                "[cef] on_got_focus app_owns_keyboard={}",
+                self.state.app_owns_keyboard.load(Ordering::SeqCst)
+            );
             self.state
                 .app_owns_keyboard
                 .store(false, Ordering::SeqCst);
             self.state.emit_focus(browser, FocusHandoff::Browser);
+        }
+
+        fn on_set_focus(
+            &self,
+            browser: Option<&mut Browser>,
+            source: FocusSource,
+        ) -> ::std::os::raw::c_int {
+            let Some(browser) = browser else {
+                return 0;
+            };
+            eprintln!(
+                "[cef] on_set_focus source={source:?} app_owns_keyboard={}",
+                self.state.app_owns_keyboard.load(Ordering::SeqCst)
+            );
+            if self.state.is_main(browser) {
+                let _ = try_activate_page_from_chrome(&self.state, Some(browser));
+            }
+            0
         }
 
         fn on_take_focus(&self, browser: Option<&mut Browser>, next: ::std::os::raw::c_int) {
@@ -2192,6 +2283,7 @@ mod tests {
         ));
         assert_eq!(drop_browser_focus_plan().set_focus, 0);
         assert_eq!(give_browser_focus_plan().set_focus, 1);
+        assert_eq!(page_click_activate_plan().set_focus, 1);
         assert!(
             !app_owns_keyboard_after_navigate(),
             "URL-owned navigation must release chrome's swallow"
@@ -2214,6 +2306,14 @@ mod tests {
         assert!(give.x11, "Focus still moves X11 onto the CEF child");
         assert_eq!(give.set_focus, 1);
         assert_ne!(drop, give);
+        let activate = page_click_activate_plan();
+        assert!(
+            !activate.x11,
+            "page click must not XSetInputFocus; that resets the Google caret"
+        );
+        assert_eq!(activate.set_focus, 1);
+        assert_ne!(activate, give);
+        assert_ne!(activate, drop);
         assert!(
             should_ungrab_on_unfocus(),
             "ADE XUngrab cannot release Ozone's grab on the host display"
@@ -2227,5 +2327,41 @@ mod tests {
             true,
             PreKeyAction::Shortcut("ctrl+l")
         ));
+    }
+
+    #[test]
+    fn activate_from_chrome_runs_once() {
+        assert!(
+            should_activate_page_from_chrome(true),
+            "first Google-search click while chrome owns keys must SetFocus(true)"
+        );
+        let plan = page_click_activate_plan();
+        assert!(!plan.x11);
+        assert_eq!(plan.set_focus, 1);
+        assert_eq!(activate_page_log(), "[cef] activate page from chrome");
+        assert!(
+            !should_swallow_page_key(
+                app_owns_keyboard_after_handoff(FocusHandoff::Browser),
+                PreKeyAction::Ignore
+            ),
+            "activate emits owner=browser and stops swallowing"
+        );
+    }
+
+    #[test]
+    fn second_page_click_is_noop() {
+        assert!(
+            !should_activate_page_from_chrome(false),
+            "page already owns keys: second click must not SetFocus again"
+        );
+        assert_ne!(
+            should_activate_page_from_chrome(true),
+            should_activate_page_from_chrome(false)
+        );
+        assert_eq!(
+            page_click_activate_plan(),
+            page_click_activate_plan(),
+            "the activate plan is stable; the once-gate is app_owns_keyboard"
+        );
     }
 }

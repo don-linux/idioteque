@@ -19,6 +19,7 @@ const {
   deviceScale,
   dprMediaQuery,
   hostPlaceholder,
+  hostPointerEvents,
   onVisibilityTick,
   sameCss,
   shouldApplyBounds,
@@ -450,6 +451,7 @@ describe("BrowserView.svelte wiring", () => {
       "shouldSchedulePendingSpawn",
       "onVisibilityTick",
       "hostPlaceholder",
+      "hostPointerEvents",
     ]) {
       expect(instance, name).toContain(name);
     }
@@ -457,6 +459,14 @@ describe("BrowserView.svelte wiring", () => {
 
   it("does not hardcode the workspace park offset (that CSS lives on +page)", () => {
     expect(SOURCE).not.toContain("-12000");
+  });
+
+  it("disables pointer events on .host while the embed is alive", () => {
+    expect(hostPointerEvents(true)).toBe("none");
+    expect(hostPointerEvents(false)).toBe("auto");
+    expect(SOURCE).toContain("style:pointer-events={hostPointerEvents(browser.alive)}");
+    expect(SOURCE).not.toMatch(/\.host[\s\S]*onpointerdown/);
+    expect(SOURCE).not.toContain("focusApp");
   });
 
   it("skips the show-time rAF focus gift when the toolbar already owns the keyboard", () => {
@@ -511,6 +521,7 @@ type HostPolicy = {
   deviceScale: (dpr: number) => number;
   dprMediaQuery: (dpr: number) => string;
   hostPlaceholder: (booting: boolean, error: string | null) => string;
+  hostPointerEvents: (alive: boolean) => "none" | "auto";
   onVisibilityTick: (session: { visible: boolean; alive: boolean }) => {
     forgetCss: boolean;
     publish: boolean;

@@ -163,9 +163,16 @@ para la barra: `browser_focus_app` suelta el grab X11 del ADE, hace
 `{"cmd":"unfocus"}` (`set_focus(false)` + `XUngrabKeyboard` en el display
 del host, que es quien tiene el grab de Ozone). `CefFocusHandler`
 avisa cuando el hijo gana (`owner=browser`) o cede (`owner=app`) el foco.
-En este embed el hijo Ozone **no** toma el InputFocus de X11 (`getwindowfocus`
+Un clic de página con el chrome dueño de las teclas no espera a
+`OnGotFocus` (Ozone a menudo no lo manda): `OnSetFocus` / X11
+`ButtonPress`/`FocusIn` en el xid del hijo dispara un `activate`
+(`set_focus(true)`, **sin** `XSetInputFocus`) y `focus owner=browser`,
+solo esa primera vez. El ADE no hace `grab_focus` del webview en ese
+clic. En este embed el hijo Ozone **no** toma el InputFocus de X11 (`getwindowfocus`
 sigue en el toplevel aunque el caret esté en la página); las teclas llegan
-a CEF por GTK. Alloy nativo recicla Tab dentro del HTML, así que
+a CEF por GTK. El `.host` de BrowserView tiene `pointer-events: none`
+mientras `browser.alive` (el placeholder sí recibe eventos al arrancar).
+Alloy nativo recicla Tab dentro del HTML, así que
 `OnTakeFocus` casi nunca dispara: el host consume Tab en `on_pre_key_event`
 y pregunta al renderer (`__idiotequeHandleTab`); si el activo es el
 primero o el último, avisa con `idioteque://chrome/take-focus?next=` y

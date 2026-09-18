@@ -98,6 +98,8 @@ pub enum HostCommand {
     Hide,
     Focus,
     Unfocus,
+    /// Page click while chrome owns keys: `set_focus(true)`, no `XSetInputFocus`.
+    Activate,
     Devtools,
     Close,
 }
@@ -338,6 +340,18 @@ mod tests {
         assert_eq!(
             parse_command_line(r#"{"cmd":"focus"}"#),
             Some(HostCommand::Focus)
+        );
+    }
+
+    #[test]
+    fn activate_command_is_not_focus() {
+        let json = serde_json::to_string(&HostCommand::Activate).unwrap();
+        assert_eq!(json, r#"{"cmd":"activate"}"#);
+        assert_ne!(json, serde_json::to_string(&HostCommand::Focus).unwrap());
+        assert_ne!(json, serde_json::to_string(&HostCommand::Unfocus).unwrap());
+        assert_eq!(
+            parse_command_line(r#"{"cmd":"activate"}"#),
+            Some(HostCommand::Activate)
         );
     }
 
@@ -628,6 +642,7 @@ mod tests {
             HostCommand::Hide,
             HostCommand::Focus,
             HostCommand::Unfocus,
+            HostCommand::Activate,
             HostCommand::Devtools,
             HostCommand::Close,
         ];

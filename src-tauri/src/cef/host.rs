@@ -69,6 +69,8 @@ pub struct CefState {
     pub no_sandbox: AtomicBool,
     /// XID del hueco GDK que aloja a CEF; `0` cuando no hay ninguno.
     hole_xid: AtomicU64,
+    /// CEF child xid from `ready`; used by the ADE page-activate fallback.
+    cef_xid: AtomicU64,
 }
 
 impl Default for CefState {
@@ -77,6 +79,7 @@ impl Default for CefState {
             host: Mutex::new(None),
             no_sandbox: AtomicBool::new(false),
             hole_xid: AtomicU64::new(0),
+            cef_xid: AtomicU64::new(0),
         }
     }
 }
@@ -283,6 +286,8 @@ pub fn browser_spawn(
         on_gtk(move || hole::create(&window, lx, ly, lw, lh))?
     }?;
     state.hole_xid.store(hole_xid, Ordering::SeqCst);
+    state.cef_xid.store(0, Ordering::SeqCst);
+    install_ade_page_activate_filter(&app, &window, hole_xid);
 
     let no_sandbox =
         super::sandbox::wants_no_sandbox(&slot.dir) || state.no_sandbox.load(Ordering::SeqCst);
@@ -390,6 +395,58 @@ fn browser_focus_app_log() -> &'static str {
     "[cef] browser_focus_app"
 }
 
+fn should_ade_page_activate(press_xid: u64, hole: u64, shim: u64, cef: u64) -> bool {
+    press_xid != 0 && (press_xid == hole || press_xid == shim || press_xid == cef)
+}
+
+fn send_page_activate(
+    send: impl FnOnce(&HostCommand) -> Result<(), String>,
+) -> Result<(), String> {
+    match send(&HostCommand::Activate) {
+        Ok(()) => Ok(()),
+        Err(_) => Ok(()),
+    }
+}
+
+/// Fallback when the press target is the hole / shim / CEF xid (not chrome).
+fn install_ade_page_activate_filter(app: &AppHandle, window: &tauri::Window, hole_xid: u64) {
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::prelude::*;
+        use gtk::glib::Cast;
+
+        let Ok(gtk_window) = window.gtk_window() else {
+            return;
+        };
+        let app = app.clone();
+        gtk_window.connect_button_press_event(move |_, event| {
+            let press = event
+                .window()
+                .and_then(|gdk_window| {
+                    gdk_window
+                        .downcast_ref::<gdkx11::X11Window>()
+                        .map(|x11| x11.xid() as u64)
+                })
+                .unwrap_or(0);
+            let state = app.state::<CefState>();
+            if should_ade_page_activate(
+                press,
+                hole_xid,
+                0,
+                state.cef_xid.load(Ordering::SeqCst),
+            ) {
+                eprintln!("[cef] ade page-activate press={press:#x}");
+                let _ = send_page_activate(|cmd| with_host(&state, |host| host.send(cmd)));
+            }
+            gtk::glib::Propagation::Proceed
+        });
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (app, window, hole_xid);
+    }
+}
+
 /// El usuario pulsó en la UI Svelte (barra de URL, botones): el foco X11 vuelve
 /// al toplevel y CEF suelta el foco lógico (`unfocus`).
 #[tauri::command]
@@ -456,7 +513,12 @@ fn start_forward_thread(
                 }
                 Ok(next)
             },
-            |event| on_event.send(event).is_ok(),
+            |event| {
+                if let HostEvent::Ready { xid, .. } = &event {
+                    state.cef_xid.store(*xid, Ordering::SeqCst);
+                }
+                on_event.send(event).is_ok()
+            },
         );
     });
 }
@@ -930,6 +992,7 @@ mod hole {
 }
 
 fn destroy_hole(state: &CefState) {
+    state.cef_xid.store(0, Ordering::SeqCst);
     let xid = state.hole_xid.swap(0, Ordering::SeqCst);
     if xid != 0 {
         let _ = on_gtk(move || hole::destroy(xid));
@@ -1762,6 +1825,31 @@ exit 0
             |_| Err("No hay un navegador en ejecución".into()),
         )
         .expect("chrome already has X11");
+    }
+
+    #[test]
+    fn ade_page_activate_only_for_hole_shim_or_cef() {
+        assert!(should_ade_page_activate(10, 10, 0, 0));
+        assert!(should_ade_page_activate(11, 10, 11, 0));
+        assert!(should_ade_page_activate(12, 10, 11, 12));
+        assert!(!should_ade_page_activate(0, 10, 11, 12));
+        assert!(!should_ade_page_activate(99, 10, 11, 12));
+        assert!(!should_ade_page_activate(10, 0, 0, 0));
+    }
+
+    #[test]
+    fn send_page_activate_is_activate_not_focus_app() {
+        let mut cmds = Vec::new();
+        send_page_activate(|cmd| {
+            cmds.push(cmd.clone());
+            Ok(())
+        })
+        .expect("activate");
+        assert_eq!(cmds, vec![HostCommand::Activate]);
+        assert_ne!(cmds, vec![HostCommand::Focus]);
+        assert_ne!(cmds, vec![HostCommand::Unfocus]);
+        send_page_activate(|_| Err("No hay un navegador en ejecución".into()))
+            .expect("missing host is ok");
     }
 
     #[cfg(unix)]

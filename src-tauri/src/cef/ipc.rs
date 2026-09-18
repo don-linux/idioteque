@@ -93,6 +93,8 @@ pub enum HostCommand {
     Hide,
     Focus,
     Unfocus,
+    /// Page click while chrome owns keys: `set_focus(true)`, no `XSetInputFocus`.
+    Activate,
     Devtools,
     Close,
 }
@@ -557,8 +559,16 @@ mod tests {
             encode_command(&HostCommand::Unfocus).trim_end(),
             r#"{"cmd":"unfocus"}"#
         );
+        assert_eq!(
+            encode_command(&HostCommand::Activate).trim_end(),
+            r#"{"cmd":"activate"}"#
+        );
         assert_ne!(
             encode_command(&HostCommand::Unfocus),
+            encode_command(&HostCommand::Focus)
+        );
+        assert_ne!(
+            encode_command(&HostCommand::Activate),
             encode_command(&HostCommand::Focus)
         );
         assert_eq!(

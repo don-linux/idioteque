@@ -276,6 +276,130 @@ pub fn xid_from_handle(handle: cef::sys::cef_window_handle_t) -> u64 {
     handle as u64
 }
 
+/// Native click / FocusIn on the CEF child, shim, or hole. Used to activate
+/// the page once while chrome still owns keys — without consuming CEF's events
+/// (second X connection).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativePageEvent {
+    ButtonPress,
+    FocusIn,
+}
+
+pub fn classify_native_page_event(ty: i32) -> Option<NativePageEvent> {
+    if ty == xlib::ButtonPress {
+        Some(NativePageEvent::ButtonPress)
+    } else if ty == xlib::FocusIn {
+        Some(NativePageEvent::FocusIn)
+    } else {
+        None
+    }
+}
+
+pub fn page_input_event_mask() -> i64 {
+    (xlib::ButtonPressMask | xlib::FocusChangeMask | xlib::SubstructureNotifyMask) as i64
+}
+
+pub fn page_click_watch_xids(child: u64, shim: u64, parent: u64) -> Vec<u64> {
+    let mut out = Vec::new();
+    for xid in [child, shim, parent] {
+        if xid_usable(xid) && !out.contains(&xid) {
+            out.push(xid);
+        }
+    }
+    out
+}
+
+fn open_own_display() -> *mut XDisplay {
+    let display = std::env::var("DISPLAY").unwrap_or_else(|_| ":0".into());
+    let Ok(c_display) = CString::new(display) else {
+        return std::ptr::null_mut();
+    };
+    unsafe { (xlib().XOpenDisplay)(c_display.as_ptr()) }
+}
+
+unsafe fn select_page_input_tree(x: &Xlib, dpy: *mut XDisplay, win: xlib::Window) {
+    if win == 0 {
+        return;
+    }
+    (x.XSelectInput)(dpy, win, page_input_event_mask());
+    let mut root = 0;
+    let mut parent = 0;
+    let mut children = std::ptr::null_mut();
+    let mut n = 0;
+    if (x.XQueryTree)(dpy, win, &mut root, &mut parent, &mut children, &mut n) == 0 {
+        return;
+    }
+    if !children.is_null() {
+        let slice = std::slice::from_raw_parts(children, n as usize);
+        for &child in slice {
+            select_page_input_tree(x, dpy, child);
+        }
+        (x.XFree)(children as *mut _);
+    }
+}
+
+/// Second X client so we do not steal ButtonPress from Ozone's queue.
+pub fn start_page_input_watch(
+    xids: Vec<u64>,
+    on_event: impl Fn(NativePageEvent) + Send + 'static,
+) {
+    let xids: Vec<u64> = xids.into_iter().filter(|xid| xid_usable(*xid)).collect();
+    if xids.is_empty() {
+        return;
+    }
+    let _ = std::thread::Builder::new()
+        .name("idq-page-click".into())
+        .spawn(move || watch_page_input_loop(xids, on_event));
+}
+
+fn watch_page_input_loop(xids: Vec<u64>, on_event: impl Fn(NativePageEvent)) {
+    init_threads();
+    let dpy = open_own_display();
+    if dpy.is_null() {
+        eprintln!("[cef] page-click watch: XOpenDisplay failed");
+        return;
+    }
+    let x = xlib();
+    unsafe {
+        (x.XSetErrorHandler)(Some(swallow_watch_x_error));
+        for xid in &xids {
+            select_page_input_tree(x, dpy, *xid as xlib::Window);
+        }
+        (x.XFlush)(dpy);
+    }
+    eprintln!("[cef] page-click watch xids={xids:?}");
+    loop {
+        let pending = unsafe { (x.XPending)(dpy) };
+        if pending <= 0 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            continue;
+        }
+        let mut ev: xlib::XEvent = unsafe { std::mem::zeroed() };
+        unsafe {
+            (x.XNextEvent)(dpy, &mut ev);
+        }
+        let ty = unsafe { ev.type_ };
+        if ty == xlib::CreateNotify {
+            let window = unsafe { ev.create_window.window };
+            unsafe {
+                select_page_input_tree(x, dpy, window);
+                (x.XFlush)(dpy);
+            }
+            continue;
+        }
+        if let Some(event) = classify_native_page_event(ty) {
+            on_event(event);
+        }
+    }
+}
+
+unsafe extern "C" fn swallow_watch_x_error(
+    _dpy: *mut XDisplay,
+    _ev: *mut xlib::XErrorEvent,
+) -> libc::c_int {
+    0
+}
+
 /// Visual + colormap the shim must declare so it can hang off a hole whose
 /// visual is not the default (GTK GL, or any non-default).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -653,6 +777,41 @@ mod tests {
             xid_from_handle(0x00ab_cdef as cef::sys::cef_window_handle_t),
             0x00ab_cdef
         );
+    }
+
+    #[test]
+    fn native_page_event_is_button_press_or_focus_in() {
+        assert_eq!(
+            classify_native_page_event(xlib::ButtonPress),
+            Some(NativePageEvent::ButtonPress)
+        );
+        assert_eq!(
+            classify_native_page_event(xlib::FocusIn),
+            Some(NativePageEvent::FocusIn)
+        );
+        assert_eq!(classify_native_page_event(xlib::ButtonRelease), None);
+        assert_eq!(classify_native_page_event(xlib::FocusOut), None);
+        assert_eq!(classify_native_page_event(xlib::KeyPress), None);
+        assert_eq!(classify_native_page_event(0), None);
+        assert_ne!(xlib::ButtonPress, xlib::FocusIn);
+    }
+
+    #[test]
+    fn page_click_watch_skips_zero_and_dedups() {
+        assert_eq!(page_click_watch_xids(0, 0, 0), Vec::<u64>::new());
+        assert_eq!(page_click_watch_xids(10, 0, 0), vec![10]);
+        assert_eq!(page_click_watch_xids(10, 11, 12), vec![10, 11, 12]);
+        assert_eq!(page_click_watch_xids(10, 10, 10), vec![10]);
+        assert_eq!(page_click_watch_xids(0, 11, 12), vec![11, 12]);
+    }
+
+    #[test]
+    fn page_input_mask_includes_press_and_focus() {
+        let mask = page_input_event_mask();
+        assert_ne!(mask & xlib::ButtonPressMask as i64, 0);
+        assert_ne!(mask & xlib::FocusChangeMask as i64, 0);
+        assert_ne!(mask & xlib::SubstructureNotifyMask as i64, 0);
+        assert_eq!(mask & xlib::KeyPressMask as i64, 0);
     }
 
     #[test]

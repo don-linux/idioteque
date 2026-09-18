@@ -324,6 +324,12 @@ CEF con `post_task`.
 - `{"cmd":"focus"}` — `XSetInputFocus` + `set_focus(true)`.
 - `{"cmd":"unfocus"}` — `set_focus(false)` únicamente. **No** llama
   `XSetInputFocus`: el ADE ya movió el foco X11 al toplevel.
+- `{"cmd":"activate"}` — `set_focus(true)` únicamente, **sin**
+  `XSetInputFocus`. Un clic de página (X11 `ButtonPress` / `FocusIn` o
+  `OnSetFocus`) mientras el chrome tiene el teclado (`app_owns_keyboard`)
+  lo dispara **una vez** y emite `focus owner=browser`. Un segundo clic
+  con la página ya dueña de las teclas es no-op: otro `SetFocus` cierra
+  el desplegable de Google.
 - `{"cmd":"devtools"}` — abre DevTools si no está, lo cierra si está.
 - `{"cmd":"close"}` — cierre ordenado: `close_browser(true)`, `quit_message_loop`,
   `shutdown`, exit 0.
@@ -368,13 +374,18 @@ Un solo dueño de teclado: o el chrome wry/Svelte o el hijo CEF, nunca los
 dos. `browser_focus_app` hace `XUngrabKeyboard`/`XUngrabPointer`,
 `XSetInputFocus(toplevel)`, `grab_focus` del webview wry y después
 `unfocus`, y escribe `[cef] browser_focus_app` en el stderr del ADE. Un
-clic en la página emite `focus owner=browser` y el frontend hace blur del
-campo URL. `{"cmd":"focus"}` entrega a CEF tanto X11 como `set_focus(true)`.
-El Ozone child suele no tomar el InputFocus de X11: las teclas llegan a
-CEF por el toplevel GTK y a menudo un grab mientras el puntero está sobre
-el hijo; `set_focus(false)` no basta. Tras `unfocus` el host traga las
-teclas de página (no los shortcuts) hasta el próximo `on_got_focus` y
-reenvía el texto CHAR como `keys` para la barra. El handoff Tab/Ctrl+L
+clic en la página mientras el chrome tiene las teclas hace un
+`activate` (`set_focus(true)`, sin `XSetInputFocus`) y emite
+`focus owner=browser`; el frontend hace blur del campo URL. No se espera
+a `on_got_focus`: el hijo Ozone suele no tomar el InputFocus de X11.
+`{"cmd":"focus"}` entrega a CEF tanto X11 como `set_focus(true)` (regalo
+de superficie, no cada clic). El Ozone child suele no tomar el InputFocus
+de X11: las teclas llegan a CEF por el toplevel GTK y a menudo un grab
+mientras el puntero está sobre el hijo; `set_focus(false)` no basta.
+Tras `unfocus` el host traga las teclas de página (no los shortcuts)
+hasta el `activate` / `on_got_focus` y reenvía el texto CHAR como `keys`
+para la barra. El `.host` de BrowserView usa `pointer-events: none`
+mientras el embed está vivo. El handoff Tab/Ctrl+L
 no depende de que `getwindowfocus` cambie. El ADE registra
 `[cef] keys forwarded` cuando reenvía ese texto.
 
