@@ -152,16 +152,8 @@ fn resolve_new_target(root: &str, relative: &str, kind: NewKind) -> Result<PathB
     Ok(canonical_anchor.join(rest))
 }
 
-fn strip_windows_extended_prefix(path: &str) -> &str {
-    match path.strip_prefix(r#"\\?\"#) {
-        Some(rest) if !rest.starts_with("UNC\\") && !rest.starts_with("UNC/") => rest,
-        _ => path,
-    }
-}
-
 fn portable_path(path: &Path) -> String {
-    let raw = path.to_string_lossy();
-    strip_windows_extended_prefix(&raw).to_string()
+    path.to_string_lossy() as String
 }
 
 /// Immediate child names only: one normal component, no `..` or slashes.
