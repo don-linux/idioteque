@@ -1,4 +1,7 @@
+// svelte-check has no @types/node; the test runner provides these at runtime.
+// @ts-expect-error Node built-in used only in this guard test.
 import { readFileSync } from "node:fs";
+// @ts-expect-error Node built-in used only in this guard test.
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { WorkspaceSurface } from "./workspace-surface";

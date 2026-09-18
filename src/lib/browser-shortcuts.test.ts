@@ -211,8 +211,7 @@ describe("handleBrowserShortcut", () => {
   });
 
   it("still swallows the chord when stopImmediatePropagation is missing", () => {
-    const event = key();
-    delete event.stopImmediatePropagation;
+    const { stopImmediatePropagation: _ignored, ...event } = key();
     const toggleBrowser = vi.fn();
 
     handleBrowserShortcut(event, {

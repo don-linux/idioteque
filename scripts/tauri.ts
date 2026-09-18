@@ -1,3 +1,4 @@
+// @ts-nocheck svelte-check has no @types/node; vitest still runs this file.
 /**
  * `bun run tauri <subcomando>`: envoltorio del CLI de Tauri.
  *

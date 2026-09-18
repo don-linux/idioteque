@@ -6,10 +6,11 @@ import type { BrowserBoot, BrowserEvent } from "./browser.svelte";
  * so identity stubs are enough to exercise the state machine.
  */
 const tauri = vi.hoisted(() => {
-  const globals = globalThis as typeof globalThis & {
+  const globals = globalThis as unknown as {
     $state: <T>(value: T) => T;
     $derived: <T>(value: T) => T;
   };
+  // Vitest has no Svelte rune compiler. Identity stubs are enough for the machine.
   globals.$state = (value) => value;
   globals.$derived = (value) => value;
 
@@ -267,14 +268,12 @@ describe("browser window machine", () => {
     expect(browser.error).toBeNull();
   });
 
-  it("does not spawn twice while ADE is retrying", async () => {
-    installInvoke("hang");
-    const first = browser.spawn();
-    const again = browser.spawn();
+  it("does not spawn twice while ADE is retrying", () => {
+    const gate = installInvoke("hang");
+    void browser.spawn();
+    void browser.spawn();
     expect(tauri.invoke.mock.calls.filter((call) => call[0] === "browser_spawn")).toHaveLength(1);
-    await browser.teardown();
-    await first;
-    await again;
+    gate.reject?.(new Error("superseded"));
   });
 
   it("hides the window on ctrl+b without killing", async () => {
