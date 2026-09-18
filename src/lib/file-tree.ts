@@ -121,11 +121,11 @@ export function baseNameOf(path: string): string {
 
 /**
  * Name of the opened folder, for the sidebar header: the full absolute path is
- * too long to read. Handles both separators and trailing slashes.
+ * too long to read. Trims trailing `/` and splits only on `/`.
  */
 export function folderNameOf(root: string): string {
-  const trimmed = root.replace(/[\\/]+$/, "");
-  const index = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  const trimmed = root.replace(/\/+$/, "");
+  const index = trimmed.lastIndexOf("/");
   const name = index < 0 ? trimmed : trimmed.slice(index + 1);
   return name || trimmed || root;
 }
@@ -172,13 +172,13 @@ export type NewNameResult = { ok: true; name: string } | { ok: false; error: str
 
 /**
  * Cleans up what the user typed in the tree. Nested names like `a/b.md` are
- * allowed; traversal, separators that would escape, and dot names are not.
+ * allowed; traversal (`..`), empty segments, and `//` are not. `\\` is a legal
+ * filename character, not a path separator.
  */
 export function normalizeNewName(raw: string, kind: DraftKind): NewNameResult {
   const trimmed = raw.trim().replace(/^\/+|\/+$/g, "");
 
   if (trimmed.length === 0) return { ok: false, error: "Escribe un nombre" };
-  if (trimmed.includes("\\")) return { ok: false, error: "El nombre no puede llevar `\\`" };
   if (trimmed.includes("//")) return { ok: false, error: "Ruta inválida" };
 
   const segments = trimmed.split("/");
@@ -209,7 +209,7 @@ function childrenAt(nodes: TreeNode[], parent: string): TreeNode[] {
   return [];
 }
 
-/** Case insensitive on purpose: macOS and Windows would collide anyway. */
+/** Case-sensitive exact match: `README.md` and `readme.md` are different names. */
 export function siblingExists(nodes: TreeNode[], parent: string, name: string): boolean {
   return siblingExistsExcept(nodes, parent, name, null);
 }
@@ -221,22 +221,21 @@ export function siblingExistsExcept(
   name: string,
   exceptPath: string | null,
 ): boolean {
-  const target = name.toLowerCase();
   return childrenAt(nodes, parent).some((node) => {
     if (exceptPath !== null && node.path === exceptPath) return false;
-    return node.name.toLowerCase() === target;
+    return node.name === name;
   });
 }
 
 /**
- * Cleans a rename typed in the tree. Unlike create, slashes are refused: this is
- * a same-folder rename, not a move.
+ * Cleans a rename typed in the tree. Unlike create, `/` is refused: this is
+ * a same-folder rename, not a move. `\\` is allowed in the name.
  */
 export function normalizeRenameName(raw: string, kind: DraftKind): NewNameResult {
   const trimmed = raw.trim();
 
   if (trimmed.length === 0) return { ok: false, error: "Escribe un nombre" };
-  if (trimmed.includes("/") || trimmed.includes("\\")) {
+  if (trimmed.includes("/")) {
     return { ok: false, error: "El nombre no puede llevar `/`" };
   }
   if (trimmed === "." || trimmed === "..") return { ok: false, error: "Ruta inválida" };
@@ -287,7 +286,7 @@ export function canMoveEntry(from: string, kind: DraftKind, toParent: string): M
   return { ok: true, to };
 }
 
-/** `canMoveEntry` plus a case-insensitive name clash at the destination. */
+/** `canMoveEntry` plus a case-sensitive name clash at the destination. */
 export function planMove(
   nodes: TreeNode[],
   from: string,
