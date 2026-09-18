@@ -55,16 +55,10 @@ fn cef_pin_guard(manifest_dir: &Path) {
 fn cef_runtime_guard(manifest_dir: &Path) {
     let target = std::env::var("TARGET").expect("TARGET");
     let profile = std::env::var("PROFILE").unwrap_or_default();
-    let exe = if target.contains("windows") {
-        ".exe"
-    } else {
-        ""
-    };
-
     let base_manifest = manifest_dir.join("cef-base").join("manifest.json");
     let host = manifest_dir
         .join("binaries")
-        .join(format!("cef-host-{target}{exe}"));
+        .join(format!("cef-host-{target}"));
     println!("cargo:rerun-if-changed={}", base_manifest.display());
     println!("cargo:rerun-if-changed={}", host.display());
 

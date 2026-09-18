@@ -34,7 +34,7 @@ Solo se saltan carpetas de ruido que no son contexto: `.git`, `node_modules`,
 **3. La lectura y escritura se quedó en Rust**
 
 No se volvió al plugin de archivos de Tauri para JavaScript. Ese plugin, en
-Linux y macOS, no entra en carpetas con punto salvo que se afloje un ajuste
+Linux, no entra en carpetas con punto salvo que se afloje un ajuste
 de permisos. Las carpetas de agentes no pueden depender de eso.
 
 Los comandos de Rust ya leen esas carpetas sin configuración extra, y el

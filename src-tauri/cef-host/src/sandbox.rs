@@ -34,19 +34,11 @@ pub fn helper_usable_from(uid: u32, mode: u32, is_file: bool) -> bool {
 }
 
 pub fn helper_usable(path: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let Ok(meta) = std::fs::metadata(path) else {
-            return false;
-        };
-        helper_usable_from(meta.uid(), meta.mode(), meta.is_file())
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        false
-    }
+    use std::os::unix::fs::MetadataExt;
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    helper_usable_from(meta.uid(), meta.mode(), meta.is_file())
 }
 
 #[cfg(test)]
@@ -130,14 +122,7 @@ pub fn apply_devel_sandbox_env(slot: &Path) {
 }
 
 pub fn detect_mac() -> MacKind {
-    #[cfg(target_os = "linux")]
-    {
-        mac_kind_from(apparmor_present_live(), selinux_present_live())
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        MacKind::None
-    }
+    mac_kind_from(apparmor_present_live(), selinux_present_live())
 }
 
 #[cfg(target_os = "linux")]

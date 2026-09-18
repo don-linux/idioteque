@@ -8,8 +8,8 @@ export type GitFooterState =
   | { kind: "repo"; name: string; branch?: string; detached: boolean };
 
 export function repoDisplayName(toplevel: string): string {
-  const trimmed = toplevel.trim().replace(/[\\/]+$/, "");
-  const parts = trimmed.split(/[\\/]/).filter((part) => part.length > 0 && part !== ".");
+  const trimmed = toplevel.trim().replace(/\/+$/, "");
+  const parts = trimmed.split("/").filter((part) => part.length > 0 && part !== ".");
   return parts.at(-1) ?? "";
 }
 

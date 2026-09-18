@@ -545,30 +545,20 @@ fn path_keys_match(left: &str, right: &str) -> bool {
         return true;
     }
 
-    strip_windows_extended_prefix(trim_trailing_seps(left))
-        == strip_windows_extended_prefix(trim_trailing_seps(right))
+    trim_trailing_seps(left) == trim_trailing_seps(right)
 }
 
 fn trim_trailing_seps(path: &str) -> &str {
-    let trimmed = path.trim_end_matches(['/', '\\']);
-    if trimmed.is_empty() || trimmed.ends_with(':') {
+    let trimmed = path.trim_end_matches('/');
+    if trimmed.is_empty() {
         path
     } else {
         trimmed
     }
 }
 
-/// `\\?\C:\Users\…` → `C:\Users\…`. Leave `\\?\UNC\…` alone.
-fn strip_windows_extended_prefix(path: &str) -> &str {
-    match path.strip_prefix(r#"\\?\"#) {
-        Some(rest) if !rest.starts_with("UNC\\") && !rest.starts_with("UNC/") => rest,
-        _ => path,
-    }
-}
-
 fn portable_path(path: &Path) -> String {
-    let raw = path.to_string_lossy();
-    strip_windows_extended_prefix(&raw).to_string()
+    path.to_string_lossy().into_owned()
 }
 
 fn annotate(config: StoredConfig) -> AppConfig {
@@ -1095,19 +1085,6 @@ mod tests {
     fn resolve_folder_missing_path_errors() {
         let error = resolve_folder("/definitely/missing/idioteque-folder").unwrap_err();
         assert!(error.contains("No se pudo abrir"));
-    }
-
-    #[test]
-    fn strip_windows_extended_prefix_drive_but_not_unc() {
-        assert_eq!(
-            strip_windows_extended_prefix(r#"\\?\C:\Users\x"#),
-            r#"C:\Users\x"#
-        );
-        assert_eq!(
-            strip_windows_extended_prefix(r#"\\?\UNC\server\share"#),
-            r#"\\?\UNC\server\share"#
-        );
-        assert_eq!(strip_windows_extended_prefix("/home/x"), "/home/x");
     }
 
     #[test]

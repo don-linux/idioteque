@@ -19,3 +19,7 @@ NO se pudo implementar:
 El formato para los archivos deberia ser este:
 
 feature-nombreDeLaFeature-numeracionSecuencia.md
+
+idioteque es un editor desktop **Linux x86_64**. Documenta rutas `/home/…`,
+atajos `Ctrl`, Git como `git`, y CEF como `linux64`. No menciones Windows,
+macOS, ARM ni Cmd como plataformas o atajos del producto.

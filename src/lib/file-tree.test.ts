@@ -338,7 +338,7 @@ describe("normalizeNewName", () => {
     expect(normalizeNewName(".md", "file").ok).toBe(false);
   });
 
-  it("rejects traversal, backslashes and empty segments", () => {
+  it("rejects traversal and empty segments", () => {
     expect(normalizeNewName("..", "dir").ok).toBe(false);
     expect(normalizeNewName("../fuera", "file").ok).toBe(false);
     expect(normalizeNewName("docs/../fuera", "file").ok).toBe(false);
@@ -346,8 +346,11 @@ describe("normalizeNewName", () => {
     expect(normalizeNewName("a/./b", "dir").ok).toBe(false);
     expect(normalizeNewName("a//b", "dir").ok).toBe(false);
     expect(normalizeNewName("a/ /b", "dir").ok).toBe(false);
-    expect(normalizeNewName("C:\\temp", "file").ok).toBe(false);
-    expect(normalizeNewName("a\\b", "dir").ok).toBe(false);
+  });
+
+  it("treats a backslash as a filename character, not a separator", () => {
+    expect(normalizeNewName("a\\b", "dir")).toEqual({ ok: true, name: "a\\b" });
+    expect(normalizeNewName("foo\\bar", "file")).toEqual({ ok: true, name: "foo\\bar.md" });
   });
 
   it("keeps dotfiles, which the tree does show", () => {
@@ -371,14 +374,12 @@ describe("folderNameOf", () => {
     expect(folderNameOf("/home/fernando/carpeta///")).toBe("carpeta");
   });
 
-  it("handles Windows paths", () => {
-    expect(folderNameOf("C:\\Users\\fernando\\notas")).toBe("notas");
-    expect(folderNameOf("C:\\Users\\fernando\\notas\\")).toBe("notas");
+  it("does not treat a backslash as a path separator", () => {
+    expect(folderNameOf("C:\\Users\\fernando\\notas")).toBe("C:\\Users\\fernando\\notas");
   });
 
   it("falls back to the path itself at a filesystem root", () => {
     expect(folderNameOf("/")).toBe("/");
-    expect(folderNameOf("C:\\")).toBe("C:");
   });
 });
 
@@ -406,9 +407,10 @@ describe("siblingExists", () => {
     expect(siblingExists(tree(), "docs/sub", "otra.md")).toBe(false);
   });
 
-  it("ignores case, since two cased names would collide on macOS", () => {
-    expect(siblingExists(tree(), "", "readme.md")).toBe(true);
-    expect(siblingExists(tree(), "docs", "GUIA.MD")).toBe(true);
+  it("is case-sensitive: README.md and readme.md can coexist", () => {
+    expect(siblingExists(tree(), "", "readme.md")).toBe(false);
+    expect(siblingExists(tree(), "docs", "GUIA.MD")).toBe(false);
+    expect(siblingExists(tree(), "", "README.md")).toBe(true);
   });
 
   it("reports no collision for an unknown parent", () => {
@@ -459,7 +461,7 @@ describe("normalizeRenameName", () => {
   it("refuses slashes so a rename cannot become a move", () => {
     expect(normalizeRenameName("sub/nota", "file").ok).toBe(false);
     expect(normalizeRenameName("2026/enero", "dir").ok).toBe(false);
-    expect(normalizeRenameName("a\\b", "dir").ok).toBe(false);
+    expect(normalizeRenameName("a\\b", "dir")).toEqual({ ok: true, name: "a\\b" });
   });
 
   it("rejects empty names and traversal", () => {
@@ -558,10 +560,10 @@ describe("planMove", () => {
     });
   });
 
-  it("reports a collision at the destination, including a different case", () => {
+  it("reports a collision only when the destination name matches exactly", () => {
     const nodes = [
       dir("docs", "docs", [file("guia.md", "docs/guia.md")]),
-      dir("src", "src", [file("GUIA.md", "src/GUIA.md")]),
+      dir("src", "src", [file("guia.md", "src/guia.md"), file("GUIA.md", "src/GUIA.md")]),
       dir("other", "other", [file("readme.md", "other/readme.md")]),
     ];
 
@@ -569,9 +571,13 @@ describe("planMove", () => {
       ok: false,
       reason: "exists",
     });
+    expect(planMove(nodes, "docs/guia.md", "file", "other")).toEqual({
+      ok: true,
+      to: "other/guia.md",
+    });
     expect(planMove([...tree(), ...nodes.slice(2)], "other/readme.md", "file", "")).toEqual({
-      ok: false,
-      reason: "exists",
+      ok: true,
+      to: "readme.md",
     });
   });
 

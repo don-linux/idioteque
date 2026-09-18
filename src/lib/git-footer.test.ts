@@ -40,15 +40,14 @@ function repo(partial: Partial<NonNullable<GitSnapshot["repository"]>> = {}) {
 describe("repoDisplayName", () => {
   it("keeps only the last path segment", () => {
     expect(repoDisplayName("/workspace/idioteque")).toBe("idioteque");
-    expect(repoDisplayName("C:\\\\Users\\\\me\\\\notes")).toBe("notes");
     expect(repoDisplayName("/tmp/notas/")).toBe("notas");
+    expect(repoDisplayName("/tmp/foo\\bar")).toBe("foo\\bar");
   });
 
-  it("does not return a path that still contains separators", () => {
+  it("does not return a path that still contains slashes", () => {
     const name = repoDisplayName("/home/ubuntu/projects/idioteque");
     expect(name).toBe("idioteque");
     expect(name.includes("/")).toBe(false);
-    expect(name.includes("\\")).toBe(false);
     expect(name.includes("home")).toBe(false);
   });
 });

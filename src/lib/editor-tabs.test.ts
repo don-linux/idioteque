@@ -48,8 +48,9 @@ describe("tabBasename", () => {
     expect(tabBasename("agents/feature-documentator.md")).toBe("feature-documentator.md");
   });
 
-  it("returns the file name from a windows path", () => {
-    expect(tabBasename("docs\\notes.md")).toBe("notes.md");
+  it("keeps a backslash in the basename because it is not a separator", () => {
+    expect(tabBasename("docs\\notes.md")).toBe("docs\\notes.md");
+    expect(tabBasename("folder/foo\\bar.md")).toBe("foo\\bar.md");
   });
 
   it("returns the path when there is no separator", () => {

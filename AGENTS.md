@@ -2,7 +2,7 @@
 
 ## Cursor Cloud specific instructions
 
-`idioteque` is a desktop **markdown editor** built with **Tauri v2** (Rust backend) + **SvelteKit/Svelte 5** frontend (Vite), using **CodeMirror** for editing. The Rust backend (`src-tauri/`) exposes filesystem commands (`list_context_tree`, `read_markdown`, `write_markdown`) and app config (recent folders, stored at `~/.idioteque/config.json`). The frontend calls these via Tauri `invoke` and the native folder-picker dialog.
+`idioteque` is a desktop **markdown editor** for **Linux x86_64 only** (no Windows, macOS, or ARM), built with **Tauri v2** (Rust backend) + **SvelteKit/Svelte 5** frontend (Vite), using **CodeMirror** for editing. The Rust backend (`src-tauri/`) exposes filesystem commands (`list_context_tree`, `read_markdown`, `write_markdown`) and app config (recent folders, stored at `~/.idioteque/config.json`). The frontend calls these via Tauri `invoke` and the native folder-picker dialog. Paths are POSIX (`/`). The file tree is case-sensitive.
 
 Standard commands live in `package.json` scripts (`dev`, `build`, `check`, `tauri`) and `src-tauri/Cargo.toml`; use those rather than duplicating them here.
 

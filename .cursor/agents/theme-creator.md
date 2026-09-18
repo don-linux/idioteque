@@ -85,10 +85,10 @@ Así están hechos Platzi, Tokyo Night y One Dark Pro.
 **Una paleta oficial publicada.** Cuando el proyecto documenta sus colores
 (Nord, Catppuccin, Gruvbox, Everforest, Solarized, One Dark, Dracula), usa esa
 tabla y su guía de estilo, no el JSON de un port. La terminal usa el mapping
-ANSI que publique el mismo proyecto (spec, Ghostty, Windows Terminal). Enlaza
+ANSI que publique el mismo proyecto (spec, Ghostty). Enlaza
 la página o el archivo en el comentario.
 
-**Una paleta de terminal publicada (Windows Terminal, Ghostty, iTerm).** El
+**Una paleta de terminal publicada (Ghostty u otra spec ANSI).** El
 `ITheme` copia background, foreground, cursor y los 16 ANSI. La UI se adapta
 desde esos HEX: fondo, superficie, hover y borde de más oscuro a más claro (al
 revés en un tema claro), el azul o el color con más presencia como `--accent`,

@@ -105,9 +105,8 @@ aviso).
 
 ## NO se pudo implementar
 
-- Windows y macOS. Quedan preparados con stubs, pero el embebido solo
-  funciona en Linux/X11. En Wayland la app corre sobre XWayland con
-  `GDK_BACKEND=x11`.
+- El embebido es Linux/X11 (`linux64`). En una sesión Wayland la app
+  corre sobre XWayland con `GDK_BACKEND=x11`.
 
 ## Fuera de alcance
 

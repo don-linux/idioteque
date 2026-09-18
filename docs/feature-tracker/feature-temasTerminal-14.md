@@ -57,7 +57,7 @@ Nada de lo previsto se quedó fuera.
 
 Esto se dejó fuera a propósito, no son fallas:
 
-- Importar un JSON de Windows Terminal o un archivo de Ghostty
+- Importar un JSON de paleta o un archivo de Ghostty
 - Temas Storm/Moon u otras variantes
 - Cambiar el tema de la interfaz de la app
 - El híbrido viejo no se guarda como tema aparte

@@ -233,29 +233,22 @@ fn copy_entry(entry: &mut tar::Entry<impl Read>, out: &mut File) -> Result<u64, 
 }
 
 fn apply_unix_mode(path: &Path, relative: &Path, tar_mode: Option<u32>) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let name = relative
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("");
-        let mode = if force_exec(name) {
-            0o755
-        } else {
-            tar_mode.unwrap_or(0o644) & 0o7777
-        };
-        fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(|error| {
-            format!(
-                "No se pudieron ajustar permisos de `{}`: {error}",
-                path.display()
-            )
-        })?;
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (path, relative, tar_mode);
-    }
+    use std::os::unix::fs::PermissionsExt;
+    let name = relative
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    let mode = if force_exec(name) {
+        0o755
+    } else {
+        tar_mode.unwrap_or(0o644) & 0o7777
+    };
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(|error| {
+        format!(
+            "No se pudieron ajustar permisos de `{}`: {error}",
+            path.display()
+        )
+    })?;
     Ok(())
 }
 

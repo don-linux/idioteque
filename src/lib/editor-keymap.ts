@@ -2,7 +2,7 @@ import { Prec, type Extension } from "@codemirror/state";
 import { keymap, type Command } from "@codemirror/view";
 
 /**
- * Ctrl/Cmd+G belongs to the Git graph panel, not CodeMirror's findNext.
+ * Ctrl+G belongs to the Git graph panel, not CodeMirror's findNext.
  * Returning true marks the chord as handled so searchKeymap never runs.
  */
 export const swallowFindNext: Command = () => true;

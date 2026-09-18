@@ -29,7 +29,7 @@ Dracula y Campbell.
 **3. One Dark, One Half Dark y One Dark Pro son tres temas**
 
 No son el mismo con otro nombre. One Dark sigue siendo Atom. One Half
-Dark se distingue por el texto más claro de Windows Terminal. One Dark
+Dark se distingue por el texto más claro (`#dcdfe4`). One Dark
 Pro trae el chrome y el ANSI de Binaryify/OneDark-Pro.
 
 **4. La elección no se unió**

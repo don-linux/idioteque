@@ -23,9 +23,7 @@ export function nextActiveAfterClose(
 }
 
 export function tabBasename(path: string): string {
-  const slash = path.lastIndexOf("/");
-  const backslash = path.lastIndexOf("\\");
-  const sep = Math.max(slash, backslash);
+  const sep = path.lastIndexOf("/");
   if (sep < 0) return path;
   return path.slice(sep + 1) || path;
 }

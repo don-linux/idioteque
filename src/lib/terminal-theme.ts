@@ -158,7 +158,6 @@ const PLATZI: ITheme = {
 
 /**
  * Tokyo Night Night from folke/tokyonight.nvim extras (Alacritty/WezTerm/Ghostty).
- * Ghostty ships this via iTerm2-Color-Schemes, which credits folke.
  */
 const TOKYO_NIGHT: ITheme = {
   background: "#1a1b26",
@@ -321,8 +320,8 @@ const CATPPUCCIN_MOCHA: ITheme = {
 };
 
 /**
- * Atom One Dark Syntax colors.less, ANSI mapping used by iTerm2-Color-Schemes
- * "Atom One Dark". Background is the syntax editor #282c34, same as UI --bg.
+ * Atom One Dark Syntax colors.less. Background is the syntax editor #282c34,
+ * same as UI --bg.
  * https://github.com/atom/atom/blob/master/packages/one-dark-syntax/styles/colors.less
  */
 const ONE_DARK: ITheme = {
@@ -350,7 +349,7 @@ const ONE_DARK: ITheme = {
   brightWhite: "#abb2bf",
 };
 
-/** Windows Terminal built-in "One Half Dark" (defaults.json). purple → magenta. */
+/** One Half Dark. purple → magenta. */
 const ONE_HALF_DARK: ITheme = {
   background: "#282c34",
   foreground: "#dcdfe4",
@@ -402,7 +401,7 @@ const ONE_DARK_PRO: ITheme = {
   brightWhite: "#e6e6e6",
 };
 
-/** Windows Terminal built-in "Solarized Dark" (defaults.json). purple → magenta. */
+/** Solarized Dark. purple → magenta. */
 const SOLARIZED_DARK: ITheme = {
   background: "#002b36",
   foreground: "#839496",
@@ -426,7 +425,7 @@ const SOLARIZED_DARK: ITheme = {
   brightWhite: "#fdf6e3",
 };
 
-/** Windows Terminal built-in "Campbell" (defaults.json). purple → magenta. */
+/** Campbell. purple → magenta. */
 const CAMPBELL: ITheme = {
   background: "#0c0c0c",
   foreground: "#cccccc",

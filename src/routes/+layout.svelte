@@ -104,8 +104,8 @@
     --graph-lane-5: #9ec48b;
     --graph-lane-6: #c48bb7;
     --graph-lane-7: #e08b99;
-    --font-ui: Inter, system-ui, -apple-system, sans-serif;
-    --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, monospace;
+    --font-ui: Inter, system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, monospace;
     --footer-height: 2.75rem;
     --term-size: 280px;
 

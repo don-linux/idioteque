@@ -1,5 +1,5 @@
 export const DEFAULT_XTERM_FONT_FAMILY =
-  '"JetBrains Mono", "SF Mono", ui-monospace, monospace';
+  '"JetBrains Mono", ui-monospace, monospace';
 export const DEFAULT_TERMINAL_FONT_SIZE = 13;
 export const MIN_TERMINAL_FONT_SIZE = 10;
 export const MAX_TERMINAL_FONT_SIZE = 24;

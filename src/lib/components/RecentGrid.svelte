@@ -12,9 +12,8 @@
   } = $props();
 
   function splitPath(path: string): { name: string; parent: string } {
-    const sep = path.includes("\\") && !path.includes("/") ? "\\" : "/";
-    const trimmed = path.endsWith(sep) && path.length > 1 ? path.slice(0, -1) : path;
-    const index = trimmed.lastIndexOf(sep);
+    const trimmed = path.endsWith("/") && path.length > 1 ? path.slice(0, -1) : path;
+    const index = trimmed.lastIndexOf("/");
 
     if (index < 0) return { name: trimmed, parent: "" };
 

@@ -16,7 +16,7 @@ export function pathKeysMatch(left: string, right: string): boolean {
 
 export function folderName(path: string): string {
   const trimmed = trimTrailingSeps(path);
-  const parts = trimmed.split(/[/\\]/).filter(Boolean);
+  const parts = trimmed.split("/").filter(Boolean);
   return parts.at(-1) ?? path;
 }
 
@@ -76,6 +76,6 @@ export function removeVisibleRootFolder(
 }
 
 function trimTrailingSeps(path: string): string {
-  const trimmed = path.replace(/[/\\]+$/, "");
+  const trimmed = path.replace(/\/+$/, "");
   return trimmed === "" ? path : trimmed;
 }
