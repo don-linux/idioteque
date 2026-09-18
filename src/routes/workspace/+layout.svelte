@@ -5,7 +5,7 @@
   import FooterActions from "$lib/components/FooterActions.svelte";
   import FooterTransient from "$lib/components/FooterTransient.svelte";
   import { browser } from "$lib/browser.svelte";
-  import { handleBrowserShortcut } from "$lib/browser-shortcuts";
+  import { handleBrowserFocusUrlShortcut, handleBrowserShortcut } from "$lib/browser-shortcuts";
   import { FOLDER_VISIBILITY_LABEL } from "$lib/folder-visibility";
   import {
     handleGitToggleShortcut,
@@ -52,6 +52,10 @@
       hasWorkspace: workspace.root !== null,
       insideTerminal: isTerminalTarget(event.target),
       toggleBrowser: () => browser.toggle(),
+    });
+    handleBrowserFocusUrlShortcut(event, {
+      browserSurface: surface.current === "browser",
+      focusUrl: () => browser.claimUrlBar(),
     });
     handleTreeToggleShortcut(event, {
       hasWorkspace: workspace.root !== null,

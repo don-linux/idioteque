@@ -2,13 +2,20 @@
 // @ts-expect-error Node built-in used only in this guard test.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { APPIMAGE_OVERRIDE_CONFIG } from "../../scripts/tauri";
 
 /**
  * Librerías del sistema que `libcef.so` (Chromium) necesita y que no trae el
  * deb/rpm por defecto de Tauri (webkit2gtk y gtk3). Sacadas de
- * `ldd src-tauri/cef-base/libcef.so`; el deb usa los nombres clásicos de
- * paquete (Ubuntu 24.04+ hace `Provides` de ellos desde los `t64`) y el rpm
- * exige el soname, que resuelven dnf/zypper en cualquier distro.
+ * `ldd src-tauri/cef-base/libcef.so`.
+ *
+ * - deb: nombres clásicos Debian (`libnss3`). Ubuntu 24.04+ hace `Provides`
+ *   desde los `t64`; el paquete declarado NO es el nombre t64 ni un nombre
+ *   `apt` de un PPA. Debian estable, Mint, etc. resuelven el clásico.
+ * - rpm: soname ELF `libnss3.so()(64bit)`. Así lo resuelven dnf (Fedora/RHEL)
+ *   y zypper (openSUSE). No es un nombre de paquete Fedora (`nss`) ni apt.
+ * - AppImage: no declara depends. linuxdeploy trae GTK; NSS/NSPR los aporta
+ *   el host (cualquier escritorio con navegador), no Ubuntu.
  */
 const CHROMIUM_RUNTIME_LIBS: ReadonlyArray<{ soname: string; deb: string }> = [
   { soname: "libnss3.so", deb: "libnss3" },
@@ -39,13 +46,49 @@ const CHROMIUM_RUNTIME_LIBS: ReadonlyArray<{ soname: string; deb: string }> = [
   { soname: "libatomic.so.1", deb: "libatomic1" },
 ];
 
+/** Nombres que NO deben aparecer: Ubuntu t64, paquetes Fedora, MAC, metapaquetes. */
+const NOT_A_LINUX_SURFACE_DEP = [
+  "libnss3t64",
+  "libnspr4t64",
+  "libasound2t64",
+  "libglib2.0-0t64",
+  "libatk1.0-0t64",
+  "libgtk-3-0t64",
+  "nss",
+  "nspr",
+  "alsa-lib",
+  "atk",
+  "at-spi2-atk",
+  "at-spi2-core",
+  "cairo",
+  "cups-libs",
+  "dbus",
+  "mesa-libgbm",
+  "glib2",
+  "pango",
+  "libX11",
+  "libXcomposite",
+  "apparmor",
+  "libapparmor1",
+  "apparmor-utils",
+  "libselinux1",
+  "selinux-policy",
+  "selinux-policy-targeted",
+  "ubuntu-desktop",
+  "ubuntu-restricted-addons",
+  "linux-image-generic",
+] as const;
+
 interface TauriConf {
   build: { beforeDevCommand: string; beforeBuildCommand: string };
   bundle: {
     targets: string[] | string;
+    externalBin?: string[];
+    resources?: Record<string, string> | string[];
     linux: {
       deb: { depends: string[] };
       rpm: { depends: string[]; compression: { type: string } };
+      appimage?: unknown;
     };
   };
 }
@@ -54,7 +97,35 @@ function readConf(): TauriConf {
   return JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8")) as TauriConf;
 }
 
-describe("tauri.conf.json: dependencias de Chromium en deb y rpm", () => {
+function isDebianClassicName(name: string): boolean {
+  return (
+    /^lib[a-z0-9][a-z0-9.+-]*$/.test(name) &&
+    !/t64/i.test(name) &&
+    !/ubuntu|apparmor|selinux/i.test(name)
+  );
+}
+
+function isRpm64SonameRequire(entry: string): boolean {
+  return /^lib.+\.so(\.\d+)*\(\)\(64bit\)$/.test(entry);
+}
+
+describe("tabla Chromium: no es Ubuntu-only ni apt-only", () => {
+  it("cada fila es soname ELF + nombre clásico Debian, sin t64 ni Fedora", () => {
+    for (const lib of CHROMIUM_RUNTIME_LIBS) {
+      expect(lib.soname, lib.deb).toMatch(/^lib.+\.so(\.\d+)*$/);
+      expect(isDebianClassicName(lib.deb), lib.deb).toBe(true);
+      expect(NOT_A_LINUX_SURFACE_DEP, lib.soname).not.toContain(lib.deb);
+    }
+  });
+
+  it("incluye NSS/NSPR (AppImage los pide al host; deb/rpm los declaran)", () => {
+    const debs = CHROMIUM_RUNTIME_LIBS.map((lib) => lib.deb);
+    expect(debs).toContain("libnss3");
+    expect(debs).toContain("libnspr4");
+  });
+});
+
+describe("tauri.conf.json: paridad deb y rpm", () => {
   it("el deb declara cada librería con su nombre clásico de paquete", () => {
     const depends = readConf().bundle.linux.deb.depends;
     for (const lib of CHROMIUM_RUNTIME_LIBS) {
@@ -63,21 +134,40 @@ describe("tauri.conf.json: dependencias de Chromium en deb y rpm", () => {
     expect(new Set(depends).size).toBe(depends.length);
   });
 
-  it("el rpm exige cada librería por soname de 64 bits", () => {
+  it("el rpm exige cada librería por soname de 64 bits (Fedora/RHEL/openSUSE)", () => {
     const depends = readConf().bundle.linux.rpm.depends;
     for (const lib of CHROMIUM_RUNTIME_LIBS) {
       expect(depends, lib.soname).toContain(`${lib.soname}()(64bit)`);
     }
     for (const entry of depends) {
-      expect(entry).toMatch(/^lib.+\.so(\.\d+)*\(\)\(64bit\)$/);
+      expect(isRpm64SonameRequire(entry), entry).toBe(true);
     }
     expect(new Set(depends).size).toBe(depends.length);
   });
 
-  it("deb y rpm cubren exactamente la misma lista", () => {
+  it("deb y rpm son la misma lista (bijección soname ↔ clásico), ni una extra", () => {
     const { deb, rpm } = readConf().bundle.linux;
-    expect(deb.depends.length).toBe(CHROMIUM_RUNTIME_LIBS.length);
-    expect(rpm.depends.length).toBe(CHROMIUM_RUNTIME_LIBS.length);
+    const expectedDeb = CHROMIUM_RUNTIME_LIBS.map((lib) => lib.deb);
+    const expectedRpm = CHROMIUM_RUNTIME_LIBS.map((lib) => `${lib.soname}()(64bit)`);
+    expect(new Set(deb.depends)).toEqual(new Set(expectedDeb));
+    expect(new Set(rpm.depends)).toEqual(new Set(expectedRpm));
+    expect(deb.depends).toHaveLength(CHROMIUM_RUNTIME_LIBS.length);
+    expect(rpm.depends).toHaveLength(CHROMIUM_RUNTIME_LIBS.length);
+  });
+
+  it("ninguna lista cuela t64, AppArmor, SELinux ni nombres Fedora/Ubuntu", () => {
+    const { deb, rpm } = readConf().bundle.linux;
+    const all = [...deb.depends, ...rpm.depends];
+    for (const name of NOT_A_LINUX_SURFACE_DEP) {
+      expect(all, name).not.toContain(name);
+    }
+    for (const name of deb.depends) {
+      expect(isDebianClassicName(name), name).toBe(true);
+    }
+    for (const entry of rpm.depends) {
+      expect(entry, entry).not.toMatch(/t64|apparmor|selinux|ubuntu/i);
+      expect(entry.endsWith("()(32bit)")).toBe(false);
+    }
   });
 });
 
@@ -86,16 +176,64 @@ describe("tauri.conf.json: pipeline de build", () => {
     expect(readConf().bundle.linux.rpm.compression).toEqual({ type: "none" });
   });
 
-  it("la AppImage no es target de Tauri: la construye scripts/tauri.ts tras inyectar CEF", () => {
+  it("los targets por defecto son deb y rpm: no appimage (linuxdeploy no ve CEF)", () => {
     const targets = readConf().bundle.targets;
-    expect(Array.isArray(targets)).toBe(true);
+    expect(targets).toEqual(["deb", "rpm"]);
     expect(targets).not.toContain("appimage");
-    expect(targets).toContain("deb");
+    expect(targets).not.toBe("all");
+  });
+
+  it("deb y rpm sí meten CEF (resources + sidecar); AppImage no tiene depends propios", () => {
+    const conf = readConf();
+    expect(conf.bundle.resources).toEqual({ "cef-base/": "cef/base/" });
+    expect(conf.bundle.externalBin).toEqual(["binaries/cef-host"]);
+    expect(conf.bundle.linux).not.toHaveProperty("appimage");
   });
 
   it("cef:prepare no va en beforeDevCommand (el CLI abandona a los 180 s) pero sí en beforeBuildCommand", () => {
     const { beforeDevCommand, beforeBuildCommand } = readConf().build;
     expect(beforeDevCommand).not.toContain("cef:prepare");
     expect(beforeBuildCommand).toContain("cef:prepare");
+  });
+});
+
+describe("AppImage: CEF no entra en linuxdeploy", () => {
+  it("el override del wrapper vacía resources y externalBin", () => {
+    expect(JSON.parse(APPIMAGE_OVERRIDE_CONFIG)).toEqual({
+      bundle: { resources: [], externalBin: [] },
+    });
+  });
+
+  it("el wrapper bundlea AppImage sin CEF y lo inyecta después de linuxdeploy", () => {
+    const wrap = readFileSync("scripts/tauri.ts", "utf8");
+    expect(wrap).toContain("tauri bundle sin CEF (linuxdeploy no debe tocar libcef)");
+    expect(wrap).toContain("injectCefIntoAppDir");
+    expect(wrap).toContain("linuxdeploy-plugin-appimage");
+    expect(wrap).toMatch(/bundleArgs = \["bundle", "--bundles", "appimage", "--config", APPIMAGE_OVERRIDE_CONFIG\]/);
+  });
+});
+
+describe("build.rs: runtime en el paquete y pin base.json", () => {
+  const buildRs = readFileSync("src-tauri/build.rs", "utf8");
+
+  it("en release falta de cef-base/manifest o sidecar es error; en debug solo aviso", () => {
+    expect(buildRs).toContain("cef-base");
+    expect(buildRs).toContain("manifest.json");
+    expect(buildRs).toContain("cef-host-");
+    expect(buildRs).toContain("profile == \"release\"");
+    expect(buildRs).toContain("cargo:warning=");
+    expect(buildRs).toContain("bun run cef:prepare");
+  });
+
+  it("el pin de base.json contra Cargo.lock falla el build si no coinciden", () => {
+    expect(buildRs).toContain("cef/base.json");
+    expect(buildRs).toContain("Cargo.lock");
+    expect(buildRs).toMatch(/name = \\"cef\\"/);
+    expect(buildRs).toContain("cefVersion");
+  });
+
+  it("no reubica el motor a /dev/shm (eso es backing store de Chromium, no libcef)", () => {
+    expect(buildRs).not.toMatch(/\/dev\/shm/);
+    expect(buildRs).not.toContain("disable-dev-shm-usage");
   });
 });

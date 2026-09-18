@@ -61,19 +61,29 @@ struct SectionHeader {
 /// Recorta `libcef.so` in-place. Prueba `strip --strip-all`, luego `llvm-strip`,
 /// y si ambos fallan el recorte ELF propio.
 pub fn strip_libcef_in_place(path: &Path) -> Result<StripReport, String> {
+    strip_libcef_with_tools(path, &["strip", "llvm-strip"])
+}
+
+fn strip_libcef_with_tools(path: &Path, tools: &[&str]) -> Result<StripReport, String> {
     let before = fs::metadata(path)
         .map_err(|error| format!("No se pudo leer `{}`: {error}", path.display()))?
         .len();
     let tmp = strip_temp_path(path);
     let _ = fs::remove_file(&tmp);
 
-    let method = if run_strip_tool("strip", path, &tmp) {
-        StripMethod::Binutils("strip".into())
-    } else if run_strip_tool("llvm-strip", path, &tmp) {
-        StripMethod::Binutils("llvm-strip".into())
-    } else {
-        strip_elf_file(path, &tmp)?;
-        StripMethod::Builtin
+    let mut method = None;
+    for tool in tools {
+        if run_strip_tool(tool, path, &tmp) {
+            method = Some(StripMethod::Binutils((*tool).into()));
+            break;
+        }
+    }
+    let method = match method {
+        Some(method) => method,
+        None => {
+            strip_elf_file(path, &tmp)?;
+            StripMethod::Builtin
+        }
     };
 
     parse_elf_header(&tmp).map_err(|error| {
@@ -263,7 +273,15 @@ fn run_strip_tool(tool: &str, input: &Path, output: &Path) -> bool {
         .arg(input)
         .status();
     match status {
-        Ok(status) if status.success() && output.is_file() => true,
+        Ok(status) if status.success() && output.is_file() => {
+            // Una herramienta que “gana” pero escribe basura no debe tapar el fallback.
+            if parse_elf_header(output).is_ok() {
+                true
+            } else {
+                let _ = fs::remove_file(output);
+                false
+            }
+        }
         _ => {
             let _ = fs::remove_file(output);
             false
@@ -694,6 +712,119 @@ mod tests {
         fs::write(&path, b"not-an-elf").unwrap();
         assert!(parse_elf_header(&path).is_err());
         assert!(strip_elf_file(&path, &tmp.path().join("out")).is_err());
+    }
+
+    #[cfg(unix)]
+    fn write_exec(path: &Path, script: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        fs::write(path, script).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn strip_libcef_falls_back_when_strip_tools_fail() {
+        let tmp = TempDir::new().unwrap();
+        let failing = tmp.path().join("strip-fail");
+        write_exec(&failing, "#!/bin/sh\necho 'strip-fail ran' >&2\nexit 1\n");
+        let input = tmp.path().join("libcef.so");
+        let (bytes, text, dynstr) = build_synthetic_elf();
+        fs::write(&input, &bytes).unwrap();
+        let original = fs::read(&input).unwrap();
+
+        let report = strip_libcef_with_tools(
+            &input,
+            &[failing.to_str().unwrap(), failing.to_str().unwrap()],
+        )
+        .expect("builtin fallback");
+        assert_eq!(report.method, StripMethod::Builtin);
+        parse_elf_header(&input).expect("sigue siendo ELF");
+        let out = fs::read(&input).unwrap();
+        assert_eq!(&out[0x1000..0x1010], text.as_slice());
+        assert_eq!(&out[0x1010..0x1018], dynstr.as_slice());
+        assert_ne!(out, original, "el fallback builtin debe reescribir el ELF");
+        assert!(report.after < report.before);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn strip_libcef_falls_back_when_strip_tool_writes_garbage() {
+        let tmp = TempDir::new().unwrap();
+        let garbage = tmp.path().join("strip-garbage");
+        write_exec(
+            &garbage,
+            concat!(
+                "#!/bin/sh\n",
+                "out=''\n",
+                "while [ $# -gt 0 ]; do\n",
+                "  if [ \"$1\" = \"-o\" ]; then shift; out=\"$1\"; fi\n",
+                "  shift\n",
+                "done\n",
+                "printf 'not-an-elf' > \"$out\"\n",
+                "exit 0\n",
+            ),
+        );
+        let input = tmp.path().join("libcef.so");
+        let (bytes, text, _) = build_synthetic_elf();
+        fs::write(&input, &bytes).unwrap();
+
+        let report = strip_libcef_with_tools(&input, &[garbage.to_str().unwrap()])
+            .expect("garbage tool must not block builtin");
+        assert_eq!(report.method, StripMethod::Builtin);
+        parse_elf_header(&input).expect("original replaced with valid ELF");
+        let out = fs::read(&input).unwrap();
+        assert_eq!(&out[0x1000..0x1010], text.as_slice());
+        assert_ne!(&out[..], b"not-an-elf");
+    }
+
+    #[test]
+    fn strip_elf_file_is_idempotent_on_already_stripped() {
+        let tmp = TempDir::new().unwrap();
+        let src = tmp.path().join("src.so");
+        let once = tmp.path().join("once.so");
+        let twice = tmp.path().join("twice.so");
+        let (bytes, text, dynstr) = build_synthetic_elf();
+        fs::write(&src, &bytes).unwrap();
+        strip_elf_file(&src, &once).expect("first");
+        parse_elf_header(&once).expect("stripped once");
+        let once_bytes = fs::read(&once).unwrap();
+        strip_elf_file(&once, &twice).expect("already-stripped");
+        parse_elf_header(&twice).expect("stripped twice");
+        let twice_bytes = fs::read(&twice).unwrap();
+        assert_eq!(&twice_bytes[0x1000..0x1010], text.as_slice());
+        assert_eq!(&twice_bytes[0x1010..0x1018], dynstr.as_slice());
+        let (header, sections) = load_sections(&twice);
+        let names: Vec<&str> = sections.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["", ".text", ".dynstr", ".dynsym", ".shstrtab"]);
+        assert_eq!(header.e_shstrndx, 4);
+        assert!(
+            twice_bytes.len() <= once_bytes.len() + 256,
+            "re-strip no debe hinchar el ELF: once={} twice={}",
+            once_bytes.len(),
+            twice_bytes.len()
+        );
+    }
+
+    #[test]
+    fn strip_libcef_in_place_on_already_stripped_stays_elf() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("libcef.so");
+        let (bytes, text, dynstr) = build_synthetic_elf();
+        fs::write(&path, &bytes).unwrap();
+        strip_elf_file(&path, &tmp.path().join("pre.so")).unwrap();
+        fs::copy(tmp.path().join("pre.so"), &path).unwrap();
+        let before = fs::metadata(&path).unwrap().len();
+        let report = strip_libcef_in_place(&path).expect("strip already-stripped");
+        parse_elf_header(&path).expect("sigue ELF");
+        let out = fs::read(&path).unwrap();
+        assert_eq!(&out[0x1000..0x1010], text.as_slice());
+        assert_eq!(&out[0x1010..0x1018], dynstr.as_slice());
+        assert!(report.after > 64, "no debe quedar un header huérfano");
+        assert!(
+            report.after <= before + 256,
+            "already-stripped no debe crecer: before={before} after={}",
+            report.after
+        );
     }
 
     #[test]

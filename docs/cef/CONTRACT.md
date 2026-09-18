@@ -282,8 +282,27 @@ Cada mensaje es un objeto JSON con `event`:
   (no se emite para `ERR_ABORTED`).
 - `{"event":"shortcut","chord":"ctrl+b"}` — chords reenviados: `ctrl+b`,
   `ctrl+shift+b`, `ctrl+l`. El host los consume (no llegan a la página).
-- `nav`, `title`, `load-end` y `load-error` solo se emiten para el browser
-  principal: la ventana de DevTools y otros popups no alimentan la barra.
+- `{"event":"keys","text":"A"}` — texto imprimible tragado por el host
+  mientras el chrome es dueño del teclado. Ozone sigue entregando teclas
+  al hijo (el puntero está encima); wry no las ve. El ADE las aplica a
+  la barra de URL. Solo browser principal, y solo después de `ready`.
+- `{"event":"focus","owner":"browser"}` — `CefFocusHandler::OnGotFocus` del
+  browser principal. El ADE/Svelte hace blur del input de la barra para que
+  solo CEF reciba teclas.
+- `{"event":"focus","owner":"app","next":true}` — Tab (o Shift+Tab con
+  `next:false`) salió de la página. En Alloy nativo el HTML recicla el Tab
+  y `OnTakeFocus` casi nunca dispara: el host consume Tab/Shift+Tab en
+  `on_pre_key_event` y pregunta al renderer (`execute_java_script` /
+  `__idiotequeHandleTab`) si el activo es el primero o el último; si
+  lo es, emite el mismo evento vía `console.info('idioteque:take-focus:')`
+  y `idioteque://chrome/take-focus?next=` (cancelado en
+  `on_before_browse`). El trap se inyecta en `on_context_created` del
+  renderer (main frame) y de nuevo en `on_load_start` / `on_load_end`.
+  Si `OnTakeFocus` sí llega, también. El ADE enfoca la URL o el último
+  control de la barra y reclama X11.
+- `nav`, `title`, `load-end`, `load-error`, `focus`, `shortcut` y `keys`
+  solo se emiten para el browser principal: la ventana de DevTools y
+  otros popups no alimentan la barra.
 - `{"event":"render-crashed","status":"…"}`
 - `{"event":"health","ok":true,"cef":"…","chromium":"…","apiVersion":15200}`
   — solo en modo health check, justo antes de salir 0.
@@ -303,6 +322,14 @@ CEF con `post_task`.
 - `{"cmd":"show"}`, `{"cmd":"hide"}` — `XMapWindow`/`XUnmapWindow` +
   `was_hidden(false/true)`; tras `show`, `XRaiseWindow`.
 - `{"cmd":"focus"}` — `XSetInputFocus` + `set_focus(true)`.
+- `{"cmd":"unfocus"}` — `set_focus(false)` únicamente. **No** llama
+  `XSetInputFocus`: el ADE ya movió el foco X11 al toplevel.
+- `{"cmd":"activate"}` — `set_focus(true)` únicamente, **sin**
+  `XSetInputFocus`. Un clic de página (X11 `ButtonPress` / `FocusIn` o
+  `OnSetFocus`) mientras el chrome tiene el teclado (`app_owns_keyboard`)
+  lo dispara **una vez** y emite `focus owner=browser`. Un segundo clic
+  con la página ya dueña de las teclas es no-op: otro `SetFocus` cierra
+  el desplegable de Google.
 - `{"cmd":"devtools"}` — abre DevTools si no está, lo cierra si está.
 - `{"cmd":"close"}` — cierre ordenado: `close_browser(true)`, `quit_message_loop`,
   `shutdown`, exit 0.
@@ -326,7 +353,11 @@ EOF en stdin = el ADE murió → cierre ordenado y exit 0.
 
 `on_pre_key_event` con `KEYEVENT_RAWKEYDOWN`:
 
-- `Ctrl+B`, `Ctrl+Shift+B`, `Ctrl+L` → emitir `shortcut` y consumir.
+- `Ctrl+B`, `Ctrl+Shift+B`, `Ctrl+L` → emitir `shortcut` (solo browser
+  principal) y consumir, en `RAWKEYDOWN` o `KEYDOWN`. Ozone no toma el
+  InputFocus de X11: GTK entrega las teclas al hijo CEF, así que el
+  wry no ve Ctrl+L mientras la página tiene el caret. El ADE registra
+  `[cef] shortcut forwarded` / `[cef] focus forwarded`.
 - `F12`, `Ctrl+Shift+I` → DevTools (toggle) y consumir.
 - `F5`, `Ctrl+R` → reload; `Ctrl+Shift+R` → reload ignorando caché.
 - `Alt+←` / `Alt+→` → back / forward.
@@ -338,6 +369,25 @@ DevTools en el punto del clic) y "Recargar".
 
 Popups (`on_before_popup`): se cancelan y la URL se carga en el frame
 principal (una sola pestaña). DevTools sí abre su ventana propia.
+
+Un solo dueño de teclado: o el chrome wry/Svelte o el hijo CEF, nunca los
+dos. `browser_focus_app` hace `XUngrabKeyboard`/`XUngrabPointer`,
+`XSetInputFocus(toplevel)`, `grab_focus` del webview wry y después
+`unfocus`, y escribe `[cef] browser_focus_app` en el stderr del ADE. Un
+clic en la página mientras el chrome tiene las teclas hace un
+`activate` (`set_focus(true)`, sin `XSetInputFocus`) y emite
+`focus owner=browser`; el frontend hace blur del campo URL. No se espera
+a `on_got_focus`: el hijo Ozone suele no tomar el InputFocus de X11.
+`{"cmd":"focus"}` entrega a CEF tanto X11 como `set_focus(true)` (regalo
+de superficie, no cada clic). El Ozone child suele no tomar el InputFocus
+de X11: las teclas llegan a CEF por el toplevel GTK y a menudo un grab
+mientras el puntero está sobre el hijo; `set_focus(false)` no basta.
+Tras `unfocus` el host traga las teclas de página (no los shortcuts)
+hasta el `activate` / `on_got_focus` y reenvía el texto CHAR como `keys`
+para la barra. El `.host` de BrowserView usa `pointer-events: none`
+mientras el embed está vivo. El handoff Tab/Ctrl+L
+no depende de que `getwindowfocus` cambie. El ADE registra
+`[cef] keys forwarded` cuando reenvía ese texto.
 
 ### 4.7 Códigos de salida
 
@@ -373,10 +423,13 @@ Todos devuelven `Result<_, String>` con mensajes en español, como `pty_*`.
   multiplica y redondea antes de mandar `set_bounds`.
 - `browser_set_visible { visible: bool }` → oculta/muestra el hueco GDK y manda
   `show`/`hide`.
-- `browser_focus_app` — devuelve el foco X11 al toplevel de idioteque
-  (`XSetInputFocus`). Mientras la ventana de CEF tiene el foco, el webview no
-  recibe teclas; el frontend lo llama al pulsar en la barra Svelte, al enfocar
-  la URL y tras un `shortcut` del host.
+- `browser_focus_app` — suelta el grab X11, devuelve el foco al toplevel
+  (`XSetInputFocus`) y al webview wry (`grab_focus`) y, en el mismo
+  comando, manda `unfocus` al host.
+  Escribe `[cef] browser_focus_app` en stderr para que el Lab lo cuente.
+  El frontend lo llama una vez por `focusin` de la barra (si `focusOwner`
+  no es ya `app`), tras `focus owner=app`, y en Ctrl+L (`claimUrlBar`,
+  wry y/o `shortcut` del host; el segundo se deduce).
 - `browser_kill` — `close`, espera 2 s, `SIGKILL` si sigue.
 - `cef_runtime_info -> CefRuntimeInfo`:
   `{ current: SlotInfo, base: SlotInfo, candidate: SlotInfo | null, denylist: DenyEntry[], lastCheckAt: string | null, pendingPromotion: {...} | null, hostApiVersion: 15200, platform: "linux64", hostAlive: bool }`

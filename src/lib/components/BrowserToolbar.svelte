@@ -4,23 +4,37 @@
   import Code from "@lucide/svelte/icons/code";
   import RotateCw from "@lucide/svelte/icons/rotate-cw";
   import X from "@lucide/svelte/icons/x";
-  import { browser } from "$lib/browser.svelte";
+  import {
+    browser,
+    shouldApplyFocusUrlRequest,
+    shouldHandleToolbarFocusIn,
+  } from "$lib/browser.svelte";
   import { displayUrl } from "$lib/browser-url";
   import { surface } from "$lib/workspace-surface.svelte";
 
+  let lastFocusUrlRequest = 0;
+
   function attachUrl(node: HTMLInputElement): void {
     $effect(() => {
-      void browser.focusUrlRequested;
+      const requested = browser.focusUrlRequested;
+      if (!shouldApplyFocusUrlRequest(requested, lastFocusUrlRequest)) return;
       if (surface.current !== "browser") return;
-      // The CEF child may hold the X11 focus: reclaim it before focusing the field.
-      void browser.focusApp();
+      lastFocusUrlRequest = requested;
+      // Shortcut already called claimUrlBar. Do not call it here: that
+      // would track focusOwner and reclaim chrome on a later page click.
       node.focus();
       node.select();
     });
   }
 
-  // Any interaction with the Svelte toolbar takes the X11 focus back from CEF.
+  // Page-click blur must not look like a toolbar click. Pointerdown is the
+  // user gesture that may reclaim; focusin after owner=browser is ignored.
   function onToolbarPointerDown(): void {
+    browser.toolbarClaimBlocked = false;
+  }
+
+  function onToolbarFocusIn(): void {
+    if (!shouldHandleToolbarFocusIn(browser.focusOwner, browser.toolbarClaimBlocked)) return;
     void browser.focusApp();
   }
 
@@ -30,6 +44,7 @@
 
     if (event.key === "Enter") {
       event.preventDefault();
+      if (!browser.alive) return;
       void browser.navigate(browser.inputUrl);
       return;
     }
@@ -41,7 +56,11 @@
   }
 </script>
 
-<div class="toolbar" onpointerdowncapture={onToolbarPointerDown}>
+<div
+  class="toolbar"
+  data-browser-toolbar
+  onfocusin={onToolbarFocusIn}
+>
   <div class="row">
     <button
       type="button"
@@ -93,10 +112,11 @@
       autocomplete="off"
       autocapitalize="off"
       aria-label="URL"
+      data-browser-url
       bind:value={browser.inputUrl}
       {@attach attachUrl}
+      onpointerdown={onToolbarPointerDown}
       onkeydown={onUrlKeydown}
-      onfocus={() => void browser.focusApp()}
     />
     <button
       type="button"
@@ -113,6 +133,7 @@
       class="action"
       aria-label="Cerrar navegador (Ctrl+B)"
       title="Cerrar navegador (Ctrl+B)"
+      data-browser-chrome-last
       onclick={() => browser.leave()}
     >
       <X size={16} strokeWidth={1.75} aria-hidden="true" />
@@ -162,6 +183,12 @@
 
   .action:hover:not(:disabled) {
     background: var(--surface-hover);
+    color: var(--text);
+  }
+
+  .action:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
     color: var(--text);
   }
 

@@ -155,6 +155,35 @@ sesión Xorg) Mutter sigue levantando XWayland: idioteque fija
 `GDK_BACKEND=x11` si hay `DISPLAY` y CEF usa `--ozone-platform=x11` contra
 ese mismo display. No es embed Wayland nativo.
 
+Foco X11 entre el toplevel y el hijo CEF: cefclient GTK envía
+`WM_TAKE_FOCUS` al toplevel cuando la barra de URL reclama el teclado
+(workaround GTK+X11, cefclient #3782). idioteque no usa ese ClientMessage
+para la barra: `browser_focus_app` suelta el grab X11 del ADE, hace
+`XSetInputFocus` sobre el toplevel, `grab_focus` del webview wry y manda
+`{"cmd":"unfocus"}` (`set_focus(false)` + `XUngrabKeyboard` en el display
+del host, que es quien tiene el grab de Ozone). `CefFocusHandler`
+avisa cuando el hijo gana (`owner=browser`) o cede (`owner=app`) el foco.
+Un clic de página con el chrome dueño de las teclas no espera a
+`OnGotFocus` (Ozone a menudo no lo manda): `OnSetFocus` / X11
+`ButtonPress`/`FocusIn` en el xid del hijo dispara un `activate`
+(`set_focus(true)`, **sin** `XSetInputFocus`) y `focus owner=browser`,
+solo esa primera vez. El ADE no hace `grab_focus` del webview en ese
+clic. En este embed el hijo Ozone **no** toma el InputFocus de X11 (`getwindowfocus`
+sigue en el toplevel aunque el caret esté en la página); las teclas llegan
+a CEF por GTK. El `.host` de BrowserView tiene `pointer-events: none`
+mientras `browser.alive` (el placeholder sí recibe eventos al arrancar).
+Alloy nativo recicla Tab dentro del HTML, así que
+`OnTakeFocus` casi nunca dispara: el host consume Tab en `on_pre_key_event`
+y pregunta al renderer (`__idiotequeHandleTab`); si el activo es el
+primero o el último, avisa con `idioteque://chrome/take-focus?next=` y
+`console.info('idioteque:take-focus:')`. El trap se inyecta en
+`on_context_created` (renderer, main frame) y otra vez en `on_load_start`.
+Ctrl+L lo captura `on_pre_key_event` (`RAWKEYDOWN` o `KEYDOWN`); el wry
+no ve el acorde mientras CEF tiene el caret. Tras `unfocus`, el host
+traga CHAR de página y los reenvía como `{"event":"keys"}` para la
+barra. No se elimina el manejo de `WM_TAKE_FOCUS` si Chromium lo entrega;
+no es el camino de la barra.
+
 `chrome-sandbox` solo se exporta como `CHROME_DEVEL_SANDBOX` si es setuid-root.
 En `tauri dev` el helper es del usuario; en la AppImage el squashfs no puede
 ser setuid. En Ubuntu 24.04+ (`apparmor_restrict_unprivileged_userns=1`)

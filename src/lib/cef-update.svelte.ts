@@ -1,6 +1,7 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { SvelteSet } from "svelte/reactivity";
 import {
   incompatibleDetail,
   incompatibleMessage,
@@ -9,22 +10,51 @@ import {
   type CefUpdateEvent,
 } from "$lib/cef-notices";
 import type { CefRuntimeInfo } from "$lib/cef-runtime";
-import { drainCefUpdates, enqueueCefUpdate, shouldDefer } from "$lib/cef-update";
+import {
+  cefUpdateKey,
+  drainCefUpdates,
+  enqueueCefUpdate,
+  shouldDefer,
+} from "$lib/cef-update";
 import { toasts } from "$lib/toast.svelte";
 import { surface } from "$lib/workspace-surface.svelte";
 
-class CefUpdates {
+export class CefUpdates {
   #pending: CefUpdateEvent[] = [];
+  #shown = new SvelteSet<string>();
+  #generation = 0;
+  #unlisten: UnlistenFn | null = null;
   #idiotequeVersion = "dev";
   #hostApiVersion = 0;
   #platform = "unknown";
 
   async start(): Promise<() => void> {
+    const generation = ++this.#generation;
     await this.#loadContext();
+    if (generation !== this.#generation) {
+      return () => {};
+    }
     try {
-      return await listen<CefUpdateEvent>("cef-update", (event) => {
+      const unlisten = await listen<CefUpdateEvent>("cef-update", (event) => {
         this.enqueue(event.payload);
       });
+      if (generation !== this.#generation) {
+        unlisten();
+        return () => {};
+      }
+      this.#unlisten?.();
+      this.#unlisten = unlisten;
+      let closed = false;
+      return () => {
+        if (closed) {
+          return;
+        }
+        closed = true;
+        if (this.#unlisten === unlisten) {
+          this.#unlisten = null;
+        }
+        unlisten();
+      };
     } catch {
       return () => {};
     }
@@ -39,6 +69,9 @@ class CefUpdates {
   }
 
   flush(): void {
+    if (shouldDefer(surface.current)) {
+      return;
+    }
     const drained = drainCefUpdates(this.#pending);
     this.#pending = drained.pending;
     for (const event of drained.events) {
@@ -47,6 +80,12 @@ class CefUpdates {
   }
 
   show(event: CefUpdateEvent): void {
+    const key = cefUpdateKey(event);
+    if (this.#shown.has(key)) {
+      return;
+    }
+    this.#shown.add(key);
+
     if (event.kind === "updated") {
       toasts.successLong(updatedMessage(event));
       return;

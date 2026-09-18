@@ -205,4 +205,56 @@ mod tests {
         assert!(CefVersion::parse("152.0.6+g+chromium-1.2.3").is_err());
         assert!(CefVersion::parse("152.0.6+g+chromium-152.0.7977.83.1").is_err());
     }
+
+    fn v(input: &str) -> CefVersion {
+        CefVersion::parse(input).unwrap_or_else(|error| panic!("{input}: {error}"))
+    }
+
+    /// Contrato 3.5: Chromium es cuatro u32, no un string. "9" > "83" en lex.
+    #[test]
+    fn chromium_ordering_is_numeric_not_lexicographic() {
+        let nine = v("152.0.6+g+chromium-152.0.7977.9");
+        let eighty_three = v("152.0.6+g+chromium-152.0.7977.83");
+        assert!(nine < eighty_three);
+        assert!(nine.cmp(&eighty_three) == std::cmp::Ordering::Less);
+
+        let chromium_10 = v("152.0.6+g+chromium-10.0.0.0");
+        let chromium_9 = v("152.0.6+g+chromium-9.0.0.0");
+        assert!(chromium_9 < chromium_10);
+
+        let build_9 = v("152.0.6+g+chromium-152.0.9.0");
+        let build_80 = v("152.0.6+g+chromium-152.0.80.0");
+        assert!(build_9 < build_80);
+    }
+
+    #[test]
+    fn chromium_ordering_compares_each_component_after_triple_tie() {
+        let a = v("152.0.6+ga+chromium-151.0.0.0");
+        let b = v("152.0.6+gb+chromium-152.0.0.0");
+        let c = v("152.0.6+gc+chromium-152.1.0.0");
+        let d = v("152.0.6+gd+chromium-152.1.2.0");
+        let e = v("152.0.6+ge+chromium-152.1.2.3");
+        assert!(a < b && b < c && c < d && d < e);
+        assert_eq!(
+            chromium_from("152.0.6+ge+chromium-152.1.2.3").as_deref(),
+            Some("152.1.2.3")
+        );
+    }
+
+    #[test]
+    fn chromium_ordering_loses_to_cef_triple() {
+        let newer_patch = v("152.0.7+g+chromium-1.0.0.0");
+        let huge_chromium = v("152.0.6+g+chromium-999.999.999.999");
+        assert!(huge_chromium < newer_patch);
+    }
+
+    #[test]
+    fn chromium_ordering_ignores_commit_including_unicode() {
+        let ascii = v("152.0.6+gzzzz+chromium-152.0.7977.83");
+        let unicode = v("152.0.6+gαβγ+chromium-152.0.7977.83");
+        assert_eq!(ascii, unicode);
+        let bump = v("152.0.6+gaaaa+chromium-152.0.7977.84");
+        assert!(ascii < bump);
+        assert!(unicode < bump);
+    }
 }

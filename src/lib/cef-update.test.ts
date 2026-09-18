@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { CefUpdateEvent } from "./cef-notices";
-import { drainCefUpdates, enqueueCefUpdate, shouldDefer } from "./cef-update";
+import type { WorkspaceSurface } from "./workspace-surface";
+import {
+  cefUpdateKey,
+  drainCefUpdates,
+  enqueueCefUpdate,
+  sameCefUpdate,
+  shouldDefer,
+} from "./cef-update";
 
 const updated: CefUpdateEvent = {
   kind: "updated",
@@ -23,6 +30,27 @@ describe("shouldDefer", () => {
     expect(shouldDefer("editor")).toBe(false);
     expect(shouldDefer("terminals")).toBe(false);
   });
+
+  it("does not treat lookalike surface names as the browser", () => {
+    const lookalikes = ["Browser", "BROWSER", "browser ", " browser", ""] as WorkspaceSurface[];
+    for (const surface of lookalikes) {
+      expect(shouldDefer(surface)).toBe(false);
+    }
+  });
+});
+
+describe("sameCefUpdate / cefUpdateKey", () => {
+  it("matches updated payloads by chromium and cef, not object identity", () => {
+    expect(sameCefUpdate(updated, { ...updated })).toBe(true);
+    expect(sameCefUpdate(updated, { ...updated, cef: "153.0.2+gxyz" })).toBe(false);
+    expect(cefUpdateKey(updated)).not.toBe(cefUpdateKey(incompatible));
+  });
+
+  it("treats a different denylist reason as a different notice", () => {
+    expect(
+      sameCefUpdate(incompatible, { ...incompatible, reason: "health-timeout" }),
+    ).toBe(false);
+  });
 });
 
 describe("enqueueCefUpdate", () => {
@@ -32,6 +60,20 @@ describe("enqueueCefUpdate", () => {
 
     expect(first).toEqual([updated]);
     expect(next).toEqual([updated, incompatible]);
+  });
+
+  it("does not queue a second copy of the same payload", () => {
+    const once = enqueueCefUpdate([], updated);
+    const twice = enqueueCefUpdate(once, { ...updated });
+
+    expect(once).toEqual([updated]);
+    expect(twice).toEqual([updated]);
+    expect(twice).not.toBe(once);
+  });
+
+  it("still queues an incompatible notice after an updated toast", () => {
+    const queued = enqueueCefUpdate(enqueueCefUpdate([], updated), incompatible);
+    expect(queued).toHaveLength(2);
   });
 });
 
@@ -46,5 +88,23 @@ describe("drainCefUpdates", () => {
 
   it("is a no-op on an empty queue", () => {
     expect(drainCefUpdates([])).toEqual({ pending: [], events: [] });
+  });
+
+  it("does not mutate the input list", () => {
+    const queued = [updated, incompatible];
+    const drained = drainCefUpdates(queued);
+
+    expect(queued).toEqual([updated, incompatible]);
+    expect(drained.events).not.toBe(queued);
+    expect(drained.pending).not.toBe(queued);
+  });
+
+  it("lets a new event land on the remainder after a flush snapshot", () => {
+    const snapshot = enqueueCefUpdate([], updated);
+    const drained = drainCefUpdates(snapshot);
+    const arrivedDuringFlush = enqueueCefUpdate(drained.pending, incompatible);
+
+    expect(drained.events).toEqual([updated]);
+    expect(arrivedDuringFlush).toEqual([incompatible]);
   });
 });

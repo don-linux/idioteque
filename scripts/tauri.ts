@@ -6,14 +6,20 @@
  *   `cef:prepare` fuera dentro de `beforeDevCommand`, la primera descarga y
  *   compilación de CEF agotaría ese plazo y la app nunca arrancaría.
  * - `build`: `tauri build` (deb y rpm, con CEF vía `resources`/`externalBin`)
- *   y después la AppImage en dos fases: `tauri bundle --bundles appimage` sin
+ *   y después la AppImage en tres fases: `tauri bundle --bundles appimage` sin
  *   CEF (linuxdeploy hace `ldd` y `patchelf` de todo lo que encuentra en
  *   `usr/bin` y `usr/lib`; fallaría con `libcef.so => not found` y cambiaría
- *   el tamaño de las libs del base) y luego inyección de `cef-base/` y
- *   `cef-host` en el AppDir y reempaquetado con linuxdeploy-plugin-appimage,
- *   que solo construye el squashfs. Toda la fase corre con
- *   `TMPDIR=src-tauri/target/tmp` (salvo que el usuario traiga el suyo): el
- *   staging del bundler y la extracción del plugin no pasan por `/tmp`.
+ *   el tamaño de las libs del base), **inyección DESPUÉS de linuxdeploy** de
+ *   `cef-base/` y `cef-host` en el AppDir, y reempaquetado con
+ *   linuxdeploy-plugin-appimage (solo squashfs). Las tres superficies Linux
+ *   (deb, rpm, AppImage) corren con `TMPDIR=src-tauri/target/tmp` salvo que
+ *   el usuario traiga el suyo: el staging del bundler y la extracción del
+ *   plugin no pasan por `/tmp`. Eso no es un quirk de Ubuntu: `/tmp` tmpfs
+ *   con usrquota (systemd ≥ 258) aparece en Debian, Fedora/RHEL y openSUSE.
+ *   El rpm va sin compresión (`none`): gzip de ~350 MB tarda decenas de
+ *   minutos. Si quitar el TMPDIR de build o la inyección post-linuxdeploy
+ *   rompe el empaquetado, se conservan (política de workarounds).
+ * - `dev`: `cef:prepare` debe terminar bien; un fallo no lanza `tauri dev`.
  * - Otros subcomandos: passthrough.
  */
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
@@ -194,6 +200,18 @@ export function tauriToolsDir(env: NodeJS.ProcessEnv = process.env, home: string
   return path.join(cache, "tauri");
 }
 
+/** Superficies Linux reales del producto. Ubuntu cloud es un lab, no “Linux”. */
+export const LINUX_PACKAGE_SURFACES = ["deb", "rpm", "appimage"] as const;
+export type LinuxPackageSurface = (typeof LINUX_PACKAGE_SURFACES)[number];
+
+/** Orden fijo de la AppImage: linuxdeploy sin CEF → inyectar → squashfs. */
+export const APPIMAGE_STEPS = ["linuxdeploy", "inject-cef", "repack"] as const;
+export type AppImageStep = (typeof APPIMAGE_STEPS)[number];
+
+export type DevStep = "cef-prepare" | "tauri-dev";
+
+export const RPM_COMPRESSION_NONE = "none" as const;
+
 /** `src-tauri/target/tmp`: temporales del build en disco, no en el tmpfs de `/tmp`. */
 export function buildTmpDir(): string {
   return path.join(SRC_TAURI, "target", "tmp");
@@ -205,10 +223,235 @@ export function buildTmpDir(): string {
  * un tmpfs con cuota por usuario (systemd ≥ 258) un bundle de ~350 MB con CEF
  * acaba en `Disk quota exceeded (os error 122)`. Si el usuario ya trae
  * `TMPDIR`, se respeta.
+ *
+ * Workaround conservado: no se vuelve a `/tmp` “porque el doc no lo pide”.
+ * El staging grande (rpm `compression: none`, AppImage + CEF) no cabe en
+ * tmpfs con usrquota en Debian/Fedora/RHEL/openSUSE, no solo en Ubuntu.
  */
 export function buildEnv(env: NodeJS.ProcessEnv, tmpDir: string): NodeJS.ProcessEnv {
   if (env.TMPDIR && env.TMPDIR.length > 0) return { ...env };
   return { ...env, TMPDIR: tmpDir };
+}
+
+/**
+ * TMPDIR de staging para **cada** superficie. No hay camino AppImage→`/tmp`
+ * ni rpm→`/var/tmp`: las tres usan `src-tauri/target/tmp`.
+ */
+export function envForLinuxSurface(
+  surface: LinuxPackageSurface,
+  env: NodeJS.ProcessEnv,
+  tmpDir: string,
+): NodeJS.ProcessEnv {
+  if (!LINUX_PACKAGE_SURFACES.includes(surface)) {
+    throw new Error(`Superficie Linux desconocida: ${String(surface)}`);
+  }
+  return buildEnv(env, tmpDir);
+}
+
+/** tmpfs / cuota del sistema: no son el default del wrapper en ninguna distro. */
+export function isSystemTmpDir(dir: string): boolean {
+  const normalized = path.resolve(dir);
+  return (
+    normalized === "/tmp" ||
+    normalized === "/var/tmp" ||
+    normalized === "/dev/shm" ||
+    normalized.startsWith("/run/user/")
+  );
+}
+
+/**
+ * Qué artefactos Linux va a tocar esta invocación.
+ * Sin `--bundles`, Tauri empaqueta deb+rpm (`tauri.conf.json`) y el wrapper
+ * añade la AppImage. `--bundles rpm` es Fedora/RHEL/openSUSE, no Ubuntu.
+ */
+export function linuxSurfacesInPlay(
+  args: string[],
+  platform: NodeJS.Platform = "linux",
+): LinuxPackageSurface[] {
+  if (platform !== "linux") return [];
+  if (hasFlag(args, "--help", "-h")) return [];
+  const plan = planBuild(args, platform);
+  if (hasFlag(args, "--no-bundle")) {
+    return plan.appimage ? ["appimage"] : [];
+  }
+  const requested = extractBundles(args);
+  const surfaces: LinuxPackageSurface[] = [];
+  if (requested === null) {
+    surfaces.push("deb", "rpm");
+  } else {
+    if (requested.bundles.includes("deb")) surfaces.push("deb");
+    if (requested.bundles.includes("rpm")) surfaces.push("rpm");
+  }
+  if (plan.appimage) surfaces.push("appimage");
+  return surfaces;
+}
+
+export function nextAppImageStep(completed: readonly AppImageStep[]): AppImageStep | "done" {
+  for (const step of APPIMAGE_STEPS) {
+    if (!completed.includes(step)) return step;
+  }
+  return "done";
+}
+
+/** Inyectar CEF solo cuando linuxdeploy ya terminó y aún no se reempaquetó. */
+export function canInjectCefAfterLinuxdeploy(completed: readonly AppImageStep[]): boolean {
+  return nextAppImageStep(completed) === "inject-cef";
+}
+
+/**
+ * `dev` no lanza el CLI si `cef:prepare` falló (status, señal o ENOENT).
+ * Saltar prepare rompe el arranque (sidecar / base ausentes).
+ */
+export function nextDevStep(
+  completed: readonly DevStep[],
+  prepare: { ok: boolean } | undefined,
+): DevStep | "done" | "abort" {
+  if (!completed.includes("cef-prepare")) return "cef-prepare";
+  if (!prepare?.ok) return "abort";
+  if (!completed.includes("tauri-dev")) return "tauri-dev";
+  return "done";
+}
+
+export function cefPrepareArgv(execPath: string): { command: string; args: readonly string[] } {
+  return { command: execPath, args: ["run", "cef:prepare"] };
+}
+
+export type ChildExit = { ok: true } | { ok: false; exitCode: number; message: string };
+
+export function interpretChildExit(
+  result: { error?: Error | null; status: number | null; signal: NodeJS.Signals | null },
+  what: string,
+): ChildExit {
+  if (result.error) {
+    return { ok: false, exitCode: 1, message: `No se pudo ejecutar ${what}: ${result.error.message}` };
+  }
+  if (result.status !== 0) {
+    if (result.signal) {
+      return { ok: false, exitCode: 1, message: `${what} terminó por señal ${result.signal}` };
+    }
+    return {
+      ok: false,
+      exitCode: result.status ?? 1,
+      message: `${what} falló con código ${result.status ?? 1}`,
+    };
+  }
+  return { ok: true };
+}
+
+export function rpmCompressionType(conf: {
+  bundle?: { linux?: { rpm?: { compression?: { type?: string } | string } } };
+}): string | undefined {
+  const compression = conf.bundle?.linux?.rpm?.compression;
+  if (compression === undefined || compression === null) return undefined;
+  if (typeof compression === "string") return compression;
+  return compression.type;
+}
+
+/**
+ * rpm-rs 0.16 + gzip de ~350 MB de CEF tarda decenas de minutos en cualquier
+ * distro (Fedora/RHEL/openSUSE y también el lab Debian/Ubuntu). `none` es
+ * política de producto, no un atajo de Ubuntu.
+ */
+export function assertRpmCompressionNone(type: string | undefined): void {
+  if (type !== RPM_COMPRESSION_NONE) {
+    throw new Error(
+      `rpm compression debe ser ${RPM_COMPRESSION_NONE} (staging ~350 MB). Recibido: ${type ?? "undefined"}`,
+    );
+  }
+}
+
+export function appImagePluginUrl(linuxdeployArch: string): string {
+  return APPIMAGE_PLUGIN_URL.replace("{arch}", linuxdeployArch);
+}
+
+export type AppImagePluginResolution =
+  | { kind: "override"; path: string }
+  | { kind: "cached"; path: string }
+  | { kind: "download"; path: string; url: string };
+
+export function planAppImagePlugin(opts: {
+  override: string | undefined;
+  toolsDir: string;
+  exists: (pluginPath: string) => boolean;
+  arch: string;
+}): AppImagePluginResolution {
+  if (opts.override && opts.override.length > 0) {
+    if (!opts.exists(opts.override)) {
+      throw new Error(`IDIOTEQUE_APPIMAGE_PLUGIN apunta a ${opts.override}, que no existe`);
+    }
+    return { kind: "override", path: opts.override };
+  }
+  const plugin = path.join(opts.toolsDir, "linuxdeploy-plugin-appimage.AppImage");
+  if (opts.exists(plugin)) return { kind: "cached", path: plugin };
+  return { kind: "download", path: plugin, url: appImagePluginUrl(opts.arch) };
+}
+
+export function appImageBundleArgs(plan: Pick<BuildPlan, "debug" | "target">): string[] {
+  const bundleArgs = ["bundle", "--bundles", "appimage", "--config", APPIMAGE_OVERRIDE_CONFIG];
+  if (plan.debug) bundleArgs.push("--debug");
+  if (plan.target) bundleArgs.push("--target", plan.target);
+  return bundleArgs;
+}
+
+export function appDirCefBase(appDir: string, resourceDirName: string): string {
+  return path.join(appDir, "usr", "lib", resourceDirName, "cef", "base");
+}
+
+export function appDirCefHost(appDir: string): string {
+  return path.join(appDir, "usr", "bin", "cef-host");
+}
+
+/** linuxdeploy ya escribió el AppDir (AppRun). Inyectar antes rompe libcef. */
+export function assertLinuxdeployAppDir(appDir: string): void {
+  if (!fs.existsSync(appDir) || !fs.statSync(appDir).isDirectory()) {
+    throw new Error(
+      `No existe el AppDir (${appDir}); la inyección de CEF es DESPUÉS de linuxdeploy`,
+    );
+  }
+  const appRun = path.join(appDir, "AppRun");
+  if (!fs.existsSync(appRun)) {
+    throw new Error(
+      `AppDir sin AppRun (${appDir}): linuxdeploy no ha terminado; no se inyecta CEF`,
+    );
+  }
+}
+
+export function assertLinuxdeployOutputs(appDir: string, appImage: string): void {
+  assertLinuxdeployAppDir(appDir);
+  if (!fs.existsSync(appImage)) {
+    throw new Error(
+      `linuxdeploy no produjo ${appImage}; no se inyecta CEF ni se reempaqueta`,
+    );
+  }
+}
+
+export interface InjectPaths {
+  cefBaseDir: string;
+  binariesDir: string;
+}
+
+export function defaultInjectPaths(): InjectPaths {
+  return { cefBaseDir: CEF_BASE_DIR, binariesDir: BINARIES_DIR };
+}
+
+/** Ruta de manifest que no puede salir de `usr/lib/<app>/cef/base`. */
+export function resolveManifestDest(baseDest: string, relative: string): string {
+  if (!relative || relative.length === 0) {
+    throw new Error("Entrada de manifest sin path");
+  }
+  if (path.isAbsolute(relative)) {
+    throw new Error(`Ruta de manifest fuera del AppDir: ${relative}`);
+  }
+  const parts = relative.split(/[\\/]/).filter((part) => part.length > 0 && part !== ".");
+  if (parts.includes("..") || parts.includes("")) {
+    throw new Error(`Ruta de manifest fuera del AppDir: ${relative}`);
+  }
+  const full = path.join(baseDest, ...parts);
+  const rel = path.relative(baseDest, full);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    throw new Error(`Ruta de manifest fuera del AppDir: ${relative}`);
+  }
+  return full;
 }
 
 // ---------------------------------------------------------------------------
@@ -221,10 +464,10 @@ function fail(message: string): never {
 }
 
 function exitWith(result: SpawnSyncReturns<Buffer>, what: string): void {
-  if (result.error) fail(`No se pudo ejecutar ${what}: ${result.error.message}`);
-  if (result.status !== 0) {
-    if (result.signal) fail(`${what} terminó por señal ${result.signal}`);
-    process.exit(result.status ?? 1);
+  const interpreted = interpretChildExit(result, what);
+  if (!interpreted.ok) {
+    console.error(`[tauri] ${interpreted.message}`);
+    process.exit(interpreted.exitCode);
   }
 }
 
@@ -233,13 +476,24 @@ function runTauri(args: string[], env: NodeJS.ProcessEnv = process.env): SpawnSy
 }
 
 function runCefPrepare(): void {
+  if (nextDevStep([], undefined) !== "cef-prepare") {
+    fail("dev debe correr cef:prepare antes del CLI");
+  }
   console.log("[tauri] Preparando CEF (cef-host + base) antes de arrancar el CLI…");
-  const result = spawnSync(process.execPath, ["run", "cef:prepare"], {
+  const { command, args } = cefPrepareArgv(process.execPath);
+  const result = spawnSync(command, [...args], {
     cwd: ROOT,
     stdio: "inherit",
     env: process.env,
   });
-  exitWith(result, "bun run cef:prepare");
+  const interpreted = interpretChildExit(result, "bun run cef:prepare");
+  if (nextDevStep(["cef-prepare"], { ok: interpreted.ok }) === "abort") {
+    if (!interpreted.ok) {
+      console.error(`[tauri] ${interpreted.message}`);
+      process.exit(interpreted.exitCode);
+    }
+    fail("cef:prepare falló; no se lanza tauri dev");
+  }
 }
 
 function rustcHostTriple(): string {
@@ -283,65 +537,79 @@ interface ManifestFile {
 }
 
 /** Inyecta el base y el sidecar en el AppDir y comprueba que quedan intactos. */
-function injectCefIntoAppDir(appDir: string, resourceDirName: string, triple: string): void {
-  const manifestPath = path.join(CEF_BASE_DIR, "manifest.json");
+export function injectCefIntoAppDir(
+  appDir: string,
+  resourceDirName: string,
+  triple: string,
+  paths: InjectPaths = defaultInjectPaths(),
+): void {
+  assertLinuxdeployAppDir(appDir);
+
+  const manifestPath = path.join(paths.cefBaseDir, "manifest.json");
   if (!fs.existsSync(manifestPath)) {
-    fail(`No existe ${path.relative(ROOT, manifestPath)}; ejecuta \`bun run cef:prepare\``);
+    throw new Error(`No existe ${manifestPath}; ejecuta \`bun run cef:prepare\``);
   }
-  const hostSrc = path.join(BINARIES_DIR, `cef-host-${triple}`);
+  const hostSrc = path.join(paths.binariesDir, `cef-host-${triple}`);
   if (!fs.existsSync(hostSrc)) {
-    fail(`No existe ${path.relative(ROOT, hostSrc)}; ejecuta \`bun run cef:prepare\``);
+    throw new Error(`No existe ${hostSrc}; ejecuta \`bun run cef:prepare\``);
   }
 
-  const baseDest = path.join(appDir, "usr", "lib", resourceDirName, "cef", "base");
-  const hostDest = path.join(appDir, "usr", "bin", "cef-host");
+  const baseDest = appDirCefBase(appDir, resourceDirName);
+  const hostDest = appDirCefHost(appDir);
   fs.rmSync(path.dirname(baseDest), { recursive: true, force: true });
   fs.rmSync(hostDest, { force: true });
 
   console.log(`[tauri] Inyectando cef-base → ${path.relative(appDir, baseDest)}`);
-  copyTree(CEF_BASE_DIR, baseDest);
+  copyTree(paths.cefBaseDir, baseDest);
   console.log(`[tauri] Inyectando cef-host → ${path.relative(appDir, hostDest)}`);
   copyPreservingMode(hostSrc, hostDest);
   fs.chmodSync(hostDest, 0o755);
 
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as { files?: ManifestFile[] };
   for (const file of manifest.files ?? []) {
-    const full = path.join(baseDest, file.path);
-    if (!fs.existsSync(full)) fail(`Falta ${file.path} en el AppDir tras la inyección`);
+    const full = resolveManifestDest(baseDest, file.path);
+    if (!fs.existsSync(full)) {
+      throw new Error(`Falta ${file.path} en el AppDir tras la inyección`);
+    }
     const size = fs.statSync(full).size;
     if (size !== file.size) {
-      fail(`Tamaño de ${file.path} en el AppDir (${size}) no coincide con el manifest (${file.size})`);
+      throw new Error(
+        `Tamaño de ${file.path} en el AppDir (${size}) no coincide con el manifest (${file.size})`,
+      );
     }
   }
   const sandbox = path.join(baseDest, "chrome-sandbox");
   if (fs.existsSync(sandbox) && (fs.statSync(sandbox).mode & 0o111) === 0) {
-    fail("chrome-sandbox perdió el bit de ejecución en el AppDir");
+    throw new Error("chrome-sandbox perdió el bit de ejecución en el AppDir");
   }
 }
 
 function resolveAppImagePlugin(arch: string): string {
-  const override = process.env.IDIOTEQUE_APPIMAGE_PLUGIN;
-  if (override) {
-    if (!fs.existsSync(override)) fail(`IDIOTEQUE_APPIMAGE_PLUGIN apunta a ${override}, que no existe`);
-    return override;
+  let planned: AppImagePluginResolution;
+  try {
+    planned = planAppImagePlugin({
+      override: process.env.IDIOTEQUE_APPIMAGE_PLUGIN,
+      toolsDir: tauriToolsDir(),
+      exists: (pluginPath) => fs.existsSync(pluginPath),
+      arch,
+    });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
   }
-  const toolsDir = tauriToolsDir();
-  const plugin = path.join(toolsDir, "linuxdeploy-plugin-appimage.AppImage");
-  if (fs.existsSync(plugin)) return plugin;
+  if (planned.kind !== "download") return planned.path;
 
-  const url = APPIMAGE_PLUGIN_URL.replace("{arch}", arch);
-  console.log(`[tauri] Descargando linuxdeploy-plugin-appimage desde ${url}`);
-  fs.mkdirSync(toolsDir, { recursive: true });
-  const download = spawnSync("curl", ["-fL", "--retry", "3", "-o", plugin, url], {
+  console.log(`[tauri] Descargando linuxdeploy-plugin-appimage desde ${planned.url}`);
+  fs.mkdirSync(path.dirname(planned.path), { recursive: true });
+  const download = spawnSync("curl", ["-fL", "--retry", "3", "-o", planned.path, planned.url], {
     stdio: "inherit",
     env: process.env,
   });
   if (download.error || download.status !== 0) {
-    fs.rmSync(plugin, { force: true });
+    fs.rmSync(planned.path, { force: true });
     fail("No se pudo descargar linuxdeploy-plugin-appimage (o instala curl, o fija IDIOTEQUE_APPIMAGE_PLUGIN)");
   }
-  fs.chmodSync(plugin, 0o770);
-  return plugin;
+  fs.chmodSync(planned.path, 0o770);
+  return planned.path;
 }
 
 /** Fase AppImage: `tauri bundle` sin CEF, inyección y reempaquetado. */
@@ -354,17 +622,34 @@ function buildAppImage(plan: BuildPlan, env: NodeJS.ProcessEnv): void {
   const appDir = path.join(bundleDir, names.appDirName);
   const appImage = path.join(bundleDir, names.appImageName);
 
+  const completed: AppImageStep[] = [];
+  if (nextAppImageStep(completed) !== "linuxdeploy") {
+    fail("la AppImage debe empezar por linuxdeploy sin CEF");
+  }
   console.log("[tauri] Fase AppImage 1/3: tauri bundle sin CEF (linuxdeploy no debe tocar libcef)");
-  const bundleArgs = ["bundle", "--bundles", "appimage", "--config", APPIMAGE_OVERRIDE_CONFIG];
-  if (plan.debug) bundleArgs.push("--debug");
-  if (plan.target) bundleArgs.push("--target", plan.target);
-  exitWith(runTauri(bundleArgs, env), "tauri bundle --bundles appimage");
+  exitWith(runTauri(appImageBundleArgs(plan), env), "tauri bundle --bundles appimage");
+  completed.push("linuxdeploy");
 
-  if (!fs.existsSync(appDir)) fail(`tauri bundle no dejó ${path.relative(ROOT, appDir)}`);
-  if (!fs.existsSync(appImage)) fail(`tauri bundle no produjo ${path.relative(ROOT, appImage)}`);
+  try {
+    assertLinuxdeployOutputs(appDir, appImage);
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
 
+  if (!canInjectCefAfterLinuxdeploy(completed)) {
+    fail("inyectar CEF solo DESPUÉS de linuxdeploy");
+  }
   console.log("[tauri] Fase AppImage 2/3: inyectar el runtime CEF en el AppDir");
-  injectCefIntoAppDir(appDir, names.resourceDirName, triple);
+  try {
+    injectCefIntoAppDir(appDir, names.resourceDirName, triple);
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
+  completed.push("inject-cef");
+
+  if (nextAppImageStep(completed) !== "repack") {
+    fail("el squashfs va después de inyectar CEF");
+  }
 
   console.log("[tauri] Fase AppImage 3/3: reempaquetar el AppDir");
   const arch = toolsArch(rustArch);
@@ -381,6 +666,8 @@ function buildAppImage(plan: BuildPlan, env: NodeJS.ProcessEnv): void {
     },
   });
   exitWith(pack, "linuxdeploy-plugin-appimage");
+  completed.push("repack");
+  if (nextAppImageStep(completed) !== "done") fail("faltan fases de la AppImage");
   if (!fs.existsSync(appImage)) fail(`El plugin no produjo ${path.relative(ROOT, appImage)}`);
 
   console.log(`[tauri] AppImage con CEF: ${path.relative(ROOT, appImage)} (${humanMb(fs.statSync(appImage).size)})`);
@@ -397,6 +684,9 @@ function main(argv: string[]): void {
 
   if (subcommand === "dev") {
     runCefPrepare();
+    if (nextDevStep(["cef-prepare"], { ok: true }) !== "tauri-dev") {
+      fail("cef:prepare falló; no se lanza tauri dev");
+    }
     exitWith(runTauri(args), "tauri dev");
     return;
   }
@@ -404,8 +694,29 @@ function main(argv: string[]): void {
   if (subcommand === "build") {
     const plan = planBuild(args);
     const tmpDir = buildTmpDir();
+    if (isSystemTmpDir(tmpDir)) {
+      fail("TMPDIR de build no puede ser /tmp, /var/tmp ni /dev/shm (usrquota / tmpfs)");
+    }
     fs.mkdirSync(tmpDir, { recursive: true });
+    const surfaces = linuxSurfacesInPlay(args);
     const env = buildEnv(process.env, tmpDir);
+    for (const surface of surfaces) {
+      const surfaceEnv = envForLinuxSurface(surface, process.env, tmpDir);
+      if (surfaceEnv.TMPDIR !== env.TMPDIR) {
+        fail(`TMPDIR de ${surface} (${surfaceEnv.TMPDIR}) distinto del staging (${env.TMPDIR})`);
+      }
+    }
+    if (surfaces.includes("rpm")) {
+      try {
+        const confPath = path.join(SRC_TAURI, "tauri.conf.json");
+        const conf = JSON.parse(fs.readFileSync(confPath, "utf8")) as Parameters<
+          typeof rpmCompressionType
+        >[0];
+        assertRpmCompressionNone(rpmCompressionType(conf));
+      } catch (error) {
+        fail(error instanceof Error ? error.message : String(error));
+      }
+    }
     exitWith(runTauri(plan.buildArgs, env), "tauri build");
     if (plan.appimage) buildAppImage(plan, env);
     return;
