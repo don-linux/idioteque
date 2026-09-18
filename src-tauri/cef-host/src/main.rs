@@ -1,4 +1,4 @@
-//! cef-host: loads libcef from a slot and embeds a browser as an X11 child.
+//! cef-host: loads libcef from a slot and opens an Alloy window.
 //! Protocol and flags: `docs/cef/CONTRACT.md` §4.
 
 mod app;
@@ -205,7 +205,7 @@ fn initialize_failure_code(no_sandbox: bool) -> i32 {
     }
 }
 
-/// Windowless health skips `CefShutdown` — CHECKs on this CEF/X11 combo.
+/// Windowless health skips `CefShutdown` — CHECKs on this CEF combo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AfterMessageLoop {
     ExitOkSkipShutdown,
@@ -221,7 +221,7 @@ fn after_message_loop(health_check: bool) -> AfterMessageLoop {
 }
 
 fn main() {
-    // Subprocesses must reach execute_process before dup2/X11: Chromium may
+    // Subprocesses must reach execute_process before dup2: Chromium may
     // already have wired stdout and fds for GPU/renderer IPC.
     if is_cef_subprocess() {
         run_subprocess();
@@ -263,7 +263,9 @@ fn main() {
     #[cfg(target_os = "linux")]
     {
         platform::init_threads();
-        platform::ensure_display();
+        if !parsed.health_check {
+            platform::ensure_display();
+        }
     }
 
     let manifest = slot::validate(&cef_dir);
@@ -341,29 +343,10 @@ fn make_subprocess_app() -> App {
     SubprocessApp::new(HostRenderProcess::new())
 }
 
-fn should_inject_renderer_trap(is_main_frame: bool) -> bool {
-    is_main_frame
-}
-
 wrap_render_process_handler! {
     struct HostRenderProcess;
 
-    impl RenderProcessHandler {
-        fn on_context_created(
-            &self,
-            _browser: Option<&mut Browser>,
-            frame: Option<&mut Frame>,
-            _context: Option<&mut V8Context>,
-        ) {
-            let Some(frame) = frame else {
-                return;
-            };
-            if !should_inject_renderer_trap(frame.is_main() != 0) {
-                return;
-            }
-            crate::app::inject_take_focus_trap(frame);
-        }
-    }
+    impl RenderProcessHandler {}
 }
 
 wrap_app! {
@@ -384,12 +367,6 @@ mod tests {
 
     fn argv(args: &[&str]) -> Vec<String> {
         args.iter().map(|s| (*s).to_string()).collect()
-    }
-
-    #[test]
-    fn renderer_trap_is_main_frame_only() {
-        assert!(should_inject_renderer_trap(true));
-        assert!(!should_inject_renderer_trap(false));
     }
 
     #[test]
@@ -432,7 +409,7 @@ mod tests {
         ])));
         assert!(argv_requests_idq_info(&argv(&[
             "cef-host",
-            "--ozone-platform=x11",
+            "--ozone-platform=wayland",
             "--idq-info",
             "--idq-no-sandbox",
         ])));
@@ -520,7 +497,7 @@ mod tests {
         assert_eq!(
             early_path(false, true),
             EarlyPath::CompiledInfo,
-            "--idq-info exits before require_slot / DISPLAY / initialize"
+            "--idq-info exits before require_slot / initialize"
         );
     }
 

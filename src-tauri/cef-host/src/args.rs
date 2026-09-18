@@ -18,8 +18,8 @@ impl Default for Bounds {
         Self {
             x: 0,
             y: 0,
-            w: 800,
-            h: 600,
+            w: 1200,
+            h: 800,
         }
     }
 }
@@ -29,7 +29,6 @@ pub struct HostArgs {
     pub info: bool,
     pub cef_dir: Option<PathBuf>,
     pub cache_dir: Option<PathBuf>,
-    pub parent: Option<u64>,
     pub bounds: Bounds,
     pub scale: Option<f64>,
     pub url: String,
@@ -84,7 +83,6 @@ impl HostArgs {
             info: false,
             cef_dir: None,
             cache_dir: None,
-            parent: None,
             bounds: Bounds::default(),
             scale: None,
             url: "about:blank".to_string(),
@@ -123,10 +121,8 @@ impl HostArgs {
                     "cef-dir" => args.cef_dir = Some(PathBuf::from(take(inline, &mut i)?)),
                     "cache-dir" => args.cache_dir = Some(PathBuf::from(take(inline, &mut i)?)),
                     "parent" => {
-                        let raw = take(inline, &mut i)?;
-                        args.parent = Some(parse_xid(&raw).ok_or_else(|| {
-                            FatalError::new(exit::BAD_ARGS, format!("invalid --idq-parent: {raw}"))
-                        })?);
+                        let _ = take(inline, &mut i);
+                        return Err(FatalError::new(exit::BAD_ARGS, "invalid arguments"));
                     }
                     "bounds" => {
                         let raw = take(inline, &mut i)?;
@@ -184,15 +180,6 @@ impl HostArgs {
     }
 }
 
-pub fn parse_xid(raw: &str) -> Option<u64> {
-    let s = raw.trim();
-    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).ok()
-    } else {
-        s.parse::<u64>().ok()
-    }
-}
-
 pub fn parse_bounds(raw: &str) -> Option<Bounds> {
     let parts: Vec<&str> = raw.split(',').collect();
     if parts.len() != 4 {
@@ -236,7 +223,6 @@ mod tests {
         let inline = parse(&[
             "--idq-cef-dir=/slot",
             "--idq-cache-dir=/cache",
-            "--idq-parent=0x1a2b",
             "--idq-bounds=-4,8,800,600",
             "--idq-scale=1.25",
             "--idq-url=https://x.test/?a=1&b=2",
@@ -247,8 +233,6 @@ mod tests {
             "/slot",
             "--idq-cache-dir",
             "/cache",
-            "--idq-parent",
-            "0x1a2b",
             "--idq-bounds",
             "-4,8,800,600",
             "--idq-scale",
@@ -261,7 +245,6 @@ mod tests {
         assert_eq!(inline, tokens);
         assert_eq!(inline.cef_dir, Some(PathBuf::from("/slot")));
         assert_eq!(inline.cache_dir, Some(PathBuf::from("/cache")));
-        assert_eq!(inline.parent, Some(0x1a2b));
         assert_eq!(
             inline.bounds,
             Bounds {
@@ -314,7 +297,7 @@ mod tests {
             "--disable-gpu",
             "--idq-cef-dir",
             "/slot",
-            "--ozone-platform=x11",
+            "--ozone-platform=wayland",
             "--idq-cache-dir=/cache",
             "-idq-url",
             "https://not-a-flag",
@@ -326,59 +309,22 @@ mod tests {
     }
 
     #[test]
-    fn xid_hex_and_decimal() {
-        assert_eq!(parse_xid("0"), Some(0));
-        assert_eq!(parse_xid("12345"), Some(12345));
-        assert_eq!(parse_xid("00042"), Some(42));
-        assert_eq!(parse_xid("18446744073709551615"), Some(u64::MAX));
-        assert_eq!(parse_xid("0x0"), Some(0));
-        assert_eq!(parse_xid("0x1a2b"), Some(0x1a2b));
-        assert_eq!(parse_xid("0XDEAD"), Some(0xdead));
-        assert_eq!(parse_xid("0x00000000000000ff"), Some(255));
-        assert_eq!(parse_xid("0xffffffffffffffff"), Some(u64::MAX));
-        assert_eq!(parse_xid("  0x10  "), Some(0x10));
-        assert_eq!(parse_xid(" 99 "), Some(99));
-        assert_eq!(parse_xid("+123"), Some(123));
-        assert_eq!(parse(&["--idq-parent=0x1a2b"]).parent, Some(0x1a2b));
-        assert_eq!(parse(&["--idq-parent", "12345"]).parent, Some(12345));
-        assert_eq!(parse(&["--idq-parent=0"]).parent, Some(0));
-    }
-
-    #[test]
-    fn xid_invalid() {
-        for raw in [
-            "",
-            "0x",
-            "0xG",
-            "0x 10",
-            "-1",
-            "0o12",
-            "0b10",
-            "deadbeef",
-            "123abc",
-            "#1a2b",
-            "18446744073709551616",
-            "0x10000000000000000",
-            "1.0",
-            "0x10u64",
-        ] {
-            assert_eq!(parse_xid(raw), None, "xid {raw:?}");
-            let error = parse_err(&["--idq-parent", raw]);
+    fn native_parent_flag_is_bad_args() {
+        let flag = format!("--{}-{}", "idq", "parent");
+        for raw in [&flag, &format!("{flag}=1")] {
+            let error = parse_err(&[raw.as_str()]);
             assert_eq!(error.code, exit::BAD_ARGS);
-            assert!(
-                error.message.contains("invalid --idq-parent"),
-                "{}",
-                error.message
-            );
+            assert_eq!(error.message, "invalid arguments");
         }
-        let empty_inline = parse_err(&["--idq-parent="]);
-        assert_eq!(empty_inline.code, exit::BAD_ARGS);
+        let error = parse_err(&[&flag, "12345"]);
+        assert_eq!(error.code, exit::BAD_ARGS);
+        assert_eq!(error.message, "invalid arguments");
     }
 
     #[test]
     fn bounds_valid_and_invalid() {
         assert_eq!(
-            parse_bounds("0,0,800,600").unwrap(),
+            parse_bounds("0,0,1200,800").unwrap(),
             Bounds::default()
         );
         assert_eq!(
@@ -458,7 +404,6 @@ mod tests {
         for flag in [
             "--idq-cef-dir",
             "--idq-cache-dir",
-            "--idq-parent",
             "--idq-bounds",
             "--idq-scale",
             "--idq-url",
@@ -518,12 +463,9 @@ mod tests {
             "https://second.test",
             "--idq-bounds=0,0,1,1",
             "--idq-bounds=2,3,4,5",
-            "--idq-parent=1",
-            "--idq-parent=0x10",
         ]);
         assert_eq!(args.url, "https://second.test");
         assert_eq!(args.bounds, Bounds { x: 2, y: 3, w: 4, h: 5 });
-        assert_eq!(args.parent, Some(0x10));
     }
 
     #[test]
@@ -628,7 +570,6 @@ mod tests {
         assert_eq!(args.url, "about:blank");
         assert_eq!(args.bounds, Bounds::default());
         assert_eq!(args.scale, None);
-        assert_eq!(args.parent, None);
         assert!(args.extra_switches.is_empty());
     }
 
