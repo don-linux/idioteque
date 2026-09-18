@@ -96,15 +96,18 @@ No llamar `playground-link` salvo que lo pida el humano.
 
 ### INVENTARIO
 
-Completar con `git diff origin/main -- '*.svelte' '*.svelte.ts'` (o el base de la PR). Pasar **todos** los tocados o nuevos. Guía de nombres (ajustar a los paths reales):
+`git diff --name-only origin/main -- '*.svelte' '*.svelte.ts'` sobre `cursor/cef-wayland-toplevel-0dbb` (tras A4). Pasar **todos** los que siguen en el runtime:
 
 - `src/lib/browser.svelte.ts`
-- `src/lib/browser-shortcuts.ts` (solo si es `.svelte.ts`; si es `.ts` plano, no autofixer)
-- `src/lib/browser-errors.ts` (igual)
-- componentes nuevos de estado/error del navegador en `src/lib/components/`
-- `src/routes/workspace/+layout.svelte` y `+page.svelte` si A4 los tocó
-- `src/lib/components/FooterActions.svelte` si el globo o el toggle viven ahí
-- cualquier otro `.svelte` / `.svelte.ts` de la PR del navegador
+- `src/lib/cef-update.svelte.ts`
+- `src/lib/workspace-surface.svelte.ts`
+- `src/lib/components/FooterActions.svelte`
+- `src/lib/components/FooterTransient.svelte`
+- `src/routes/+layout.svelte`
+- `src/routes/workspace/+layout.svelte`
+- `src/routes/workspace/+page.svelte`
+
+`src/lib/components/BrowserView.svelte` sale en el diff porque se **borra**. No lo recréis. `docs/cef/backup-toolbar/BrowserToolbar.svelte` también aparece; no es runtime.
 
 **Fuera:**
 

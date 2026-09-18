@@ -13,8 +13,8 @@ Ctrl + G - Grafo de ramas Git
 Ctrl + J - Terminal abajo
 Ctrl + Alt + J - Terminal a la derecha
 Ctrl + Shift + J - Superficie de terminales
-Ctrl + B - Navegador
-Ctrl + Shift + B - Navegador (desde la terminal)
+Ctrl + B - Ventana del navegador
+Ctrl + Shift + B - Ventana del navegador (desde la terminal)
 
 ## Árbol
 
@@ -26,12 +26,9 @@ Enter / Espacio - Abrir archivo o expandir/colapsar carpeta
 Enter - Confirmar nombre
 Escape - Cancelar nombre o cerrar el menú
 
-## Navegador
+## Navegador (ventana de página)
 
-Ctrl + B / Ctrl + Shift + B - Salir del navegador
-Ctrl + L - Enfocar la URL
-Enter - Navegar (en la URL)
-Escape - Restaurar la URL actual (en la URL)
+Ctrl + B / Ctrl + Shift + B - Mostrar u ocultar la ventana
 F12 / Ctrl + Shift + I - DevTools
 F5 / Ctrl + R - Recargar
 Ctrl + Shift + R - Recargar sin caché

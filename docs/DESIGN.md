@@ -93,17 +93,13 @@ Una sola terminal, sin pestañas. Se redimensiona arrastrando su borde, igual qu
 
 ### Navegador
 
-Es la tercera superficie del IDE, junto al editor y al canvas de terminales. Se abre con `Ctrl+B` (desde la terminal, `Ctrl+Shift+B`, porque `Ctrl+B` es el prefijo de tmux) o con el globo del footer, y ocupa todo el cuerpo de la ventana; el footer se queda. Otro `Ctrl+B` vuelve a la superficie anterior, sea el editor o las terminales.
+No es una superficie del workspace. El cuerpo del IDE sigue siendo el editor o el canvas de terminales. `Ctrl+B` (desde la terminal, `Ctrl+Shift+B`, porque `Ctrl+B` es el prefijo de tmux) o el globo del footer abre **otra ventana**: un proceso Alloy (`cef-host`) con Chromium de verdad. Otro `Ctrl+B` la oculta (unmap) sin matar la página. Inicio sí mata el proceso.
 
-Es Chromium de verdad, no el webview de la app: animaciones, JavaScript, GPU y DevTools tal cual. Lo hace un proceso aparte (`cef-host`) que carga CEF y se dibuja como ventana hija dentro de la ventana de idioteque. Si ese proceso muere, la app sigue: el navegador muestra el error y ofrece reintentar.
+No hay caja de URL en el IDE. La ventana de página arranca en `about:blank`. DevTools abre en su propia ventana (F12 o `Ctrl+Shift+I`, o “Inspeccionar” en el menú contextual). Los popups se abren en la misma pestaña: hay una sola. Atajos de página (F5, Alt+←/→, Escape) viven en esa ventana.
 
-Arriba va una barra propia de idioteque, no el chrome de Chromium: atrás, adelante, recargar o detener, la URL, DevTools y una cruz para cerrar. `Ctrl+L` enfoca la URL. Lo que se escribe sin esquema se completa con `https://`; no hay buscador. DevTools abre en su ventana (F12 o `Ctrl+Shift+I`, o “Inspeccionar” en el menú contextual). Los popups se abren en la misma pestaña: hay una sola.
-
-Ocultar el navegador no mata el proceso ni la página. Volver a Inicio sí. Empieza en `about:blank` con la URL enfocada.
+Si no hay `WAYLAND_DISPLAY`, el visible no arranca: error corto “sin compositor Wayland”. El editor sigue. El health del updater no pide compositor.
 
 El motor viene de fábrica en cada instalador y se actualiza solo, sin intervención del mantenedor, mientras las CEF nuevas sigan siendo compatibles con la app. Cuando una no lo es, la app lo dice, no se rompe, y se queda con la última que funcionó. Ver [`CEF-RUNTIME.md`](CEF-RUNTIME.md).
-
-Necesita X11. En Wayland (GNOME 26.04) idioteque y CEF hablan X11 con XWayland: si hay `DISPLAY`, el ADE fija `GDK_BACKEND=x11`.
 
 ### Lo que el layout recuerda
 
@@ -129,8 +125,8 @@ Orden fijo, definido en código (no en la UI ni en la config):
 2. Carpeta — Cambiar. Abre el selector nativo para otra carpeta.
 3. Engrane — Configuración. Va a la página de ajustes. El workspace no se cierra, así la terminal no se apaga.
 4. Terminal — Muestra u oculta el panel. Queda marcado si está visible.
-5. Globo — Navegador. Abre o cierra la superficie del navegador (`Ctrl+B`).
-   Queda marcado mientras está abierta.
+5. Globo — Navegador. Abre, muestra u oculta la ventana de Chromium (`Ctrl+B`).
+   Queda marcado mientras esa ventana está visible.
 6. Git — Icono de vida. Al pasar el mouse dice si no hay repo o el nombre
    de la carpeta y la rama. El clic no hace nada. No es un panel.
 
