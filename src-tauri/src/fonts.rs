@@ -66,14 +66,14 @@ mod tests {
             ("JetBrainsMono Nerd Font".into(), false),
             ("Inter".into(), false),
             ("  ".into(), false),
-            ("Hack".into(), true),
+            ("Iosevka".into(), true),
         ]);
 
         assert_eq!(
             fonts,
             vec![
                 SystemFont {
-                    family: "Hack".into(),
+                    family: "Iosevka".into(),
                     monospace: true,
                 },
                 SystemFont {

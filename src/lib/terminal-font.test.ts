@@ -13,7 +13,7 @@ import {
 } from "./terminal-font";
 
 const fonts: SystemFont[] = [
-  { family: "Hack Nerd Font", monospace: true },
+  { family: "Iosevka Nerd Font", monospace: true },
   { family: "JetBrainsMono Nerd Font", monospace: true },
   { family: "Inter", monospace: false },
 ];
@@ -60,7 +60,7 @@ describe("filterFonts", () => {
 
   it("matches a case-insensitive substring", () => {
     expect(filterFonts(fonts, "nerd")).toEqual([
-      { family: "Hack Nerd Font", monospace: true },
+      { family: "Iosevka Nerd Font", monospace: true },
       { family: "JetBrainsMono Nerd Font", monospace: true },
     ]);
     expect(filterFonts(fonts, "INTER")).toEqual([{ family: "Inter", monospace: false }]);
@@ -75,6 +75,6 @@ describe("fontLabel", () => {
   });
 
   it("keeps a custom family name", () => {
-    expect(fontLabel("Hack Nerd Font")).toBe("Hack Nerd Font");
+    expect(fontLabel("Iosevka Nerd Font")).toBe("Iosevka Nerd Font");
   });
 });
