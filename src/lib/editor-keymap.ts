@@ -9,6 +9,9 @@ export const swallowFindNext: Command = () => true;
 
 export function editorKeymap(): Extension {
   return Prec.highest(
-    keymap.of([{ key: "Ctrl-g", run: swallowFindNext }]),
+    keymap.of([
+      { key: "Mod-g", run: swallowFindNext },
+      { key: "Ctrl-g", run: swallowFindNext },
+    ]),
   );
 }

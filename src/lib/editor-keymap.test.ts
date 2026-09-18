@@ -18,7 +18,7 @@ describe("swallowFindNext", () => {
 });
 
 describe("editorKeymap", () => {
-  it("binds Mod-g and Ctrl-g ahead of findNext from basicSetup", () => {
+  it("binds Ctrl-g (and CodeMirror's Mod-g name) ahead of findNext from basicSetup", () => {
     const onlySearch = bindingsFor("Mod-g", [basicSetup]);
     expect(onlySearch.some((binding) => binding.run === findNext)).toBe(true);
     expect(onlySearch[0]?.run).toBe(findNext);

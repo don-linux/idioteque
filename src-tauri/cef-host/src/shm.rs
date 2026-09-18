@@ -283,15 +283,8 @@ mod tests {
 
     fn scratch_root() -> PathBuf {
         // Never `std::env::temp_dir()`: `apply_env` may point TMPDIR at a
-        // CacheDir that another test deletes (POSIX `/tmp`, not Ubuntu-only).
-        #[cfg(unix)]
-        {
-            PathBuf::from("/tmp")
-        }
-        #[cfg(not(unix))]
-        {
-            std::env::temp_dir()
-        }
+        // CacheDir that another test deletes.
+        PathBuf::from("/tmp")
     }
 
     fn temp_dir(tag: &str) -> PathBuf {
@@ -774,13 +767,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&cache);
     }
 
-    #[cfg(not(target_os = "linux"))]
-    #[test]
-    fn decide_is_dev_shm_off_linux() {
-        assert_eq!(decide(Path::new("/cache")), ShmPolicy::DevShm);
-    }
-
-    #[cfg(target_os = "linux")]
     #[test]
     fn decide_from_skips_temp_when_dev_shm_holds_probe() {
         let shm = temp_dir("skip-temp-shm");

@@ -193,15 +193,12 @@ describe("base.json vs Cargo.lock", () => {
     expect(base.indexUrl).not.toMatch(/ubuntu|debian|launchpad|fedoraproject|rpmfind/i);
   });
 
-  it("names every official CEF platform tarball after the pin (not apt names)", () => {
-    const platforms = ["linux64", "linuxarm64", "windows64", "macosx64", "macosarm64"];
-    expect(Object.keys(base.files).sort()).toEqual([...platforms].sort());
-    for (const platform of platforms) {
-      const file = base.files[platform];
-      expect(file.name).toBe(`cef_binary_${base.cefVersion}_${platform}_minimal.tar.bz2`);
-      expect(file.sha1).toMatch(/^[0-9a-f]{40}$/);
-      expect(file.size).toBeGreaterThan(0);
-      expect(file.name).not.toMatch(/ubuntu|jammy|noble|t64/);
-    }
+  it("pins only the linux64 CEF tarball (not apt names)", () => {
+    expect(Object.keys(base.files)).toEqual(["linux64"]);
+    const file = base.files.linux64;
+    expect(file.name).toBe(`cef_binary_${base.cefVersion}_linux64_minimal.tar.bz2`);
+    expect(file.sha1).toMatch(/^[0-9a-f]{40}$/);
+    expect(file.size).toBeGreaterThan(0);
+    expect(file.name).not.toMatch(/ubuntu|jammy|noble|t64|linuxarm64|windows64|macos/);
   });
 });

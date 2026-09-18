@@ -23,6 +23,8 @@ describe("xtermFontFamily", () => {
     expect(xtermFontFamily(null)).toBe(DEFAULT_XTERM_FONT_FAMILY);
     expect(xtermFontFamily("   ")).toBe(DEFAULT_XTERM_FONT_FAMILY);
     expect(xtermFontFamily(undefined)).toBe(DEFAULT_XTERM_FONT_FAMILY);
+    expect(DEFAULT_XTERM_FONT_FAMILY).toBe('"JetBrains Mono", ui-monospace, monospace');
+    expect(DEFAULT_XTERM_FONT_FAMILY).not.toMatch(/SF Mono|Menlo|Consolas/);
   });
 
   it("quotes a custom family and keeps a monospace fallback", () => {

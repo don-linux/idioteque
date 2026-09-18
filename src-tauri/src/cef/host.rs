@@ -2030,10 +2030,6 @@ exit 0
             "/slot:/usr/lib:/opt/lib"
         );
         assert_eq!(
-            compose_search_path(r"C:\slot", Some(r"C:\Windows\System32"), ";"),
-            r"C:\slot;C:\Windows\System32"
-        );
-        assert_eq!(
             compose_search_path("/slot", Some("/slot:/usr/lib"), ":"),
             "/slot:/slot:/usr/lib"
         );

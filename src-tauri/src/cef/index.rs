@@ -28,7 +28,8 @@ pub struct IndexVersion {
     pub files: Vec<IndexFile>,
 }
 
-/// Índice por clave de plataforma (`linux64`, `windows64`, …).
+/// Índice por clave de plataforma. Idioteque solo selecciona `linux64`;
+/// el JSON oficial puede traer otras claves y se ignoran.
 #[derive(Clone, Debug, Default)]
 pub struct CefIndex {
     platforms: HashMap<String, Vec<IndexVersion>>,

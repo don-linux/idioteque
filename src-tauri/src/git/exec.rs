@@ -145,7 +145,7 @@ pub(crate) fn parse_version(raw: &str) -> Option<String> {
     Some(version.to_string())
 }
 
-/// Compares dotted numeric prefixes (`2.43.0.windows.1` vs `2.15.0`).
+    /// Compares dotted numeric prefixes (`2.43.0` vs `2.15.0`).
 pub(crate) fn version_at_least(version: &str, minimum: &str) -> bool {
     compare_versions(version, minimum) != std::cmp::Ordering::Less
 }
@@ -236,8 +236,8 @@ mod tests {
             Some("2.43.0".to_string())
         );
         assert_eq!(
-            parse_version("git version 2.43.0.windows.1"),
-            Some("2.43.0.windows.1".to_string())
+            parse_version("git version 2.43.0"),
+            Some("2.43.0".to_string())
         );
         assert_eq!(parse_version("not git"), None);
     }
@@ -254,7 +254,7 @@ mod tests {
     fn version_floor_matches_zed_optional_locks() {
         assert!(version_at_least("2.15.0", MIN_GIT_VERSION));
         assert!(version_at_least("2.43.0", MIN_GIT_VERSION));
-        assert!(version_at_least("2.15.0.windows.1", MIN_GIT_VERSION));
+        assert!(version_at_least("2.15.0", MIN_GIT_VERSION));
         assert!(version_at_least("2.15", MIN_GIT_VERSION));
         assert!(version_at_least("2.15.0.0", MIN_GIT_VERSION));
         assert!(!version_at_least("2.14.3", MIN_GIT_VERSION));
@@ -276,6 +276,7 @@ mod tests {
         let _lock = lock_discover();
         let git = Git::discover().expect("git on PATH");
         assert!(git.path.is_file());
+        assert_eq!(git.path.file_name().and_then(|n| n.to_str()), Some("git"));
         assert!(version_at_least(&git.version, MIN_GIT_VERSION));
     }
 

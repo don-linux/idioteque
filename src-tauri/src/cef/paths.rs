@@ -237,15 +237,6 @@ mod tests {
 
     #[test]
     fn platform_is_a_known_index_key() {
-        assert!([
-            "linux64",
-            "linuxarm64",
-            "windows64",
-            "macosx64",
-            "macosarm64"
-        ]
-        .contains(&PLATFORM));
-        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         assert_eq!(PLATFORM, "linux64");
     }
 
@@ -481,11 +472,7 @@ mod tests {
 
     #[test]
     fn host_binary_name_is_platform_sidecar() {
-        if cfg!(windows) {
-            assert_eq!(host_binary_name(), "cef-host.exe");
-        } else {
-            assert_eq!(host_binary_name(), "cef-host");
-        }
+        assert_eq!(host_binary_name(), "cef-host");
     }
 
     #[test]

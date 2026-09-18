@@ -87,7 +87,7 @@ describe("extractBundles", () => {
 
 describe("extractTarget / hasFlag", () => {
   it("lee --target en sus dos formas", () => {
-    expect(extractTarget(["build", "--target", "aarch64-unknown-linux-gnu"])).toBe("aarch64-unknown-linux-gnu");
+    expect(extractTarget(["build", "--target", "x86_64-unknown-linux-gnu"])).toBe("x86_64-unknown-linux-gnu");
     expect(extractTarget(["build", "-t=x86_64-unknown-linux-gnu"])).toBe("x86_64-unknown-linux-gnu");
     expect(extractTarget(["build"])).toBeUndefined();
   });
@@ -102,15 +102,6 @@ describe("planBuild", () => {
   it("sin --bundles: build tal cual y AppImage aparte en Linux", () => {
     const plan = planBuild(["build"], "linux");
     expect(plan).toEqual({ buildArgs: ["build"], appimage: true, debug: false, target: undefined });
-  });
-
-  it("fuera de Linux no hay fase AppImage", () => {
-    expect(planBuild(["build"], "darwin").appimage).toBe(false);
-    expect(planBuild(["build", "--bundles", "appimage"], "win32").buildArgs).toEqual([
-      "build",
-      "--bundles",
-      "appimage",
-    ]);
   });
 
   it("--bundles sin appimage es passthrough", () => {
@@ -138,8 +129,8 @@ describe("planBuild", () => {
   });
 
   it("propaga --target", () => {
-    const plan = planBuild(["build", "--target", "aarch64-unknown-linux-gnu"], "linux");
-    expect(plan.target).toBe("aarch64-unknown-linux-gnu");
+    const plan = planBuild(["build", "--target", "x86_64-unknown-linux-gnu"], "linux");
+    expect(plan.target).toBe("x86_64-unknown-linux-gnu");
     expect(plan.appimage).toBe(true);
   });
 });
@@ -147,12 +138,11 @@ describe("planBuild", () => {
 describe("arquitecturas y nombres de artefactos", () => {
   it("mapea la arquitectura de Rust a la del nombre de la AppImage y a la de linuxdeploy", () => {
     expect(appImageArch("x86_64")).toBe("amd64");
-    expect(appImageArch("aarch64")).toBe("aarch64");
-    expect(appImageArch("i686")).toBe("i386");
-    expect(appImageArch("armv7")).toBe("armhf");
+    expect(() => appImageArch("aarch64")).toThrow();
+    expect(() => appImageArch("i686")).toThrow();
+    expect(() => appImageArch("armv7")).toThrow();
     expect(() => appImageArch("riscv64gc")).toThrow();
     expect(toolsArch("x86_64")).toBe("x86_64");
-    expect(toolsArch("armv7")).toBe("armhf");
     expect(archOfTriple("x86_64-unknown-linux-gnu")).toBe("x86_64");
   });
 
@@ -168,8 +158,8 @@ describe("arquitecturas y nombres de artefactos", () => {
     const base = path.join(ROOT, "src-tauri", "target");
     expect(profileDir(undefined, false)).toBe(path.join(base, "release"));
     expect(profileDir(undefined, true)).toBe(path.join(base, "debug"));
-    expect(profileDir("aarch64-unknown-linux-gnu", false)).toBe(
-      path.join(base, "aarch64-unknown-linux-gnu", "release"),
+    expect(profileDir("x86_64-unknown-linux-gnu", false)).toBe(
+      path.join(base, "x86_64-unknown-linux-gnu", "release"),
     );
   });
 });
@@ -223,9 +213,7 @@ describe("superficies Linux: deb + rpm + AppImage (no solo Ubuntu)", () => {
     ]);
   });
 
-  it("fuera de Linux o con --help/--no-bundle no finge un paquete Ubuntu", () => {
-    expect(linuxSurfacesInPlay(["build"], "darwin")).toEqual([]);
-    expect(linuxSurfacesInPlay(["build"], "win32")).toEqual([]);
+  it("con --help/--no-bundle no finge un paquete", () => {
     expect(linuxSurfacesInPlay(["build", "--help"], "linux")).toEqual([]);
     expect(linuxSurfacesInPlay(["build", "--no-bundle"], "linux")).toEqual([]);
   });
@@ -347,7 +335,7 @@ describe("AppImage: inyectar CEF DESPUÉS de linuxdeploy", () => {
 
   it("linuxdeploy corre sin resources/externalBin para no patchelf-ear libcef", () => {
     expect(JSON.parse(APPIMAGE_OVERRIDE_CONFIG)).toEqual({ bundle: { resources: [], externalBin: [] } });
-    const args = appImageBundleArgs({ debug: true, target: "aarch64-unknown-linux-gnu" });
+    const args = appImageBundleArgs({ debug: true, target: "x86_64-unknown-linux-gnu" });
     expect(args).toEqual([
       "bundle",
       "--bundles",
@@ -356,7 +344,7 @@ describe("AppImage: inyectar CEF DESPUÉS de linuxdeploy", () => {
       APPIMAGE_OVERRIDE_CONFIG,
       "--debug",
       "--target",
-      "aarch64-unknown-linux-gnu",
+      "x86_64-unknown-linux-gnu",
     ]);
     expect(args.join(" ")).not.toMatch(/cef-base|libcef/);
     expect(JSON.parse(APPIMAGE_OVERRIDE_CONFIG).bundle).toEqual({ resources: [], externalBin: [] });
@@ -365,8 +353,6 @@ describe("AppImage: inyectar CEF DESPUÉS de linuxdeploy", () => {
   it("el plugin usa el arch de linuxdeploy (x86_64), no el amd64 de Debian/AppImage", () => {
     expect(appImagePluginUrl(toolsArch("x86_64"))).toContain("linuxdeploy-plugin-appimage-x86_64.AppImage");
     expect(appImagePluginUrl(toolsArch("x86_64"))).not.toContain("amd64");
-    expect(appImagePluginUrl(toolsArch("aarch64"))).toContain("aarch64");
-    expect(appImagePluginUrl(toolsArch("armv7"))).toContain("armhf");
     expect(appImageArch("x86_64")).toBe("amd64");
   });
 
@@ -383,12 +369,12 @@ describe("AppImage: inyectar CEF DESPUÉS de linuxdeploy", () => {
         override: "",
         toolsDir: "/tmp/tools",
         exists: () => false,
-        arch: "aarch64",
+        arch: "x86_64",
       }),
     ).toEqual({
       kind: "download",
       path: "/tmp/tools/linuxdeploy-plugin-appimage.AppImage",
-      url: appImagePluginUrl("aarch64"),
+      url: appImagePluginUrl("x86_64"),
     });
   });
 });
