@@ -517,6 +517,13 @@ describe("injectCefIntoAppDir (después de linuxdeploy)", () => {
     expect(resolveManifestDest(baseDest, "locales/en-US.pak")).toBe(
       path.join(baseDest, "locales", "en-US.pak"),
     );
+    // `\` is a legal Linux filename character, not a separator.
+    expect(resolveManifestDest(baseDest, "locales\\en-US.pak")).toBe(
+      path.join(baseDest, "locales\\en-US.pak"),
+    );
+    expect(resolveManifestDest(baseDest, "locales\\..\\etc")).toBe(
+      path.join(baseDest, "locales\\..\\etc"),
+    );
   });
 });
 
@@ -526,5 +533,6 @@ describe("el wrapper no es un script de Ubuntu", () => {
     expect(src).not.toMatch(/\/etc\/apparmor\.d/);
     expect(src).not.toMatch(/apt-get|apparmor_restrict_unprivileged_userns/);
     expect(src).not.toMatch(/64\s*MiB/);
+    expect(src).not.toContain("split(/[\\\\/]/)");
   });
 });

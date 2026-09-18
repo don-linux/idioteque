@@ -430,7 +430,7 @@ export function resolveManifestDest(baseDest: string, relative: string): string 
   if (path.isAbsolute(relative)) {
     throw new Error(`Ruta de manifest fuera del AppDir: ${relative}`);
   }
-  const parts = relative.split(/[\\/]/).filter((part) => part.length > 0 && part !== ".");
+  const parts = relative.split("/").filter((part) => part.length > 0 && part !== ".");
   if (parts.includes("..") || parts.includes("")) {
     throw new Error(`Ruta de manifest fuera del AppDir: ${relative}`);
   }
