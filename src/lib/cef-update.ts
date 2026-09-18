@@ -1,8 +1,7 @@
 import type { CefUpdateEvent } from "$lib/cef-notices";
-import type { WorkspaceSurface } from "$lib/workspace-surface";
 
-export function shouldDefer(surface: WorkspaceSurface): boolean {
-  return surface === "browser";
+export function shouldDefer(): boolean {
+  return false;
 }
 
 export function cefUpdateKey(event: CefUpdateEvent): string {

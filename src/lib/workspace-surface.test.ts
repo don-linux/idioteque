@@ -1,36 +1,30 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import {
-  asHomeSurface,
-  nextSurfaceAfterLeave,
-  type WorkspaceHomeSurface,
-  type WorkspaceSurface,
-} from "./workspace-surface";
+import type { WorkspaceSurface } from "./workspace-surface";
 
-describe("asHomeSurface", () => {
-  it("keeps editor and terminals", () => {
-    expect(asHomeSurface("editor")).toBe("editor");
-    expect(asHomeSurface("terminals")).toBe("terminals");
-  });
+const SURFACES: WorkspaceSurface[] = ["editor", "terminals"];
 
-  it("falls back to editor when already on the browser", () => {
-    expect(asHomeSurface("browser")).toBe("editor");
+describe("workspace surfaces", () => {
+  it("is only editor and terminals", () => {
+    expect(SURFACES).toEqual(["editor", "terminals"]);
+    expect(SURFACES.includes("browser" as WorkspaceSurface)).toBe(false);
   });
 });
 
-describe("nextSurfaceAfterLeave", () => {
-  it("returns to the remembered non-browser surface", () => {
-    expect(nextSurfaceAfterLeave("browser", "editor")).toBe("editor");
-    expect(nextSurfaceAfterLeave("browser", "terminals")).toBe("terminals");
-  });
-
-  it("does not change editor or terminals", () => {
-    const homes: WorkspaceHomeSurface[] = ["editor", "terminals"];
-    const currents: WorkspaceSurface[] = ["editor", "terminals"];
-
-    for (const current of currents) {
-      for (const previous of homes) {
-        expect(nextSurfaceAfterLeave(current, previous)).toBe(current);
-      }
-    }
+describe("runtime sources have no internal browser surface", () => {
+  it("does not mount a page host or toolbar", () => {
+    const surface = readFileSync(fileURLToPath(new URL("./workspace-surface.ts", import.meta.url)), "utf8");
+    const page = readFileSync(
+      fileURLToPath(new URL("../routes/workspace/+page.svelte", import.meta.url)),
+      "utf8",
+    );
+    const layout = readFileSync(
+      fileURLToPath(new URL("../routes/workspace/+layout.svelte", import.meta.url)),
+      "utf8",
+    );
+    expect(surface).not.toMatch(/"browser"/);
+    expect(page).not.toMatch(/BrowserView|BrowserToolbar|browser-slot|surface-browser|class="host"/);
+    expect(layout).not.toMatch(/claimUrlBar|handleBrowserFocusUrlShortcut/);
   });
 });

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import type { CefUpdateEvent } from "./cef-notices";
-import type { WorkspaceSurface } from "./workspace-surface";
 import {
   cefUpdateKey,
   drainCefUpdates,
@@ -25,17 +24,8 @@ const incompatible: CefUpdateEvent = {
 };
 
 describe("shouldDefer", () => {
-  it("defers only while the browser surface is visible", () => {
-    expect(shouldDefer("browser")).toBe(true);
-    expect(shouldDefer("editor")).toBe(false);
-    expect(shouldDefer("terminals")).toBe(false);
-  });
-
-  it("does not treat lookalike surface names as the browser", () => {
-    const lookalikes = ["Browser", "BROWSER", "browser ", " browser", ""] as WorkspaceSurface[];
-    for (const surface of lookalikes) {
-      expect(shouldDefer(surface)).toBe(false);
-    }
+  it("never defers: there is no internal browser surface", () => {
+    expect(shouldDefer()).toBe(false);
   });
 });
 

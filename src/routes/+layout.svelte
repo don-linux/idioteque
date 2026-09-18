@@ -9,7 +9,6 @@
   import { settingsEditor } from "$lib/settings-editor.svelte";
   import { unsavedExit } from "$lib/unsaved-exit.svelte";
   import { applyTheme } from "$lib/ui-theme";
-  import { surface } from "$lib/workspace-surface.svelte";
   import { workspace } from "$lib/workspace.svelte";
 
   let { children }: { children: Snippet } = $props();
@@ -19,7 +18,7 @@
   });
 
   $effect(() => {
-    if (surface.current !== "browser") cefUpdates.flush();
+    cefUpdates.flush();
   });
 
   onMount(() => {

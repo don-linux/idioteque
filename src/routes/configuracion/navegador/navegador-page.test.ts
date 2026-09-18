@@ -157,7 +157,7 @@ describe("runtimeLines / COPY", () => {
     const lines = runtimeLines(sampleInfo());
     expect(COPY.heading).toBe("Navegador");
     expect(COPY.lead).toBe(
-      "Motor Chromium embebido. No hay nada que guardar aquí: es información y un botón.",
+      "Motor Chromium en una ventana propia. No hay nada que guardar aquí: es información y un botón.",
     );
     expect(COPY.loading).toBe("Cargando…");
     expect(COPY.check).toBe("Buscar actualización");

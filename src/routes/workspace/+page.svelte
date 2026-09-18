@@ -1,20 +1,17 @@
 <script lang="ts">
-  import BrowserView from "$lib/components/BrowserView.svelte";
   import EditorPane from "$lib/components/EditorPane.svelte";
   import FileTreePanel from "$lib/components/FileTreePanel.svelte";
   import GitGraphPanel from "$lib/components/GitGraphPanel.svelte";
   import PanelSplitter from "$lib/components/PanelSplitter.svelte";
   import TerminalHost from "$lib/components/TerminalHost.svelte";
   import { appConfig } from "$lib/app-config.svelte";
-  import { browser } from "$lib/browser.svelte";
   import { terminal } from "$lib/terminal.svelte";
   import { panels } from "$lib/workspace-panels.svelte";
   import { surface } from "$lib/workspace-surface.svelte";
   import { workspace } from "$lib/workspace.svelte";
 
   let terminals = $derived(surface.current === "terminals");
-  let browsing = $derived(surface.current === "browser");
-  let parkedChrome = $derived(terminals || browsing);
+  let parkedChrome = $derived(terminals);
   let peeking = $derived(terminal.peeking);
   let showTree = $derived(panels.treeVisible);
 
@@ -32,7 +29,6 @@
     class:term-bottom={peeking && terminal.dock === "bottom"}
     class:term-right={peeking && terminal.dock === "right"}
     class:surface-terminals={terminals}
-    class:surface-browser={browsing}
     style:--tree-width="{panels.treeWidth}px"
     style:--term-size="{terminal.size}px"
     style:--park-width="{terminal.parkWidth}px"
@@ -82,18 +78,12 @@
         <TerminalHost cwd={workspace.root} />
       </div>
     {/if}
-
-    {#if browser.started}
-      <div class="browser-slot" class:parked={!browsing}>
-        <BrowserView />
-      </div>
-    {/if}
   </div>
 {/if}
 
 <style>
   /*
-   * Four regions, two of them optional. The tracks are named so a hidden tree or
+   * Three regions, one of them optional. The tracks are named so a hidden tree or
    * a parked terminal simply drops out of the template, and every visible region
    * keeps a definite size: xterm measures its own box and needs one.
    */
@@ -134,8 +124,7 @@
     grid-template-areas: "tree sash editor term";
   }
 
-  .workspace.surface-terminals,
-  .workspace.surface-browser {
+  .workspace.surface-terminals {
     position: absolute;
     top: 0;
     right: 0;
@@ -189,31 +178,14 @@
   }
 
   /* Alive but out of sight: xterm keeps a measurable box so cols/rows stay valid. */
-  .term-slot.parked,
-  .browser-slot.parked {
+  .term-slot.parked {
     position: fixed;
     top: 0;
-    left: -12000px;
+    left: -100vw;
     width: var(--park-width);
     height: var(--park-height);
     overflow: hidden;
     pointer-events: none;
     z-index: -1;
-  }
-
-  .browser-slot {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    min-height: 0;
-    overflow: hidden;
-    background: var(--bg);
-  }
-
-  .browser-slot.parked {
-    width: min(80vw, 1200px);
-    height: 80vh;
   }
 </style>

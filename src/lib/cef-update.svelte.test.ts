@@ -77,26 +77,9 @@ describe("CefUpdates", () => {
     invokeMock.mockRejectedValue(new Error("no tauri"));
   });
 
-  it("does not toast while the browser surface is covering the host window", () => {
-    surface.current = "browser";
+  it("toasts immediately; there is no internal surface to cover the editor", () => {
     updates.enqueue(updated);
     updates.enqueue(incompatible);
-
-    expect(toasts.successLong).not.toHaveBeenCalled();
-    expect(toasts.notice).not.toHaveBeenCalled();
-  });
-
-  it("flushes the deferred queue only after leaving the browser", () => {
-    surface.current = "browser";
-    updates.enqueue(updated);
-    updates.enqueue(incompatible);
-
-    updates.flush();
-    expect(toasts.successLong).not.toHaveBeenCalled();
-    expect(toasts.notice).not.toHaveBeenCalled();
-
-    surface.current = "editor";
-    updates.flush();
 
     expect(toasts.successLong).toHaveBeenCalledTimes(1);
     expect(toasts.successLong).toHaveBeenCalledWith(updatedMessage(updated));
@@ -109,9 +92,7 @@ describe("CefUpdates", () => {
   });
 
   it("is a no-op if flush runs again after the queue was drained", () => {
-    surface.current = "browser";
     updates.enqueue(updated);
-    surface.current = "terminals";
     updates.flush();
     updates.flush();
 
@@ -126,10 +107,8 @@ describe("CefUpdates", () => {
     expect(toasts.successLong).toHaveBeenCalledTimes(1);
   });
 
-  it("does not toast a duplicate after it was already flushed from the browser queue", () => {
-    surface.current = "browser";
+  it("does not toast a duplicate after it was already shown", () => {
     updates.enqueue(updated);
-    surface.current = "editor";
     updates.flush();
     updates.enqueue({ ...updated });
 
@@ -214,7 +193,7 @@ describe("CefUpdates", () => {
     expect(toasts.successLong).toHaveBeenCalledTimes(1);
   });
 
-  it("wires a successful listen into enqueue so a browser-surface event stays queued", async () => {
+  it("wires a successful listen into enqueue so the toast shows immediately", async () => {
     let handler: ((event: { payload: CefUpdateEvent }) => void) | undefined;
     listenMock.mockImplementation(async (_name: string, cb: (event: { payload: CefUpdateEvent }) => void) => {
       handler = cb;
@@ -224,12 +203,7 @@ describe("CefUpdates", () => {
     invokeMock.mockResolvedValue({ hostApiVersion: 15200, platform: "linux64" });
 
     await updates.start();
-    surface.current = "browser";
     handler?.({ payload: updated });
-    expect(toasts.successLong).not.toHaveBeenCalled();
-
-    surface.current = "editor";
-    updates.flush();
     expect(toasts.successLong).toHaveBeenCalledTimes(1);
   });
 });

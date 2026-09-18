@@ -39,33 +39,6 @@ export function isBrowserToggleAnywhereShortcut(event: Chord): boolean {
   );
 }
 
-/** Ctrl+L: focus the URL. X11 stays on the Tauri toplevel, so wry must handle it. */
-export function isBrowserFocusUrlShortcut(event: Chord): boolean {
-  return (
-    event.code === "KeyL" &&
-    event.ctrlKey &&
-    !event.metaKey &&
-    !event.shiftKey &&
-    !event.altKey
-  );
-}
-
-export function handleBrowserFocusUrlShortcut(
-  event: BrowserShortcutEvent,
-  ctx: {
-    browserSurface: boolean;
-    focusUrl: () => void;
-  },
-): void {
-  if (!isBrowserFocusUrlShortcut(event)) return;
-  if (!ctx.browserSurface) return;
-
-  event.preventDefault();
-  event.stopPropagation();
-  event.stopImmediatePropagation?.();
-  ctx.focusUrl();
-}
-
 export function handleBrowserShortcut(
   event: BrowserShortcutEvent,
   ctx: {
