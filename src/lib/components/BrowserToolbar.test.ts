@@ -61,13 +61,13 @@ function loadHandlers(js: string) {
       "browser",
       "displayUrl",
       "HTMLInputElement",
-      "shouldClaimAppFocus",
+      "shouldHandleToolbarFocusIn",
       `${src}\nreturn { onToolbarFocusIn, onUrlKeydown };`,
     )(
       browser,
       displayUrl,
       FakeInput,
-      (owner: string) => owner !== "app",
+      (owner: string, blocked: boolean) => !blocked && owner !== "app",
     ) as {
       onToolbarFocusIn: () => void;
       onUrlKeydown: (event: {
@@ -89,6 +89,7 @@ function fakeBrowser(overrides: Record<string, unknown> = {}) {
     inputUrl: "example.com/other",
     focusUrlRequested: 0,
     focusOwner: "browser",
+    toolbarClaimBlocked: false,
     focusApp: vi.fn().mockImplementation(async function (this: { focusOwner: string }) {
       this.focusOwner = "app";
     }),
@@ -133,7 +134,7 @@ describe("BrowserToolbar", () => {
     expect(js).not.toMatch(/\$\.delegated\('focus',\s*input_1/);
 
     const focusin = extractFunction(js, "onToolbarFocusIn");
-    expect(focusin).toMatch(/shouldClaimAppFocus\(browser\.focusOwner\)/);
+    expect(focusin).toMatch(/shouldHandleToolbarFocusIn\(browser\.focusOwner,\s*browser\.toolbarClaimBlocked\)/);
     expect(focusin).toMatch(/browser\.focusApp\(\)/);
     expect(focusin).not.toMatch(/browser\.focus\(/);
     expect(focusin).not.toMatch(/alive/);
@@ -164,6 +165,13 @@ describe("BrowserToolbar", () => {
       expect(browser.focusApp, JSON.stringify(state)).toHaveBeenCalledTimes(1);
       expect(browser.focus, JSON.stringify(state)).not.toHaveBeenCalled();
     }
+  });
+
+  it("does not reclaim when owner=browser blur blocks toolbar focusin", () => {
+    const js = compileToolbar();
+    const browser = fakeBrowser({ focusOwner: "browser", toolbarClaimBlocked: true });
+    loadHandlers(js)(browser).onToolbarFocusIn();
+    expect(browser.focusApp).not.toHaveBeenCalled();
   });
 
   it("does not send a second browser_focus_app when the app already owns the keyboard", () => {

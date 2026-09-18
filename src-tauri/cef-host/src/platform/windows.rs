@@ -21,6 +21,7 @@ pub fn unmap_window(_xid: u64) {}
 pub fn raise_window(_xid: u64) {}
 pub fn move_resize(_xid: u64, _x: i32, _y: i32, _w: i32, _h: i32) {}
 pub fn focus_window(_xid: u64) {}
+pub fn ungrab_input() {}
 
 pub fn reparent(_child: u64, _parent: u64, _x: i32, _y: i32) {}
 

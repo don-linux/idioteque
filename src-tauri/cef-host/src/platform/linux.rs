@@ -4,11 +4,13 @@ use std::env::VarError;
 use std::ffi::CString;
 use std::sync::OnceLock;
 
+use x11_dl::xinput2::{self, XInput2};
 use x11_dl::xlib::{self, CurrentTime, Display as XDisplay, RevertToParent, Xlib};
 
 use crate::exit::{self, fatal};
 
 static XLIB: OnceLock<Xlib> = OnceLock::new();
+static XINPUT2: OnceLock<Option<XInput2>> = OnceLock::new();
 
 fn xlib() -> &'static Xlib {
     XLIB.get_or_init(|| {
@@ -228,6 +230,32 @@ pub fn focus_window(xid: u64) {
     with_display(xid, |x, dpy, w| unsafe {
         (x.XSetInputFocus)(dpy, w, revert, time);
     });
+}
+
+fn xinput2() -> Option<&'static XInput2> {
+    XINPUT2
+        .get_or_init(|| XInput2::open().ok())
+        .as_ref()
+}
+
+/// Ozone grabs the keyboard on *this* X connection (often XI2). ADE cannot.
+pub fn ungrab_input() {
+    let dpy = dpy();
+    if dpy.is_null() {
+        return;
+    }
+    unsafe {
+        (xlib().XUngrabKeyboard)(dpy, CurrentTime);
+        (xlib().XUngrabPointer)(dpy, CurrentTime);
+        if let Some(xi) = xinput2() {
+            let mut major = xinput2::XI_2_Major;
+            let mut minor = xinput2::XI_2_Minor;
+            let _ = (xi.XIQueryVersion)(dpy, &mut major, &mut minor);
+            (xi.XIUngrabDevice)(dpy, xinput2::XIAllMasterDevices, CurrentTime);
+            (xi.XIUngrabDevice)(dpy, xinput2::XIAllDevices, CurrentTime);
+        }
+        (xlib().XFlush)(dpy);
+    }
 }
 
 pub fn reparent(child: u64, parent: u64, x: i32, y: i32) {

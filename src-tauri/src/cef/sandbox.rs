@@ -943,6 +943,16 @@ mod tests {
             ForwardAction::Send,
             "ctrl+l shortcut is forwarded like focus once the host is ready"
         );
+        let keys = HostEvent::Keys { text: "a".into() };
+        assert_eq!(
+            forward_action(&keys, false, false, false),
+            ForwardAction::Drop
+        );
+        assert_eq!(
+            forward_action(&keys, true, false, false),
+            ForwardAction::Send,
+            "keys swallowed by the host are forwarded after ready"
+        );
         assert_eq!(
             forward_action(&fatal(15), false, false, true),
             ForwardAction::Send

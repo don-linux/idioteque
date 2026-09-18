@@ -34,6 +34,9 @@ pub enum HostEvent {
     Shortcut {
         chord: String,
     },
+    Keys {
+        text: String,
+    },
     Focus {
         owner: FocusOwner,
         #[serde(default)]
@@ -191,6 +194,10 @@ mod tests {
             HostEvent::Shortcut {
                 chord: "ctrl+l".into()
             }
+        );
+        assert_eq!(
+            parse_event(r#"{"event":"keys","text":"A"}"#).unwrap(),
+            HostEvent::Keys { text: "A".into() }
         );
         assert_eq!(
             parse_event(r#"{"event":"focus","owner":"browser"}"#).unwrap(),

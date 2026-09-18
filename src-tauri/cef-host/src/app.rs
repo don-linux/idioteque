@@ -2,6 +2,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use cef::sys::cef_event_flags_t;
 use cef::{
@@ -19,10 +20,12 @@ use crate::slot::{self, Manifest};
 const MENU_INSPECT: i32 = 26500; // MENU_ID_USER_FIRST
 const MENU_RELOAD: i32 = 26501;
 
+const VK_TAB: i32 = 0x09;
 const VK_ESCAPE: i32 = 0x1B;
 const VK_LEFT: i32 = 0x25;
 const VK_RIGHT: i32 = 0x27;
 const VK_B: i32 = 0x42;
+const VK_L_LOWER: i32 = 0x6C;
 const VK_I: i32 = 0x49;
 const VK_L: i32 = 0x4C;
 const VK_R: i32 = 0x52;
@@ -141,12 +144,11 @@ fn emit_chrome_ui_event(health_check: bool, is_main: bool) -> bool {
 }
 
 /// Alloy native children wrap Tab inside the document, so `OnTakeFocus` often
-/// never fires. The main frame injects a capture trap that beacons this prefix.
+/// never fires. The trap beacons this prefix (console) or the custom scheme.
 const TAKE_FOCUS_BEACON: &str = "idioteque:take-focus:";
+const TAKE_FOCUS_URL: &str = "idioteque://chrome/take-focus?next=";
 
-const TAKE_FOCUS_SCRIPT: &str = r#"(function(){
-  if (window.__idiotequeTakeFocus) return;
-  window.__idiotequeTakeFocus = 1;
+pub(crate) const TAKE_FOCUS_SCRIPT: &str = r#"(function(){
   function visible(el){
     if (el.tabIndex < 0) return false;
     var st = window.getComputedStyle(el);
@@ -158,36 +160,69 @@ const TAKE_FOCUS_SCRIPT: &str = r#"(function(){
     return Array.prototype.filter.call(document.querySelectorAll(sel), visible);
   }
   function beacon(next){
+    try { var a = document.activeElement; if (a && a.blur) a.blur(); } catch (e) {}
     try { console.info('idioteque:take-focus:' + (next ? '1' : '0')); } catch (e) {}
+    try { location.assign('idioteque://chrome/take-focus?next=' + (next ? '1' : '0')); } catch (e) {}
   }
-  document.addEventListener('keydown', function(e){
-    if (e.key !== 'Tab' || e.ctrlKey || e.altKey || e.metaKey || e.isComposing) return;
+  window.__idiotequeHandleTab = function(forward){
     var items = list();
     var active = document.activeElement;
-    var forward = !e.shiftKey;
     var empty = items.length === 0;
     var first = empty ? null : items[0];
     var last = empty ? null : items[items.length - 1];
     var atStart = empty || !active || active === document.body || active === document.documentElement || active === first;
     var atEnd = empty || active === last;
     if ((forward && atEnd) || (!forward && atStart)) {
+      beacon(!!forward);
+      return true;
+    }
+    if (empty) return false;
+    var i = items.indexOf(active);
+    var target = i < 0 ? (forward ? first : last) : items[i + (forward ? 1 : -1)];
+    if (target) target.focus();
+    return false;
+  };
+  if (window.__idiotequeTakeFocus) return;
+  window.__idiotequeTakeFocus = 1;
+  window.addEventListener('keydown', function(e){
+    if (e.key !== 'Tab' || e.ctrlKey || e.altKey || e.metaKey || e.isComposing) return;
+    if (window.__idiotequeHandleTab(!e.shiftKey)) {
       e.preventDefault();
-      e.stopPropagation();
-      beacon(forward);
+      e.stopImmediatePropagation();
     }
   }, true);
 })();"#;
 
 fn parse_take_focus_beacon(message: &str) -> Option<bool> {
-    let rest = message.trim().strip_prefix(TAKE_FOCUS_BEACON)?;
-    match rest {
-        "1" => Some(true),
-        "0" => Some(false),
-        _ => None,
+    let text = message.trim();
+    if let Some(rest) = text.strip_prefix(TAKE_FOCUS_BEACON) {
+        return match rest {
+            "1" => Some(true),
+            "0" => Some(false),
+            _ => None,
+        };
     }
+    if let Some(rest) = text.strip_prefix(TAKE_FOCUS_URL) {
+        return match rest.chars().next() {
+            Some('1') => Some(true),
+            Some('0') => Some(false),
+            _ => None,
+        };
+    }
+    if !text.starts_with("idioteque:") || !text.contains("take-focus") {
+        return None;
+    }
+    if let Some(rest) = text.split("next=").nth(1) {
+        return match rest.chars().next() {
+            Some('1') => Some(true),
+            Some('0') => Some(false),
+            _ => None,
+        };
+    }
+    None
 }
 
-fn take_focus_from_console(health_check: bool, is_main: bool, message: &str) -> Option<HostEvent> {
+fn take_focus_from_beacon(health_check: bool, is_main: bool, message: &str) -> Option<HostEvent> {
     parse_take_focus_beacon(message)
         .and_then(|next| focus_handoff_event(health_check, is_main, FocusHandoff::App { next }))
 }
@@ -200,12 +235,46 @@ fn should_inject_take_focus_trap(
     !health_check && is_main_browser && is_main_frame
 }
 
-fn inject_take_focus_trap(frame: &Frame) {
+pub(crate) fn inject_take_focus_trap(frame: &Frame) {
     frame.execute_java_script(
         Some(&cef_str(TAKE_FOCUS_SCRIPT)),
         Some(&cef_str("idioteque-take-focus-trap")),
         1,
     );
+}
+
+fn tab_dispatch_script(next: bool) -> String {
+    let flag = if next { "true" } else { "false" };
+    format!(
+        "(function(){{if(typeof window.__idiotequeHandleTab==='function'){{window.__idiotequeHandleTab({flag});return;}}{TAKE_FOCUS_SCRIPT}if(typeof window.__idiotequeHandleTab==='function')window.__idiotequeHandleTab({flag});}})();"
+    )
+}
+
+fn dispatch_tab_in_page(browser: Option<&mut Browser>, next: bool) {
+    let Some(browser) = browser else {
+        return;
+    };
+    let Some(frame) = browser.main_frame() else {
+        return;
+    };
+    let script = tab_dispatch_script(next);
+    frame.execute_java_script(
+        Some(&cef_str(&script)),
+        Some(&cef_str("idioteque-tab-dispatch")),
+        1,
+    );
+}
+
+fn is_host_keydown(kind: KeyEventType) -> bool {
+    kind == KeyEventType::RAWKEYDOWN || kind == KeyEventType::KEYDOWN
+}
+
+fn host_key_code(windows: i32) -> i32 {
+    if windows == VK_L_LOWER {
+        VK_L
+    } else {
+        windows
+    }
 }
 
 fn shortcut_event(health_check: bool, is_main: bool, chord: &str) -> Option<HostEvent> {
@@ -265,15 +334,132 @@ fn drop_browser_focus_plan() -> BrowserFocusPlan {
     }
 }
 
+fn should_ungrab_on_unfocus() -> bool {
+    true
+}
+
+fn should_drop_modified_char(kind: KeyEventType, ctrl: bool, alt: bool) -> bool {
+    kind == KeyEventType::CHAR && (ctrl || alt)
+}
+
+fn printable_char(raw: u32) -> Option<char> {
+    let ch = char::from_u32(raw)?;
+    if ch.is_control() || ch == '\0' {
+        None
+    } else {
+        Some(ch)
+    }
+}
+
+fn vk_typed_char(windows: i32, shift: bool) -> Option<char> {
+    let key = host_key_code(windows);
+    match key {
+        0x20 => Some(' '),
+        0x30..=0x39 if !shift => char::from_u32(key as u32),
+        0x41..=0x5A => {
+            let letter = char::from_u32(key as u32)?;
+            Some(if shift {
+                letter
+            } else {
+                letter.to_ascii_lowercase()
+            })
+        }
+        _ => None,
+    }
+}
+
+/// CHAR is dropped when we consume KEYDOWN, so read the glyph from keydown too.
+fn key_text(event: &KeyEvent) -> Option<String> {
+    if event.modifiers & (FLAG_CTRL | FLAG_ALT) != 0 {
+        return None;
+    }
+    if let Some(ch) = printable_char(event.character as u32) {
+        if event.type_ == KeyEventType::CHAR || is_host_keydown(event.type_) {
+            return Some(ch.to_string());
+        }
+    }
+    if !is_host_keydown(event.type_) {
+        return None;
+    }
+    vk_typed_char(
+        event.windows_key_code,
+        event.modifiers & FLAG_SHIFT != 0,
+    )
+    .map(|ch| ch.to_string())
+}
+
+fn keys_event(health_check: bool, is_main: bool, text: String) -> Option<HostEvent> {
+    if !emit_chrome_ui_event(health_check, is_main) || text.is_empty() {
+        return None;
+    }
+    Some(HostEvent::Keys { text })
+}
+
 fn apply_browser_focus(state: &AppState, plan: BrowserFocusPlan) {
+    state
+        .app_owns_keyboard
+        .store(plan.set_focus == 0, Ordering::SeqCst);
     if plan.x11 {
         platform::focus_window(state.xid());
+    }
+    if plan.set_focus == 0 && should_ungrab_on_unfocus() {
+        eprintln!("[cef] ungrab host X11");
+        platform::ungrab_input();
     }
     if let Some(browser) = state.lock_browser() {
         if let Some(host) = browser.host() {
             host.set_focus(plan.set_focus);
         }
+        if plan.set_focus == 0 {
+            blur_page_keyboard(&browser);
+        }
     }
+}
+
+const BLUR_PAGE_SCRIPT: &str =
+    r#"(function(){try{var a=document.activeElement;if(a&&a.blur)a.blur();}catch(e){}})();"#;
+
+fn blur_page_keyboard(browser: &Browser) {
+    let Some(frame) = browser.main_frame() else {
+        return;
+    };
+    frame.execute_java_script(
+        Some(&cef_str(BLUR_PAGE_SCRIPT)),
+        Some(&cef_str("idioteque-blur-page")),
+        1,
+    );
+}
+
+fn take_focus_should_emit(last: &Mutex<Option<(bool, Instant)>>, next: bool) -> bool {
+    let Ok(mut guard) = last.lock() else {
+        return true;
+    };
+    if let Some((prev, at)) = *guard {
+        if prev == next && at.elapsed() < Duration::from_millis(80) {
+            return false;
+        }
+    }
+    *guard = Some((next, Instant::now()));
+    true
+}
+
+fn emit_take_focus(state: &AppState, is_main: bool, message: &str) -> bool {
+    let Some(event) = take_focus_from_beacon(state.args.health_check, is_main, message) else {
+        return false;
+    };
+    let next = match &event {
+        HostEvent::Focus {
+            next: Some(value), ..
+        } => *value,
+        _ => true,
+    };
+    if !take_focus_should_emit(&state.last_take_focus, next) {
+        eprintln!("[cef] take-focus debounce next={next}");
+        return true;
+    }
+    state.app_owns_keyboard.store(true, Ordering::SeqCst);
+    protocol::emit(&event);
+    true
 }
 
 fn emit_load_error(
@@ -289,6 +475,7 @@ fn emit_load_error(
 enum PreKeyAction {
     Ignore,
     Shortcut(&'static str),
+    Tab { next: bool },
     ToggleDevtools,
     Reload { ignore_cache: bool },
     Back,
@@ -296,9 +483,19 @@ enum PreKeyAction {
     Stop,
 }
 
-fn pre_key_action(raw_keydown: bool, key: i32, ctrl: bool, shift: bool, alt: bool) -> PreKeyAction {
-    if !raw_keydown {
+/// While chrome owns the caret, Ozone still sees keys (pointer stays over the
+/// child; `set_focus(0)` is often a no-op). Swallow page keys; keep shortcuts.
+fn should_swallow_page_key(app_owns_keyboard: bool, action: PreKeyAction) -> bool {
+    app_owns_keyboard && !matches!(action, PreKeyAction::Shortcut(_))
+}
+
+fn pre_key_action(keydown: bool, key: i32, ctrl: bool, shift: bool, alt: bool) -> PreKeyAction {
+    if !keydown {
         return PreKeyAction::Ignore;
+    }
+    let key = host_key_code(key);
+    if !ctrl && !alt && key == VK_TAB {
+        return PreKeyAction::Tab { next: !shift };
     }
     if ctrl && !alt && key == VK_B {
         return PreKeyAction::Shortcut(if shift { "ctrl+shift+b" } else { "ctrl+b" });
@@ -380,6 +577,10 @@ pub struct AppState {
     pub shim_xid: AtomicU64,
     /// `--disable-dev-shm-usage`: solo si `/dev/shm` no sirve (`shm::decide`).
     pub disable_dev_shm: bool,
+    /// ADE chrome owns keys (`unfocus`). Ozone still delivers page keys until
+    /// a real click, so `on_pre_key_event` swallows them.
+    pub app_owns_keyboard: AtomicBool,
+    last_take_focus: Mutex<Option<(bool, Instant)>>,
 }
 
 impl AppState {
@@ -395,6 +596,8 @@ impl AppState {
             closing: AtomicBool::new(false),
             health_cancel: Mutex::new(None),
             shim_xid: AtomicU64::new(0),
+            app_owns_keyboard: AtomicBool::new(false),
+            last_take_focus: Mutex::new(None),
         })
     }
 
@@ -430,6 +633,8 @@ impl AppState {
         if let Some(event) =
             focus_handoff_event(self.args.health_check, self.is_main(browser), handoff)
         {
+            self.app_owns_keyboard
+                .store(matches!(handoff, FocusHandoff::App { .. }), Ordering::SeqCst);
             protocol::emit(&event);
         }
     }
@@ -995,6 +1200,27 @@ wrap_load_handler! {
             self.state.emit_nav(browser, None);
         }
 
+        fn on_load_start(
+            &self,
+            browser: Option<&mut Browser>,
+            frame: Option<&mut Frame>,
+            _transition_type: TransitionType,
+        ) {
+            let Some(frame) = frame else {
+                return;
+            };
+            if frame.is_main() == 0 {
+                return;
+            }
+            let is_main = browser
+                .as_ref()
+                .map(|b| self.state.is_main(b))
+                .unwrap_or(true);
+            if should_inject_take_focus_trap(self.state.args.health_check, is_main, true) {
+                inject_take_focus_trap(frame);
+            }
+        }
+
         fn on_load_end(
             &self,
             browser: Option<&mut Browser>,
@@ -1139,14 +1365,11 @@ wrap_display_handler! {
                 .as_ref()
                 .map(|b| self.state.is_main(b))
                 .unwrap_or(true);
-            let Some(event) = take_focus_from_console(
-                self.state.args.health_check,
-                is_main,
-                &message.to_string(),
-            ) else {
+            let text = message.to_string();
+            if !emit_take_focus(&self.state, is_main, &text) {
                 return 0;
-            };
-            protocol::emit(&event);
+            }
+            eprintln!("[cef] take-focus console {text}");
             1
         }
     }
@@ -1162,6 +1385,9 @@ wrap_focus_handler! {
             let Some(browser) = browser else {
                 return;
             };
+            self.state
+                .app_owns_keyboard
+                .store(false, Ordering::SeqCst);
             self.state.emit_focus(browser, FocusHandoff::Browser);
         }
 
@@ -1185,22 +1411,66 @@ wrap_keyboard_handler! {
             &self,
             browser: Option<&mut Browser>,
             event: Option<&KeyEvent>,
-            _os_event: Option<&mut cef::sys::XEvent>,
+            os_event: Option<&mut cef::sys::XEvent>,
             _is_keyboard_shortcut: Option<&mut ::std::os::raw::c_int>,
         ) -> ::std::os::raw::c_int {
             let Some(event) = event else {
                 return 0;
             };
             let mods = event.modifiers;
+            let ctrl = mods & FLAG_CTRL != 0;
+            let shift = mods & FLAG_SHIFT != 0;
+            let alt = mods & FLAG_ALT != 0;
+            if should_drop_modified_char(event.type_, ctrl, alt) {
+                eprintln!(
+                    "[cef] drop modified CHAR win={:#x}",
+                    event.windows_key_code
+                );
+                return 1;
+            }
             let action = pre_key_action(
-                event.type_ == KeyEventType::RAWKEYDOWN,
+                is_host_keydown(event.type_),
                 event.windows_key_code,
-                mods & FLAG_CTRL != 0,
-                mods & FLAG_SHIFT != 0,
-                mods & FLAG_ALT != 0,
+                ctrl,
+                shift,
+                alt,
             );
+            if ctrl {
+                eprintln!(
+                    "[cef] pre-key ctrl type={:?} win={:#x} action={action:?}",
+                    event.type_, event.windows_key_code
+                );
+            }
+            if should_swallow_page_key(
+                self.state.app_owns_keyboard.load(Ordering::SeqCst),
+                action,
+            ) {
+                let is_main = browser
+                    .as_ref()
+                    .map(|b| self.state.is_main(b))
+                    .unwrap_or(true);
+                if let Some(text) = key_text(event) {
+                    if let Some(event) =
+                        keys_event(self.state.args.health_check, is_main, text.clone())
+                    {
+                        eprintln!("[cef] emit keys {text:?}");
+                        protocol::emit(&event);
+                    }
+                }
+                let _ = os_event;
+                eprintln!(
+                    "[cef] swallow page key win={:#x} while app owns keyboard",
+                    event.windows_key_code
+                );
+                return 1;
+            }
             match action {
                 PreKeyAction::Ignore => 0,
+                PreKeyAction::Tab { next } => {
+                    eprintln!("[cef] tab-edge dispatch next={next}");
+                    dispatch_tab_in_page(browser, next);
+                    1
+                }
                 PreKeyAction::Shortcut(chord) => {
                     let is_main = browser
                         .as_ref()
@@ -1209,6 +1479,10 @@ wrap_keyboard_handler! {
                     if let Some(event) =
                         shortcut_event(self.state.args.health_check, is_main, chord)
                     {
+                        self.state
+                            .app_owns_keyboard
+                            .store(true, Ordering::SeqCst);
+                        eprintln!("[cef] emit shortcut {chord}");
                         protocol::emit(&event);
                     }
                     1
@@ -1306,6 +1580,29 @@ wrap_request_handler! {
     }
 
     impl RequestHandler {
+        fn on_before_browse(
+            &self,
+            browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            request: Option<&mut Request>,
+            _user_gesture: ::std::os::raw::c_int,
+            _is_redirect: ::std::os::raw::c_int,
+        ) -> ::std::os::raw::c_int {
+            let Some(request) = request else {
+                return 0;
+            };
+            let url = CefString::from(&request.url()).to_string();
+            let is_main = browser
+                .as_ref()
+                .map(|b| self.state.is_main(b))
+                .unwrap_or(true);
+            if !emit_take_focus(&self.state, is_main, &url) {
+                return 0;
+            }
+            eprintln!("[cef] take-focus beacon {url}");
+            1
+        }
+
         fn on_render_process_terminated(
             &self,
             _browser: Option<&mut Browser>,
@@ -1656,29 +1953,29 @@ mod tests {
     #[test]
     fn take_focus_console_emits_owner_app_for_main_browser() {
         assert_eq!(
-            take_focus_from_console(false, true, "idioteque:take-focus:1"),
+            take_focus_from_beacon(false, true, "idioteque:take-focus:1"),
             Some(HostEvent::Focus {
                 owner: FocusOwner::App,
                 next: Some(true),
             })
         );
         assert_eq!(
-            take_focus_from_console(false, true, "idioteque:take-focus:0"),
+            take_focus_from_beacon(false, true, "idioteque:take-focus:0"),
             Some(HostEvent::Focus {
                 owner: FocusOwner::App,
                 next: Some(false),
             })
         );
         assert_ne!(
-            take_focus_from_console(false, true, "idioteque:take-focus:1"),
-            take_focus_from_console(false, true, "idioteque:take-focus:0")
+            take_focus_from_beacon(false, true, "idioteque:take-focus:1"),
+            take_focus_from_beacon(false, true, "idioteque:take-focus:0")
         );
         assert_eq!(
-            take_focus_from_console(true, true, "idioteque:take-focus:1"),
+            take_focus_from_beacon(true, true, "idioteque:take-focus:1"),
             None
         );
         assert_eq!(
-            take_focus_from_console(false, false, "idioteque:take-focus:0"),
+            take_focus_from_beacon(false, false, "idioteque:take-focus:0"),
             None
         );
     }
@@ -1698,11 +1995,99 @@ mod tests {
         assert_eq!(parse_take_focus_beacon("take-focus:1"), None);
         assert_eq!(parse_take_focus_beacon("console.info"), None);
         assert_eq!(parse_take_focus_beacon(""), None);
+        assert_eq!(
+            parse_take_focus_beacon("idioteque://chrome/take-focus?next=1"),
+            Some(true)
+        );
+        assert_eq!(
+            parse_take_focus_beacon(&format!("{TAKE_FOCUS_URL}0")),
+            Some(false)
+        );
+        assert_eq!(
+            take_focus_from_beacon(false, true, "idioteque://chrome/take-focus?next=1"),
+            Some(HostEvent::Focus {
+                owner: FocusOwner::App,
+                next: Some(true),
+            })
+        );
         assert!(TAKE_FOCUS_SCRIPT.contains(TAKE_FOCUS_BEACON));
+        assert!(TAKE_FOCUS_SCRIPT.contains(TAKE_FOCUS_URL));
+        assert!(TAKE_FOCUS_SCRIPT.contains("window.addEventListener"));
+        assert!(
+            !TAKE_FOCUS_SCRIPT.contains("document.addEventListener"),
+            "capture must be on window so it can run before page document listeners"
+        );
+        assert!(TAKE_FOCUS_SCRIPT.contains("__idiotequeHandleTab"));
+        assert!(TAKE_FOCUS_SCRIPT.contains("location.assign"));
         assert!(TAKE_FOCUS_SCRIPT.contains("keydown"));
         assert!(TAKE_FOCUS_SCRIPT.contains("Tab"));
         assert!(TAKE_FOCUS_SCRIPT.contains("preventDefault"));
         assert!(TAKE_FOCUS_SCRIPT.contains("__idiotequeTakeFocus"));
+        assert!(
+            TAKE_FOCUS_SCRIPT.contains("}, true)"),
+            "Tab trap must register with capture:true"
+        );
+        assert!(TAKE_FOCUS_SCRIPT.contains("a.blur"));
+        assert!(BLUR_PAGE_SCRIPT.contains("activeElement"));
+        assert!(should_swallow_page_key(
+            true,
+            pre_key_action(true, VK_TAB, false, false, false)
+        ));
+        assert!(should_swallow_page_key(
+            true,
+            pre_key_action(true, VK_L, false, false, false)
+        ));
+        assert!(!should_swallow_page_key(
+            true,
+            pre_key_action(true, VK_L, true, false, false)
+        ));
+        assert!(!should_swallow_page_key(
+            false,
+            pre_key_action(true, VK_TAB, false, false, false)
+        ));
+        let debounce = Mutex::new(None);
+        assert!(take_focus_should_emit(&debounce, true));
+        assert!(
+            !take_focus_should_emit(&debounce, true),
+            "console + scheme must not emit focus twice"
+        );
+        assert!(take_focus_should_emit(&debounce, false));
+        assert_eq!(
+            keys_event(false, true, "A".into()),
+            Some(HostEvent::Keys { text: "A".into() })
+        );
+        assert_eq!(keys_event(true, true, "A".into()), None);
+        assert_eq!(keys_event(false, false, "A".into()), None);
+        assert_eq!(keys_event(false, true, String::new()), None);
+        assert!(should_drop_modified_char(KeyEventType::CHAR, true, false));
+        assert!(should_drop_modified_char(KeyEventType::CHAR, false, true));
+        assert!(!should_drop_modified_char(KeyEventType::CHAR, false, false));
+        assert!(!should_drop_modified_char(
+            KeyEventType::RAWKEYDOWN,
+            true,
+            false
+        ));
+        assert!(tab_dispatch_script(true).contains("__idiotequeHandleTab(true)"));
+        assert!(tab_dispatch_script(false).contains("__idiotequeHandleTab(false)"));
+        assert!(is_host_keydown(KeyEventType::RAWKEYDOWN));
+        assert!(is_host_keydown(KeyEventType::KEYDOWN));
+        assert!(!is_host_keydown(KeyEventType::CHAR));
+        assert_eq!(host_key_code(VK_L_LOWER), VK_L);
+        assert_eq!(
+            pre_key_action(true, VK_TAB, false, false, false),
+            PreKeyAction::Tab { next: true }
+        );
+        assert_eq!(
+            pre_key_action(true, VK_TAB, false, true, false),
+            PreKeyAction::Tab { next: false }
+        );
+        assert_eq!(
+            pre_key_action(true, VK_L_LOWER, true, false, false),
+            PreKeyAction::Shortcut("ctrl+l")
+        );
+        assert!(consumes_key(pre_key_action(
+            true, VK_TAB, false, false, false
+        )));
         assert!(should_inject_take_focus_trap(false, true, true));
         assert!(
             !should_inject_take_focus_trap(true, true, true),
@@ -1710,6 +2095,40 @@ mod tests {
         );
         assert!(!should_inject_take_focus_trap(false, false, true));
         assert!(!should_inject_take_focus_trap(false, true, false));
+    }
+
+    #[test]
+    fn vk_typed_char_covers_letters_digits_and_space() {
+        assert_eq!(vk_typed_char(VK_L, false), Some('l'));
+        assert_eq!(vk_typed_char(VK_L, true), Some('L'));
+        assert_eq!(vk_typed_char(VK_L_LOWER, false), Some('l'));
+        assert_eq!(vk_typed_char(0x54, true), Some('T'));
+        assert_eq!(vk_typed_char(0x31, false), Some('1'));
+        assert_eq!(vk_typed_char(0x31, true), None);
+        assert_eq!(vk_typed_char(0x20, false), Some(' '));
+        assert_eq!(vk_typed_char(0x10, false), None, "Shift is not text");
+        assert_eq!(printable_char(b'A' as u32), Some('A'));
+        assert_eq!(printable_char(0), None);
+        assert_eq!(printable_char(9), None);
+    }
+
+    #[test]
+    fn keys_event_emits_only_for_main_browser() {
+        assert_eq!(
+            keys_event(false, true, "A".into()),
+            Some(HostEvent::Keys { text: "A".into() })
+        );
+        assert_eq!(
+            keys_event(true, true, "A".into()),
+            None,
+            "health-check must not emit keys"
+        );
+        assert_eq!(
+            keys_event(false, false, "A".into()),
+            None,
+            "DevTools / popup must not emit keys"
+        );
+        assert_eq!(keys_event(false, true, String::new()), None);
     }
 
     #[test]
@@ -1746,5 +2165,18 @@ mod tests {
         assert!(give.x11, "Focus still moves X11 onto the CEF child");
         assert_eq!(give.set_focus, 1);
         assert_ne!(drop, give);
+        assert!(
+            should_ungrab_on_unfocus(),
+            "ADE XUngrab cannot release Ozone's grab on the host display"
+        );
+        assert!(should_swallow_page_key(true, PreKeyAction::Ignore));
+        assert!(should_swallow_page_key(
+            true,
+            PreKeyAction::Tab { next: true }
+        ));
+        assert!(!should_swallow_page_key(
+            true,
+            PreKeyAction::Shortcut("ctrl+l")
+        ));
     }
 }

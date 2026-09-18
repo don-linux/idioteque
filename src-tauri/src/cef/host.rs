@@ -486,6 +486,18 @@ fn pump_host_events(
                 if matches!(event, HostEvent::Ready { .. }) {
                     saw_ready = true;
                 }
+                match &event {
+                    HostEvent::Shortcut { chord } => {
+                        eprintln!("[cef] shortcut forwarded {chord}");
+                    }
+                    HostEvent::Focus { owner, next } => {
+                        eprintln!("[cef] focus forwarded owner={owner:?} next={next:?}");
+                    }
+                    HostEvent::Keys { text } => {
+                        eprintln!("[cef] keys forwarded {text:?}");
+                    }
+                    _ => {}
+                }
                 if !emit(event) {
                     break;
                 }
@@ -664,6 +676,25 @@ mod hole {
         (x, y, w.max(1), h.max(1))
     }
 
+    /// Ozone keeps delivering page keys after `unfocus` while the pointer is
+    /// over the child. Reclaim must ungrab and give GTK the webview.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct ToplevelReclaimPlan {
+        pub ungrab_keyboard: bool,
+        pub ungrab_pointer: bool,
+        pub x11_focus: bool,
+        pub gtk_grab_focus: bool,
+    }
+
+    pub fn toplevel_reclaim_plan() -> ToplevelReclaimPlan {
+        ToplevelReclaimPlan {
+            ungrab_keyboard: true,
+            ungrab_pointer: true,
+            x11_focus: true,
+            gtk_grab_focus: true,
+        }
+    }
+
     /// Visual que debe llevar `GdkWindowAttr`. Nunca el del padre (a menudo GL):
     /// Chromium hace `CreateWindow` con el visual por defecto y colormap
     /// `CopyFromParent` (CEF #3294 / #2804). Sin `system`, GDK hereda el GL
@@ -804,9 +835,9 @@ mod hole {
             }
         }
 
-        /// Devuelve el foco X11 al toplevel de idioteque. Mientras la ventana de
-        /// CEF tiene el foco, el servidor X le entrega a ella todas las teclas y
-        /// el webview no ve nada; al pulsar en la barra Svelte hay que recuperarlo.
+        /// Devuelve el teclado al chrome wry. Ozone no cede el InputFocus de X11
+        /// (sigue en el toplevel) y a menudo mantiene un grab mientras el
+        /// puntero está sobre el hijo: `XSetInputFocus` solo no basta.
         pub fn focus_toplevel(window: &tauri::Window) -> Result<(), String> {
             let gtk_window = window.gtk_window().map_err(|_| X11_REQUIRED.to_string())?;
             let gdk_window = gtk_window
@@ -816,20 +847,63 @@ mod hole {
                 .downcast_ref::<gdkx11::X11Window>()
                 .ok_or_else(|| X11_REQUIRED.to_string())?;
             let xid = x11_window.xid();
+            let plan = super::toplevel_reclaim_plan();
             unsafe {
                 let xdisplay = gdkx11::ffi::gdk_x11_get_default_xdisplay();
                 if xdisplay.is_null() {
                     return Err(X11_REQUIRED.to_string());
                 }
-                x11::xlib::XSetInputFocus(
-                    xdisplay,
-                    xid as x11::xlib::Window,
-                    x11::xlib::RevertToParent,
-                    x11::xlib::CurrentTime,
-                );
+                if plan.ungrab_keyboard {
+                    x11::xlib::XUngrabKeyboard(xdisplay, x11::xlib::CurrentTime);
+                }
+                if plan.ungrab_pointer {
+                    x11::xlib::XUngrabPointer(xdisplay, x11::xlib::CurrentTime);
+                }
+                if plan.x11_focus {
+                    x11::xlib::XSetInputFocus(
+                        xdisplay,
+                        xid as x11::xlib::Window,
+                        x11::xlib::RevertToParent,
+                        x11::xlib::CurrentTime,
+                    );
+                }
                 x11::xlib::XFlush(xdisplay);
             }
+            if plan.gtk_grab_focus {
+                grab_webview_keyboard(&gtk_window);
+            }
+            eprintln!("[cef] reclaim toplevel ungrab+gtk");
             Ok(())
+        }
+
+        fn grab_webview_keyboard(gtk_window: &gtk::ApplicationWindow) {
+            gtk_window.grab_focus();
+            if let Some(widget) = gtk_window.focused_widget() {
+                widget.grab_focus();
+            }
+            if let Some(child) = gtk_window.child() {
+                grab_focus_webview_or_child(&child);
+            }
+        }
+
+        fn grab_focus_webview_or_child(widget: &gtk::Widget) {
+            let name = widget.type_().name();
+            eprintln!("[cef] gtk walk {name}");
+            if name.contains("WebView") || name.contains("WebKit") {
+                widget.grab_focus();
+                if let Some(window) = widget
+                    .toplevel()
+                    .and_then(|t| t.downcast::<gtk::Window>().ok())
+                {
+                    window.set_focus(Some(widget));
+                }
+                return;
+            }
+            if let Ok(container) = widget.clone().downcast::<gtk::Container>() {
+                for child in container.children() {
+                    grab_focus_webview_or_child(&child);
+                }
+            }
         }
     }
 
@@ -1623,6 +1697,24 @@ exit 0
         assert!(
             browser_focus_app_log().contains("browser_focus_app"),
             "Lab counts this exact token in the ADE log"
+        );
+    }
+
+    #[test]
+    fn toplevel_reclaim_ungrabs_and_grabs_webview() {
+        let plan = hole::toplevel_reclaim_plan();
+        assert!(
+            plan.ungrab_keyboard && plan.ungrab_pointer && plan.x11_focus && plan.gtk_grab_focus,
+            "XSetInputFocus alone leaves Ozone routing keys to the child"
+        );
+        assert_ne!(
+            plan,
+            hole::ToplevelReclaimPlan {
+                ungrab_keyboard: false,
+                ungrab_pointer: false,
+                x11_focus: true,
+                gtk_grab_focus: false,
+            }
         );
     }
 

@@ -158,16 +158,24 @@ ese mismo display. No es embed Wayland nativo.
 Foco X11 entre el toplevel y el hijo CEF: cefclient GTK envía
 `WM_TAKE_FOCUS` al toplevel cuando la barra de URL reclama el teclado
 (workaround GTK+X11, cefclient #3782). idioteque no usa ese ClientMessage
-para la barra: `browser_focus_app` hace `XSetInputFocus` sobre el toplevel
-de Tauri y manda `{"cmd":"unfocus"}` (`set_focus(false)`). `CefFocusHandler`
+para la barra: `browser_focus_app` suelta el grab X11 del ADE, hace
+`XSetInputFocus` sobre el toplevel, `grab_focus` del webview wry y manda
+`{"cmd":"unfocus"}` (`set_focus(false)` + `XUngrabKeyboard` en el display
+del host, que es quien tiene el grab de Ozone). `CefFocusHandler`
 avisa cuando el hijo gana (`owner=browser`) o cede (`owner=app`) el foco.
 En este embed el hijo Ozone **no** toma el InputFocus de X11 (`getwindowfocus`
 sigue en el toplevel aunque el caret esté en la página); las teclas llegan
 a CEF por GTK. Alloy nativo recicla Tab dentro del HTML, así que
-`OnTakeFocus` casi nunca dispara: el host inyecta un trap en `load_end` que
-emite el mismo `focus owner=app`. Ctrl+L lo captura también el wry. No se
-elimina el manejo de `WM_TAKE_FOCUS` si Chromium lo entrega; no es el
-camino de la barra.
+`OnTakeFocus` casi nunca dispara: el host consume Tab en `on_pre_key_event`
+y pregunta al renderer (`__idiotequeHandleTab`); si el activo es el
+primero o el último, avisa con `idioteque://chrome/take-focus?next=` y
+`console.info('idioteque:take-focus:')`. El trap se inyecta en
+`on_context_created` (renderer, main frame) y otra vez en `on_load_start`.
+Ctrl+L lo captura `on_pre_key_event` (`RAWKEYDOWN` o `KEYDOWN`); el wry
+no ve el acorde mientras CEF tiene el caret. Tras `unfocus`, el host
+traga CHAR de página y los reenvía como `{"event":"keys"}` para la
+barra. No se elimina el manejo de `WM_TAKE_FOCUS` si Chromium lo entrega;
+no es el camino de la barra.
 
 `chrome-sandbox` solo se exporta como `CHROME_DEVEL_SANDBOX` si es setuid-root.
 En `tauri dev` el helper es del usuario; en la AppImage el squashfs no puede

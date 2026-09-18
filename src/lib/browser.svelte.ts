@@ -40,6 +40,7 @@ export type BrowserEvent =
   | { event: "load-end"; status: number }
   | { event: "load-error"; code: number; text: string; url: string }
   | { event: "shortcut"; chord: string }
+  | { event: "keys"; text: string }
   | { event: "focus"; owner: FocusOwner; next?: boolean }
   | { event: "render-crashed"; status: string }
   | { event: "health"; ok: boolean; cef: string; chromium: string; apiVersion: number }
@@ -54,6 +55,8 @@ export type KeyboardTarget = {
   blur?: () => void;
   focus?: () => void;
   select?: () => void;
+  selectionStart?: number | null;
+  selectionEnd?: number | null;
   querySelector?: (selector: string) => KeyboardTarget | null;
 };
 
@@ -68,6 +71,11 @@ export function isAppKeyboardTarget(el: KeyboardTarget | null | undefined): bool
 /** One `browser_focus_app` per chrome activation; skip if we already own keys. */
 export function shouldClaimAppFocus(owner: FocusOwner): boolean {
   return owner !== "app";
+}
+
+/** Programmatic blur on `owner=browser` must not look like a toolbar click. */
+export function shouldHandleToolbarFocusIn(owner: FocusOwner, blocked: boolean): boolean {
+  return !blocked && shouldClaimAppFocus(owner);
 }
 
 /** Show-time rAF must not steal keys from the URL bar. */
@@ -92,6 +100,22 @@ export function isUrlBarElement(el: KeyboardTarget | null | undefined): boolean 
   return Boolean(el && typeof el.closest === "function" && el.closest("[data-browser-url]"));
 }
 
+/** Keys swallowed by CEF while chrome owns the caret. Replace if the URL is selected. */
+export function applyTypedKeys(current: string, text: string, replace: boolean): string {
+  return replace ? text : `${current}${text}`;
+}
+
+/** Ctrl+L / Tab-to-URL select the bar even when WebKit never sees the caret. */
+export function shouldReplaceTypedKeys(replacePending: boolean, hasSelection: boolean): boolean {
+  return replacePending || hasSelection;
+}
+
+export function urlBarHasSelection(el: KeyboardTarget | null | undefined): boolean {
+  const start = el?.selectionStart;
+  const end = el?.selectionEnd;
+  return typeof start === "number" && typeof end === "number" && start !== end;
+}
+
 function pageDocument(): {
   activeElement?: KeyboardTarget | null;
   querySelector?: (selector: string) => KeyboardTarget | null;
@@ -108,7 +132,9 @@ function blurActiveAppKeyboard(): void {
 
 function focusToolbarChrome(next: boolean): void {
   const toolbar = pageDocument()?.querySelector?.("[data-browser-toolbar]") ?? null;
-  resolveChromeTarget(toolbar, next)?.focus?.();
+  const target = resolveChromeTarget(toolbar, next);
+  target?.focus?.();
+  if (next) target?.select?.();
 }
 
 function urlBarElement(): KeyboardTarget | null {
@@ -157,6 +183,10 @@ class BrowserState {
   pendingSpawn = $state(false);
   /** Single keyboard owner: wry chrome (`app`) or the CEF child (`browser`). */
   focusOwner = $state<FocusOwner>("browser");
+  /** Next swallowed glyph replaces the URL (Ctrl+L / Tab-to-URL). */
+  urlReplacePending = $state(false);
+  /** True while `#onFocus` blurs chrome so `focusin` does not reclaim. */
+  toolbarClaimBlocked = $state(false);
 
   visible = $derived(
     surface.current === "browser" && !unsavedExit.open && !folderVisibility.open,
@@ -313,6 +343,7 @@ class BrowserState {
     const url = urlBarElement();
     url?.focus?.();
     url?.select?.();
+    this.urlReplacePending = true;
   }
 
   async teardown(): Promise<void> {
@@ -337,6 +368,8 @@ class BrowserState {
     this.noSandbox = false;
     this.focusUrlRequested = 0;
     this.focusOwner = "browser";
+    this.urlReplacePending = false;
+    this.toolbarClaimBlocked = false;
 
     if (options.restoreSurface && surface.current === "browser") {
       surface.set("editor");
@@ -390,6 +423,9 @@ class BrowserState {
       case "shortcut":
         this.#onShortcut(event.chord);
         return;
+      case "keys":
+        this.#onKeys(event.text);
+        return;
       case "focus":
         this.#onFocus(event);
         return;
@@ -432,15 +468,35 @@ class BrowserState {
   #onFocus(event: Extract<BrowserEvent, { event: "focus" }>): void {
     if (event.owner === "browser") {
       this.focusOwner = "browser";
+      this.urlReplacePending = false;
+      this.toolbarClaimBlocked = true;
       blurActiveAppKeyboard();
+      queueMicrotask(() => {
+        this.toolbarClaimBlocked = false;
+      });
       return;
     }
+    console.log("[cef] onFocus app", event.next !== false);
     if (shouldClaimAppFocus(this.focusOwner)) {
       void this.focusApp();
     } else {
       this.focusOwner = "app";
     }
-    focusToolbarChrome(event.next !== false);
+    const next = event.next !== false;
+    focusToolbarChrome(next);
+    this.urlReplacePending = next;
+  }
+
+  #onKeys(text: string): void {
+    if (!text) return;
+    const url = urlBarElement();
+    const replace = shouldReplaceTypedKeys(
+      this.urlReplacePending,
+      urlBarHasSelection(url) || urlBarHasSelection(pageDocument()?.activeElement),
+    );
+    this.inputUrl = applyTypedKeys(this.inputUrl, text, replace);
+    this.urlReplacePending = false;
+    url?.focus?.();
   }
 
   #onShortcut(chord: string): void {
@@ -450,6 +506,7 @@ class BrowserState {
       return;
     }
     if (chord === "ctrl+l") {
+      console.log("[cef] onShortcut ctrl+l");
       this.focusUrlRequested += 1;
       this.claimUrlBar();
     }

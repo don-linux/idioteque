@@ -282,18 +282,27 @@ Cada mensaje es un objeto JSON con `event`:
   (no se emite para `ERR_ABORTED`).
 - `{"event":"shortcut","chord":"ctrl+b"}` — chords reenviados: `ctrl+b`,
   `ctrl+shift+b`, `ctrl+l`. El host los consume (no llegan a la página).
+- `{"event":"keys","text":"A"}` — texto imprimible tragado por el host
+  mientras el chrome es dueño del teclado. Ozone sigue entregando teclas
+  al hijo (el puntero está encima); wry no las ve. El ADE las aplica a
+  la barra de URL. Solo browser principal, y solo después de `ready`.
 - `{"event":"focus","owner":"browser"}` — `CefFocusHandler::OnGotFocus` del
   browser principal. El ADE/Svelte hace blur del input de la barra para que
   solo CEF reciba teclas.
 - `{"event":"focus","owner":"app","next":true}` — Tab (o Shift+Tab con
   `next:false`) salió de la página. En Alloy nativo el HTML recicla el Tab
-  y `OnTakeFocus` casi nunca dispara: el host inyecta un trap en el frame
-  principal (`idioteque:take-focus:0|1` por consola) y emite el mismo
-  evento. Si `OnTakeFocus` sí llega, también. El ADE enfoca la URL o el
-  último control de la barra y reclama X11.
-- `nav`, `title`, `load-end`, `load-error` y `focus` solo se emiten para el
-  browser principal: la ventana de DevTools y otros popups no alimentan la
-  barra.
+  y `OnTakeFocus` casi nunca dispara: el host consume Tab/Shift+Tab en
+  `on_pre_key_event` y pregunta al renderer (`execute_java_script` /
+  `__idiotequeHandleTab`) si el activo es el primero o el último; si
+  lo es, emite el mismo evento vía `console.info('idioteque:take-focus:')`
+  y `idioteque://chrome/take-focus?next=` (cancelado en
+  `on_before_browse`). El trap se inyecta en `on_context_created` del
+  renderer (main frame) y de nuevo en `on_load_start` / `on_load_end`.
+  Si `OnTakeFocus` sí llega, también. El ADE enfoca la URL o el último
+  control de la barra y reclama X11.
+- `nav`, `title`, `load-end`, `load-error`, `focus`, `shortcut` y `keys`
+  solo se emiten para el browser principal: la ventana de DevTools y
+  otros popups no alimentan la barra.
 - `{"event":"render-crashed","status":"…"}`
 - `{"event":"health","ok":true,"cef":"…","chromium":"…","apiVersion":15200}`
   — solo en modo health check, justo antes de salir 0.
@@ -339,9 +348,10 @@ EOF en stdin = el ADE murió → cierre ordenado y exit 0.
 `on_pre_key_event` con `KEYEVENT_RAWKEYDOWN`:
 
 - `Ctrl+B`, `Ctrl+Shift+B`, `Ctrl+L` → emitir `shortcut` (solo browser
-  principal) y consumir. Ctrl+L también lo captura el wry (`keydown` en
-  el toplevel): el hijo Ozone no toma el foco X11, así que WebKit ve el
-  acorde antes que CEF.
+  principal) y consumir, en `RAWKEYDOWN` o `KEYDOWN`. Ozone no toma el
+  InputFocus de X11: GTK entrega las teclas al hijo CEF, así que el
+  wry no ve Ctrl+L mientras la página tiene el caret. El ADE registra
+  `[cef] shortcut forwarded` / `[cef] focus forwarded`.
 - `F12`, `Ctrl+Shift+I` → DevTools (toggle) y consumir.
 - `F5`, `Ctrl+R` → reload; `Ctrl+Shift+R` → reload ignorando caché.
 - `Alt+←` / `Alt+→` → back / forward.
@@ -355,13 +365,18 @@ Popups (`on_before_popup`): se cancelan y la URL se carga en el frame
 principal (una sola pestaña). DevTools sí abre su ventana propia.
 
 Un solo dueño de teclado: o el chrome wry/Svelte o el hijo CEF, nunca los
-dos. `browser_focus_app` hace `XSetInputFocus(toplevel)` y después
+dos. `browser_focus_app` hace `XUngrabKeyboard`/`XUngrabPointer`,
+`XSetInputFocus(toplevel)`, `grab_focus` del webview wry y después
 `unfocus`, y escribe `[cef] browser_focus_app` en el stderr del ADE. Un
 clic en la página emite `focus owner=browser` y el frontend hace blur del
 campo URL. `{"cmd":"focus"}` entrega a CEF tanto X11 como `set_focus(true)`.
 El Ozone child suele no tomar el InputFocus de X11: las teclas llegan a
-CEF por el toplevel GTK. El handoff Tab/Ctrl+L no depende de que
-`getwindowfocus` cambie.
+CEF por el toplevel GTK y a menudo un grab mientras el puntero está sobre
+el hijo; `set_focus(false)` no basta. Tras `unfocus` el host traga las
+teclas de página (no los shortcuts) hasta el próximo `on_got_focus` y
+reenvía el texto CHAR como `keys` para la barra. El handoff Tab/Ctrl+L
+no depende de que `getwindowfocus` cambie. El ADE registra
+`[cef] keys forwarded` cuando reenvía ese texto.
 
 ### 4.7 Códigos de salida
 
@@ -397,8 +412,9 @@ Todos devuelven `Result<_, String>` con mensajes en español, como `pty_*`.
   multiplica y redondea antes de mandar `set_bounds`.
 - `browser_set_visible { visible: bool }` → oculta/muestra el hueco GDK y manda
   `show`/`hide`.
-- `browser_focus_app` — devuelve el foco X11 al toplevel de idioteque
-  (`XSetInputFocus`) y, en el mismo comando, manda `unfocus` al host.
+- `browser_focus_app` — suelta el grab X11, devuelve el foco al toplevel
+  (`XSetInputFocus`) y al webview wry (`grab_focus`) y, en el mismo
+  comando, manda `unfocus` al host.
   Escribe `[cef] browser_focus_app` en stderr para que el Lab lo cuente.
   El frontend lo llama una vez por `focusin` de la barra (si `focusOwner`
   no es ya `app`), tras `focus owner=app`, y en Ctrl+L (`claimUrlBar`,

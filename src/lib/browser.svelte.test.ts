@@ -33,6 +33,9 @@ const {
   shouldClaimAppFocus,
   shouldGiftCefFocus,
   shouldInvokeFocusApp,
+  shouldHandleToolbarFocusIn,
+  applyTypedKeys,
+  shouldReplaceTypedKeys,
 } = await import("./browser.svelte");
 
 const BOUNDS: BrowserBounds = { x: 8, y: 40, w: 1200, h: 700 };
@@ -563,6 +566,36 @@ describe("browser.svelte.ts state", () => {
       );
     });
 
+    it("applies swallowed keys to the URL after Ctrl+L with one focusApp", async () => {
+      const gate = await spawnLive();
+      tauri.invoke.mockClear();
+      const url = {
+        tagName: "INPUT",
+        focus: vi.fn(),
+        select: vi.fn(),
+        closest: (sel: string) => (sel === "[data-browser-url]" ? {} : null),
+      };
+      (globalThis as { document?: unknown }).document = {
+        activeElement: null,
+        querySelector: (sel: string) => (sel === "[data-browser-url]" ? url : null),
+      };
+      browser.focusOwner = "browser";
+      browser.inputUrl = "http://127.0.0.1:8765/";
+      gate.channel?.onmessage({ event: "shortcut", chord: "ctrl+l" });
+      gate.channel?.onmessage({ event: "keys", text: "H" });
+      gate.channel?.onmessage({ event: "keys", text: "i" });
+      expect(browser.inputUrl).toBe("Hi");
+      expect(url.focus).toHaveBeenCalled();
+      expect(tauri.invoke.mock.calls.filter((call) => call[0] === "browser_focus_app")).toHaveLength(
+        1,
+      );
+      expect(applyTypedKeys("http://old", "X", true)).toBe("X");
+      expect(applyTypedKeys("ab", "c", false)).toBe("abc");
+      expect(shouldReplaceTypedKeys(true, false)).toBe(true);
+      expect(shouldReplaceTypedKeys(false, true)).toBe(true);
+      expect(shouldReplaceTypedKeys(false, false)).toBe(false);
+    });
+
     it("handles shortcut ctrl+l by focusing the URL and calling focusApp once", async () => {
       const gate = await spawnLive();
       tauri.invoke.mockClear();
@@ -669,6 +702,30 @@ describe("browser.svelte.ts state", () => {
       expect(tauri.invoke.mock.calls.filter((call) => call[0] === "browser_focus_app")).toHaveLength(
         1,
       );
+    });
+
+    it("does not reclaim chrome when owner=browser blurs the URL", async () => {
+      const gate = await spawnLive();
+      tauri.invoke.mockClear();
+      const blur = vi.fn();
+      const input = {
+        tagName: "INPUT",
+        blur,
+        closest: () => ({}),
+      };
+      (globalThis as { document?: unknown }).document = {
+        activeElement: input,
+        querySelector: () => null,
+      };
+      browser.focusOwner = "app";
+      expect(shouldHandleToolbarFocusIn("browser", true)).toBe(false);
+      expect(shouldHandleToolbarFocusIn("browser", false)).toBe(true);
+      expect(shouldHandleToolbarFocusIn("app", false)).toBe(false);
+      gate.channel?.onmessage({ event: "focus", owner: "browser" });
+      expect(blur).toHaveBeenCalledTimes(1);
+      expect(browser.focusOwner).toBe("browser");
+      expect(browser.toolbarClaimBlocked).toBe(true);
+      expect(tauri.invoke).not.toHaveBeenCalledWith("browser_focus_app");
     });
 
     it("does not fire two focusApp claims for one chrome click", async () => {

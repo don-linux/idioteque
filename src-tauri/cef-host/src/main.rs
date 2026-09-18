@@ -14,8 +14,7 @@ mod slot;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use cef::wrap_app;
-use cef::*;
+use cef::{wrap_app, wrap_render_process_handler, *};
 
 use crate::args::HostArgs;
 use crate::exit::fatal;
@@ -177,7 +176,7 @@ fn is_cef_subprocess() -> bool {
 fn run_subprocess() -> ! {
     api_hash_or_die();
     let cef_args = cef::args::Args::new();
-    let mut sub_app = SubprocessApp::new();
+    let mut sub_app = make_subprocess_app();
     let ret = execute_process(
         Some(cef_args.as_main_args()),
         Some(&mut sub_app),
@@ -241,7 +240,7 @@ fn main() {
     api_hash_or_die();
 
     let cef_args = cef::args::Args::new();
-    let mut sub_app = SubprocessApp::new();
+    let mut sub_app = make_subprocess_app();
     let ret = execute_process(
         Some(cef_args.as_main_args()),
         Some(&mut sub_app),
@@ -338,10 +337,45 @@ fn main() {
     }
 }
 
-wrap_app! {
-    struct SubprocessApp;
+fn make_subprocess_app() -> App {
+    SubprocessApp::new(HostRenderProcess::new())
+}
 
-    impl App {}
+fn should_inject_renderer_trap(is_main_frame: bool) -> bool {
+    is_main_frame
+}
+
+wrap_render_process_handler! {
+    struct HostRenderProcess;
+
+    impl RenderProcessHandler {
+        fn on_context_created(
+            &self,
+            _browser: Option<&mut Browser>,
+            frame: Option<&mut Frame>,
+            _context: Option<&mut V8Context>,
+        ) {
+            let Some(frame) = frame else {
+                return;
+            };
+            if !should_inject_renderer_trap(frame.is_main() != 0) {
+                return;
+            }
+            crate::app::inject_take_focus_trap(frame);
+        }
+    }
+}
+
+wrap_app! {
+    struct SubprocessApp {
+        render: RenderProcessHandler,
+    }
+
+    impl App {
+        fn render_process_handler(&self) -> Option<RenderProcessHandler> {
+            Some(self.render.clone())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -350,6 +384,12 @@ mod tests {
 
     fn argv(args: &[&str]) -> Vec<String> {
         args.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn renderer_trap_is_main_frame_only() {
+        assert!(should_inject_renderer_trap(true));
+        assert!(!should_inject_renderer_trap(false));
     }
 
     #[test]

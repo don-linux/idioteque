@@ -43,6 +43,11 @@ pub enum HostEvent {
     Shortcut {
         chord: String,
     },
+    /// Printable text swallowed while chrome owns the keyboard (Ozone still
+    /// delivers keys to the child; wry never sees them).
+    Keys {
+        text: String,
+    },
     Focus {
         owner: FocusOwner,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -268,6 +273,23 @@ mod tests {
         emit(&HostEvent::Title {
             title: "no-writer".into(),
         });
+    }
+
+    #[test]
+    fn write_keys_event_is_one_contract_json_line() {
+        let mut buf = Vec::new();
+        write_event(
+            &mut buf,
+            &HostEvent::Keys {
+                text: "A".into(),
+            },
+        )
+        .unwrap();
+        let text = String::from_utf8(buf).unwrap();
+        assert_eq!(text.bytes().filter(|&b| b == b'\n').count(), 1);
+        let value: serde_json::Value = serde_json::from_str(text.trim_end()).unwrap();
+        assert_eq!(value["event"], "keys");
+        assert_eq!(value["text"], "A");
     }
 
     #[test]

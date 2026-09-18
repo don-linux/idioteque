@@ -4,7 +4,7 @@
   import Code from "@lucide/svelte/icons/code";
   import RotateCw from "@lucide/svelte/icons/rotate-cw";
   import X from "@lucide/svelte/icons/x";
-  import { browser, shouldClaimAppFocus } from "$lib/browser.svelte";
+  import { browser, shouldHandleToolbarFocusIn } from "$lib/browser.svelte";
   import { displayUrl } from "$lib/browser-url";
   import { surface } from "$lib/workspace-surface.svelte";
 
@@ -22,7 +22,7 @@
 
   // One reclaim per chrome activation. Skip if we already own the keyboard.
   function onToolbarFocusIn(): void {
-    if (!shouldClaimAppFocus(browser.focusOwner)) return;
+    if (!shouldHandleToolbarFocusIn(browser.focusOwner, browser.toolbarClaimBlocked)) return;
     void browser.focusApp();
   }
 
@@ -166,6 +166,12 @@
 
   .action:hover:not(:disabled) {
     background: var(--surface-hover);
+    color: var(--text);
+  }
+
+  .action:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
     color: var(--text);
   }
 
