@@ -1474,6 +1474,11 @@ wrap_focus_handler! {
                 "[cef] on_got_focus app_owns_keyboard={}",
                 self.state.app_owns_keyboard.load(Ordering::SeqCst)
             );
+            // If chrome still owns keys, this *is* the first page click: SetFocus(true)
+            // once. Clearing the flag here without set_focus would skip activate.
+            if try_activate_page_from_chrome(&self.state, Some(browser)) {
+                return;
+            }
             self.state
                 .app_owns_keyboard
                 .store(false, Ordering::SeqCst);
@@ -2333,7 +2338,7 @@ mod tests {
     fn activate_from_chrome_runs_once() {
         assert!(
             should_activate_page_from_chrome(true),
-            "first Google-search click while chrome owns keys must SetFocus(true)"
+            "OnGotFocus / OnSetFocus / ButtonPress while chrome owns keys must SetFocus(true)"
         );
         let plan = page_click_activate_plan();
         assert!(!plan.x11);
