@@ -6,14 +6,15 @@ mensajes y códigos de salida de este archivo son los que usan las pruebas.
 
 ## 1. Piezas y fronteras
 
-- **ADE (Tauri 2 + wry)**: la app idioteque de siempre. No enlaza `libcef`.
-  Solo spawnea y habla con `cef-host`. Código en `src-tauri/src/cef/`.
+- **ADE (Tauri 2 + wry)**: la app idioteque. No enlaza `libcef`. Spawnea y
+  habla con `cef-host`. Código en `src-tauri/src/cef/`.
 - **`cef-host`**: binario aparte (crate `src-tauri/cef-host`, sin dependencias
   de Tauri) que enlaza el crate `cef` 152.3.0 (API version `15200`), carga la
-  `libcef` del slot que le indiquen y crea un browser embebido como ventana
-  hija X11 de la ventana de idioteque. También hace el health check.
-- **Frontend (Svelte 5)**: la vista `browser`, la barra de navegación, los
-  atajos y los avisos. Habla con el ADE por `invoke` y `Channel`.
+  `libcef` del slot que le indiquen y abre una ventana Alloy propia con la
+  página. También hace el health check.
+- **Frontend (Svelte 5)**: atajos, globo del footer y avisos. Habla con el ADE
+  por `invoke` y `Channel`. No hay caja de URL ni chrome de navegación en el
+  IDE. No hay superficie interna de página.
 
 Regla: el ADE nunca importa el crate `cef`; `cef-host` nunca importa `tauri`.
 
@@ -22,7 +23,12 @@ Regla: el ADE nunca importa el crate `cef`; `cef-host` nunca importa `tauri`.
 Clave de plataforma: `linux64` (Linux x86_64). El índice oficial de CEF
 puede listar otras claves; idioteque solo selecciona `linux64`.
 
-El embebido vive en `src-tauri/cef-host/src/platform/linux.rs` (X11).
+El navegador visible es una ventana de sistema Alloy, Ozone `wayland`, una
+pestaña. DevTools abre su propia ventana. Los popups cargan en la misma
+pestaña. `cef-host` implementa el ciclo de la ventana en
+`src-tauri/cef-host/src/platform/`.
+
+Una flag de ventana padre nativa no es válida: el host sale con código `2`.
 
 ## 3. Runtime CEF en disco
 
@@ -35,8 +41,8 @@ sección 3.3 y su `manifest.json` con `source: "bundled"`.
 
 En deb y rpm eso es `/usr/lib/idioteque/cef/base/`. En la AppImage la ruta es
 la misma (`$APPDIR/usr/lib/idioteque/cef/base/`) pero no la pone Tauri:
-`scripts/tauri.ts` bundlea la AppImage sin CEF (linuxdeploy parchearía las
-libs y rompería los tamaños del manifest) y luego inyecta `cef-base/` y
+`scripts/tauri.ts` bundlea la AppImage sin CEF (linuxdeploy reescribe las
+librerías y cambiaría los tamaños del manifest) y luego inyecta `cef-base/` y
 `cef-host` en el AppDir antes de reempaquetarlo. El sidecar se busca junto a
 `std::env::current_exe()` (`$APPDIR/usr/bin/`), no junto al `.AppImage`.
 
@@ -170,17 +176,13 @@ candidate pasó el health check pero había un `cef-host` vivo.
 
 Prefijo `--idq-` para no chocar con switches de Chromium. `execute_process`
 corre antes de parsear (los subprocesos `--type=renderer` no pasan por aquí).
-Argumentos desconocidos se ignoran.
+Argumentos desconocidos se ignoran, salvo una flag de ventana padre nativa:
+esa es inválida y el proceso sale `2`.
 
 - `--idq-cef-dir <dir>` slot a cargar (obligatorio).
 - `--idq-cache-dir <dir>` `root_cache_path` (obligatorio).
-- `--idq-parent <xid>` ventana X11 padre (el hueco GDK del ADE, sección 5).
-  El host cuelga de ella una ventana intermedia con el visual y colormap por
-  defecto del servidor (el hueco lleva el visual GL de GTK y Chromium crea su
-  ventana con el visual por defecto: sin la intermedia `CreateWindow` da
-  `BadMatch`) y CEF cuelga de la intermedia en `(0, 0)`. Sin `--idq-parent`,
-  ventana top-level propia (modo standalone para pruebas).
-- `--idq-bounds x,y,w,h` en píxeles físicos relativos al padre.
+- `--idq-bounds x,y,w,h` tamaño de la ventana OS en píxeles físicos.
+  Defecto: `0,0,1200,800`.
 - `--idq-scale <f>` device scale factor (se pasa como
   `--force-device-scale-factor`).
 - `--idq-url <url>` URL inicial (por defecto `about:blank`).
@@ -221,15 +223,20 @@ reenvía el `fatal` pendiente y el `exit`.
 
 Variables opcionales: `IDIOTEQUE_CEF_ARGS` (switches extra de Chromium
 separados por espacio, p. ej. `--disable-gpu`), `IDIOTEQUE_CEF_NO_SANDBOX=1`,
-`IDIOTEQUE_CEF_SOFTWARE_GL=1` (ANGLE/SwiftShader por software, para servidores X
-sin DRI3 como la VM de desarrollo; una máquina sin sandbox conserva su GPU).
+`IDIOTEQUE_CEF_SOFTWARE_GL=1` (ANGLE/SwiftShader por software, para un
+compositor sin aceleración; una máquina sin sandbox conserva su GPU).
+`IDIOTEQUE_CEF_ARGS` no saca el health de `headless` ni el visible de
+`wayland`.
 
-**Memoria compartida.** Chromium no usa `memfd`: cada región (transfer
-buffers de la GPU, data pipes de Mojo, fuentes) es un fichero que crea y
-borra en `/dev/shm`, o en `$TMPDIR`/`/tmp` si lleva
-`--disable-dev-shm-usage`. Ese switch es un parche para contenedores con
-`/dev/shm` de 64 MiB y **no depende de `no_sandbox`**. El host lo decide
-antes de `initialize` con un probe real (`shm.rs`): crea un fichero, lo
+**Ozone.** El visible fuerza `--ozone-platform=wayland`. El health check
+fuerza `--ozone-platform=headless`. Ambos llevan `--use-alloy-style` y
+`--use-native`. `RuntimeStyle::ALLOY`. Nombre de ventana: `idioteque-browser`.
+
+**Memoria compartida.** Chromium usa memoria compartida: cada región
+(transfer buffers de la GPU, data pipes de Mojo, fuentes) es un fichero que
+crea y borra en `/dev/shm`, o en `$TMPDIR`/`/tmp` si lleva
+`--disable-dev-shm-usage`. Ese switch no depende de `no_sandbox`. El host lo
+decide antes de `initialize` con un probe real (`shm.rs`): crea un fichero, lo
 borra y reserva 128 MiB con `fallocate`, lo que detecta permisos, tamaño y
 cuota por usuario (un tmpfs con `usrquota`, systemd ≥ 258, devuelve
 `EDQUOT` aunque `df` diga que sobra sitio). Orden: `/dev/shm` → sin switch
@@ -253,23 +260,25 @@ sigue forzándolo.
 4. Verificar el slot: `manifest.json` parsea, archivos obligatorios presentes
    (si no → exit `14`). `version_info()` de la libcef cargada debe coincidir
    con `manifest.cefVersion` (si no → exit `13`).
-5. `Settings`: `resources_dir_path = slot`, `locales_dir_path = slot/locales`,
+5. Visible: exige `WAYLAND_DISPLAY`. Si falta → exit `16` (`NO_DISPLAY`),
+   mensaje «sin compositor Wayland». El health check no abre display y no
+   exige compositor.
+6. `Settings`: `resources_dir_path = slot`, `locales_dir_path = slot/locales`,
    `root_cache_path = --idq-cache-dir`, `browser_subprocess_path =
    current_exe`, `log_file`, `log_severity = WARNING`, `background_color`
    opaco oscuro (`0xFF1C1E22`), `windowless_rendering_enabled = 1` solo en
    health check, `no_sandbox` según flag/env.
-6. `initialize` falla → exit `11`. Si el fallo es del sandbox (mensaje de
+7. `initialize` falla → exit `11`. Si el fallo es del sandbox (mensaje de
    Chromium sobre SUID/namespaces en stderr, o `initialize` falla con
    sandbox activo y el ADE lo reintenta) → exit `15`. Un abort (SIGABRT)
    porque `CHROME_DEVEL_SANDBOX` apuntaba a un helper inválido llega al ADE
    como `Exit` con código `1`.
-7. Sin `DISPLAY`/sin X11 → exit `16`.
 
 ### 4.3 Protocolo host → ADE (stdout)
 
 Cada mensaje es un objeto JSON con `event`:
 
-- `{"event":"ready","cef":"152.0.6+…","chromium":"152.0.7977.83","apiVersion":15200,"xid":123456}`
+- `{"event":"ready","cef":"152.0.6+…","chromium":"152.0.7977.83","apiVersion":15200}`
   — una vez, tras `on_after_created` del browser principal.
 - `{"event":"nav","url":"https://…","canGoBack":true,"canGoForward":false,"loading":true}`
   — en `on_loading_state_change` y `on_address_change`.
@@ -278,33 +287,18 @@ Cada mensaje es un objeto JSON con `event`:
 - `{"event":"load-error","code":-105,"text":"ERR_NAME_NOT_RESOLVED","url":"…"}`
   (no se emite para `ERR_ABORTED`).
 - `{"event":"shortcut","chord":"ctrl+b"}` — chords reenviados: `ctrl+b`,
-  `ctrl+shift+b`, `ctrl+l`. El host los consume (no llegan a la página).
-- `{"event":"keys","text":"A"}` — texto imprimible tragado por el host
-  mientras el chrome es dueño del teclado. Ozone sigue entregando teclas
-  al hijo (el puntero está encima); wry no las ve. El ADE las aplica a
-  la barra de URL. Solo browser principal, y solo después de `ready`.
-- `{"event":"focus","owner":"browser"}` — `CefFocusHandler::OnGotFocus` del
-  browser principal. El ADE/Svelte hace blur del input de la barra para que
-  solo CEF reciba teclas.
-- `{"event":"focus","owner":"app","next":true}` — Tab (o Shift+Tab con
-  `next:false`) salió de la página. En Alloy nativo el HTML recicla el Tab
-  y `OnTakeFocus` casi nunca dispara: el host consume Tab/Shift+Tab en
-  `on_pre_key_event` y pregunta al renderer (`execute_java_script` /
-  `__idiotequeHandleTab`) si el activo es el primero o el último; si
-  lo es, emite el mismo evento vía `console.info('idioteque:take-focus:')`
-  y `idioteque://chrome/take-focus?next=` (cancelado en
-  `on_before_browse`). El trap se inyecta en `on_context_created` del
-  renderer (main frame) y de nuevo en `on_load_start` / `on_load_end`.
-  Si `OnTakeFocus` sí llega, también. El ADE enfoca la URL o el último
-  control de la barra y reclama X11.
-- `nav`, `title`, `load-end`, `load-error`, `focus`, `shortcut` y `keys`
-  solo se emiten para el browser principal: la ventana de DevTools y
-  otros popups no alimentan la barra.
+  `ctrl+shift+b`. El host los consume (no llegan a la página).
+- `nav`, `title`, `load-end`, `load-error` y `shortcut` solo se emiten para
+  el browser principal: la ventana de DevTools y otros popups no alimentan
+  el ADE.
 - `{"event":"render-crashed","status":"…"}`
 - `{"event":"health","ok":true,"cef":"…","chromium":"…","apiVersion":15200}`
   — solo en modo health check, justo antes de salir 0.
 - `{"event":"fatal","message":"…","code":11}` — justo antes de salir ≠ 0.
 - `{"event":"info","apiVersion":15200,"cefCompiled":"152.0.6+…"}` — solo con `--idq-info`.
+
+Fuera de la allowlist: `keys`, handoff de foco, `activate`, `focus` hacia el
+ADE.
 
 ### 4.4 Protocolo ADE → host (stdin)
 
@@ -314,32 +308,26 @@ CEF con `post_task`.
 - `{"cmd":"navigate","url":"…"}`
 - `{"cmd":"back"}`, `{"cmd":"forward"}`, `{"cmd":"stop"}`
 - `{"cmd":"reload","ignoreCache":false}`
-- `{"cmd":"set_bounds","x":0,"y":0,"w":1200,"h":700}` (píxeles físicos,
-  relativos al hueco: el ADE ya colocó el hueco en coordenadas lógicas)
-- `{"cmd":"show"}`, `{"cmd":"hide"}` — `XMapWindow`/`XUnmapWindow` +
-  `was_hidden(false/true)`; tras `show`, `XRaiseWindow`.
-- `{"cmd":"focus"}` — `XSetInputFocus` + `set_focus(true)`.
-- `{"cmd":"unfocus"}` — `set_focus(false)` únicamente. **No** llama
-  `XSetInputFocus`: el ADE ya movió el foco X11 al toplevel.
-- `{"cmd":"activate"}` — `set_focus(true)` únicamente, **sin**
-  `XSetInputFocus`. Un clic de página (X11 `ButtonPress` / `FocusIn` o
-  `OnSetFocus`) mientras el chrome tiene el teclado (`app_owns_keyboard`)
-  lo dispara **una vez** y emite `focus owner=browser`. Un segundo clic
-  con la página ya dueña de las teclas es no-op: otro `SetFocus` cierra
-  el desplegable de Google.
+- `{"cmd":"set_bounds","x":0,"y":0,"w":1200,"h":800}` — tamaño de la
+  ventana OS en píxeles físicos.
+- `{"cmd":"show"}`, `{"cmd":"hide"}` — map / unmap de la ventana toplevel
+  y `was_hidden(false/true)`. Hide no mata el proceso.
 - `{"cmd":"devtools"}` — abre DevTools si no está, lo cierra si está.
 - `{"cmd":"close"}` — cierre ordenado: `close_browser(true)`, `quit_message_loop`,
   `shutdown`, exit 0.
 
 EOF en stdin = el ADE murió → cierre ordenado y exit 0.
 
+Fuera de la allowlist: `focus`, `unfocus`, `activate`.
+
 ### 4.5 Modo health check
 
 `cef-host --idq-health-check --idq-cef-dir <candidate> --idq-cache-dir <health-cache-N>`:
 
 - Sin ventana: `windowless_rendering_enabled = 1`,
-  `WindowInfo::set_as_windowless(0)`, `RenderHandler` mínimo
-  (`get_view_rect` 800×600, `on_paint` vacío).
+  `WindowInfo` windowless, `RenderHandler` mínimo
+  (`get_view_rect` 800×600, `on_paint` vacío). Ozone `headless`.
+- No exige `WAYLAND_DISPLAY`.
 - Carga `about:blank`. En `on_load_end` del frame principal emite
   `{"event":"health","ok":true,…}`, cierra y sale `0`.
 - Watchdog interno de 30 s → exit `12`.
@@ -348,13 +336,10 @@ EOF en stdin = el ADE murió → cierre ordenado y exit 0.
 
 ### 4.6 Teclado dentro de CEF
 
-`on_pre_key_event` con `KEYEVENT_RAWKEYDOWN`:
+`on_pre_key_event` con `KEYEVENT_RAWKEYDOWN` o `KEYDOWN`:
 
-- `Ctrl+B`, `Ctrl+Shift+B`, `Ctrl+L` → emitir `shortcut` (solo browser
-  principal) y consumir, en `RAWKEYDOWN` o `KEYDOWN`. Ozone no toma el
-  InputFocus de X11: GTK entrega las teclas al hijo CEF, así que el
-  wry no ve Ctrl+L mientras la página tiene el caret. El ADE registra
-  `[cef] shortcut forwarded` / `[cef] focus forwarded`.
+- `Ctrl+B`, `Ctrl+Shift+B` → emitir `shortcut` (solo browser principal) y
+  consumir.
 - `F12`, `Ctrl+Shift+I` → DevTools (toggle) y consumir.
 - `F5`, `Ctrl+R` → reload; `Ctrl+Shift+R` → reload ignorando caché.
 - `Alt+←` / `Alt+→` → back / forward.
@@ -367,25 +352,6 @@ DevTools en el punto del clic) y "Recargar".
 Popups (`on_before_popup`): se cancelan y la URL se carga en el frame
 principal (una sola pestaña). DevTools sí abre su ventana propia.
 
-Un solo dueño de teclado: o el chrome wry/Svelte o el hijo CEF, nunca los
-dos. `browser_focus_app` hace `XUngrabKeyboard`/`XUngrabPointer`,
-`XSetInputFocus(toplevel)`, `grab_focus` del webview wry y después
-`unfocus`, y escribe `[cef] browser_focus_app` en el stderr del ADE. Un
-clic en la página mientras el chrome tiene las teclas hace un
-`activate` (`set_focus(true)`, sin `XSetInputFocus`) y emite
-`focus owner=browser`; el frontend hace blur del campo URL. No se espera
-a `on_got_focus`: el hijo Ozone suele no tomar el InputFocus de X11.
-`{"cmd":"focus"}` entrega a CEF tanto X11 como `set_focus(true)` (regalo
-de superficie, no cada clic). El Ozone child suele no tomar el InputFocus
-de X11: las teclas llegan a CEF por el toplevel GTK y a menudo un grab
-mientras el puntero está sobre el hijo; `set_focus(false)` no basta.
-Tras `unfocus` el host traga las teclas de página (no los shortcuts)
-hasta el `activate` / `on_got_focus` y reenvía el texto CHAR como `keys`
-para la barra. El `.host` de BrowserView usa `pointer-events: none`
-mientras el embed está vivo. El handoff Tab/Ctrl+L
-no depende de que `getwindowfocus` cambie. El ADE registra
-`[cef] keys forwarded` cuando reenvía ese texto.
-
 ### 4.7 Códigos de salida
 
 - `0` ok (incluye cierre ordenado y health check correcto)
@@ -396,37 +362,31 @@ no depende de que `getwindowfocus` cambie. El ADE registra
 - `13` `version_info()` de la libcef ≠ `manifest.cefVersion`
 - `14` archivos obligatorios ausentes o `manifest.json` inválido
 - `15` sandbox no disponible
-- `16` sin X11 (`DISPLAY` vacío o conexión fallida)
+- `16` `NO_DISPLAY`: visible sin compositor Wayland (`WAYLAND_DISPLAY`
+  ausente o vacío)
 - `2` argumentos inválidos
 
 ## 5. Comandos Tauri (ADE)
 
 Todos devuelven `Result<_, String>` con mensajes en español, como `pty_*`.
 
-- `browser_spawn { url: String, bounds: Bounds, scale: f64, on_event: Channel<BrowserEvent> } -> Result<BrowserBoot, String>`
+- `browser_spawn { url: String, bounds: Option<Bounds>, scale: Option<f64>, on_event: Channel<BrowserEvent> } -> Result<BrowserBoot, String>`
   — spawnea el host con el motor efectivo. Solo puede haber uno (`id`
   implícito `"browser"`); si ya existe, lo mata primero. `BrowserBoot =
   { cef: String, chromium: String, apiVersion: u32, source: "bundled"|"installed", noSandbox: bool }`.
+  Bounds de ventana OS; si faltan, `0,0,1200,800`. Scale por defecto `1`.
   Si no hay helper setuid ni user namespaces, el primer spawn ya lleva
   `--idq-no-sandbox` y `noSandbox` sale `true`. Si aun así el host muere
   antes de `ready` con exit `15`, abort `1` o `initialize` `11`, reintenta
   una vez con `--idq-no-sandbox` y no reenvía el `fatal` del primer
-  intento. El embed es X11: en una sesión Wayland el ADE fija
-  `GDK_BACKEND=x11` si hay `DISPLAY` (XWayland). Sin `DISPLAY`, no lo pisa
-  y `browser_spawn` falla con un error claro.
+  intento. Sin `WAYLAND_DISPLAY`, `browser_spawn` falla con «sin compositor
+  Wayland». El editor y las terminales siguen.
 - `browser_command { cmd: BrowserCommand }` — `BrowserCommand` es el enum de
   4.4 serializado con `#[serde(tag = "cmd", rename_all = "snake_case")]`.
-- `browser_set_bounds { x, y, w, h, scale }` — recibe CSS px y scale; el ADE
-  multiplica y redondea antes de mandar `set_bounds`.
-- `browser_set_visible { visible: bool }` → oculta/muestra el hueco GDK y manda
-  `show`/`hide`.
-- `browser_focus_app` — suelta el grab X11, devuelve el foco al toplevel
-  (`XSetInputFocus`) y al webview wry (`grab_focus`) y, en el mismo
-  comando, manda `unfocus` al host.
-  Escribe `[cef] browser_focus_app` en stderr para que el Lab lo cuente.
-  El frontend lo llama una vez por `focusin` de la barra (si `focusOwner`
-  no es ya `app`), tras `focus owner=app`, y en Ctrl+L (`claimUrlBar`,
-  wry y/o `shortcut` del host; el segundo se deduce).
+- `browser_set_bounds { x, y, w, h, scale }` — tamaño de la ventana OS
+  (CSS × scale, redondeado a i32).
+- `browser_set_visible { visible: bool }` — map / unmap de la ventana
+  toplevel (`show` / `hide`). No mata el proceso.
 - `browser_kill` — `close`, espera 2 s, `SIGKILL` si sigue.
 - `cef_runtime_info -> CefRuntimeInfo`:
   `{ current: SlotInfo, base: SlotInfo, candidate: SlotInfo | null, denylist: DenyEntry[], lastCheckAt: string | null, pendingPromotion: {...} | null, hostApiVersion: 15200, platform: "linux64", hostAlive: bool }`
@@ -437,14 +397,7 @@ Todos devuelven `Result<_, String>` con mensajes en español, como `pty_*`.
 `BrowserEvent` (Channel) es el enum de 4.3 con `#[serde(tag = "event", rename_all = "kebab-case")]`
 más `{"event":"exit","code":n}` cuando el proceso termina.
 
-`Bounds = { x: f64, y: f64, w: f64, h: f64 }` en CSS px.
-
-Hueco GDK: `browser_spawn` crea bajo el toplevel un `GdkWindow` hijo nativo
-(GDK pinta el toplevel con `IncludeInferiors`, así que una ventana X ajena
-colgada directamente quedaría tapada; un hijo que GDK conoce se descuenta de su
-región de recorte). Su XID es el `--idq-parent` del host. El ADE lo mueve con
-coordenadas lógicas en `browser_set_bounds`, lo oculta/muestra en
-`browser_set_visible` y lo destruye en `browser_kill`.
+`Bounds = { x: f64, y: f64, w: f64, h: f64 }` en CSS px de la ventana OS.
 
 ## 6. Evento global `cef-update`
 
@@ -492,8 +445,7 @@ Enlace del issue: `https://github.com/don-linux/idioteque/issues/new` con
 `title=CEF XXX no compatible con idioteque <version>` y `body` con candidate
 CEF/Chromium, current CEF/Chromium, `hostApiVersion`, `reason`, plataforma.
 
-Mientras la superficie `browser` está visible, la ventana X11 de CEF tapa los
-toasts: los avisos `cef-update` se encolan y se muestran al salir del navegador.
+Los avisos se muestran en el editor. La ventana del navegador no tapa el IDE.
 
 ## 8. Updater
 
@@ -526,16 +478,14 @@ toasts: los avisos `cef-update` se encolan y se muestran al salir del navegador.
 
 ## 9. Frontend
 
-- `WorkspaceSurface = "editor" | "terminals" | "browser"` en
+- `WorkspaceSurface = "editor" | "terminals"` en
   `src/lib/workspace-surface.svelte.ts`. `terminal.surface` delega ahí.
-- Atajos: `Ctrl+B` navegador (toggle; en la terminal `Ctrl+Shift+B`), `Ctrl+T`
-  árbol (en la terminal `Ctrl+Shift+T`), `Ctrl+G` grafo, `Ctrl+J`/`Ctrl+Alt+J`/
-  `Ctrl+Shift+J` terminal como hoy. Al salir del navegador se vuelve a la
-  superficie anterior.
-- Vista: franja superior Svelte (`BrowserToolbar`: atrás, adelante,
-  recargar/parar, URL, DevTools) y un `div.host` que ocupa el resto. El rect
-  del `div.host` (CSS px) × `devicePixelRatio` son los bounds del host.
-- Footer: acción `browser` (icono `Globe`) después de `terminal`.
+- `Ctrl+B` abre, muestra u oculta la ventana CEF (desde la terminal,
+  `Ctrl+Shift+B`). El globo del footer hace lo mismo. No hay caja de URL.
+- Atajos de página (en la ventana CEF): F5 / Ctrl+R / Ctrl+Shift+R,
+  Alt+← / Alt+→, F12 / Ctrl+Shift+I, Escape (detener).
+- Footer: acción `browser` (icono `Globe`) después de `terminal`. Queda
+  marcada mientras la ventana está visible.
 - Ocultar el navegador no mata el proceso; volver a Inicio sí.
 - Modales del ADE (`unsavedExit`, `FolderVisibilityModal`) ocultan la ventana
   CEF mientras están abiertos.
