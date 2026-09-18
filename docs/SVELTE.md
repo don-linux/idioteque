@@ -2,6 +2,8 @@
 
 Cloud Agent **no** corre el MCP de Svelte. `svelte-autofixer`, `list-sections` y `get-documentation` fallan o piden auth (`needsAuth`; el login hace timeout). El frontend en Cloud se cierra con `bun run check` y tests. Este archivo guarda los **prompts** para pasar esas herramientas en una máquina local donde el MCP responde.
 
+El plan CEF Wayland (destripar el CEF que ya está en `main`) **no** usa este MCP como gate. A4 en Cloud = `bun run check`. El pase 2 de este archivo se corre **después**, en local. A4b de ese plan actualiza el inventario del pase 2; no borra el pase 1.
+
 Usa **solo** el modelo `cursor-grok-4.6-xhigh-fast`. Prohibido `inherit` u otro slug. El subagente `svelte-file-editor` y cualquier resume llevan `model: "cursor-grok-4.6-xhigh-fast"`.
 
 Hay dos pases. Copia **uno**. No mezcles inventarios.
@@ -54,13 +56,13 @@ No toques `-webkit-user-select` ni `-webkit-font-smoothing` en `FileTreeRow.svel
 
 Copia desde «CONTEXTO» hasta el final de esta sección. Única instrucción de ese plan. No implementes CEF. No toques Rust ni `cef-host`. No abras el backup de la toolbar como código vivo.
 
-Cuando la implementación CEF (ventana Alloy propia, editor al lado) ya está en el working tree local. Antes no hay archivos nuevos de esa entrega que pasar.
+Cuando el destripado CEF de `main` (ventana Alloy propia, editor al lado) ya está en el working tree local. Antes no hay archivos de esa entrega que pasar. No hay otra rama de la que copiar.
 
 ### CONTEXTO
 
 Repo `don-linux/idioteque`. Svelte 5 + SvelteKit. El navegador es un proceso Alloy en otra ventana. En el IDE no hay superficie interna de página ni barra de URL.
 
-Cloud Agent escribió o portó `.svelte` / `.svelte.ts` **sin** MCP Svelte. Hay que pasarles ahora las herramientas que en Cloud no corren.
+Cloud Agent reescribió en `main` los `.svelte` / `.svelte.ts` del navegador **sin** MCP Svelte. Hay que pasarles ahora las herramientas que en Cloud no corren.
 
 ### OBJETIVO
 
