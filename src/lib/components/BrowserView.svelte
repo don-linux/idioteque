@@ -10,6 +10,11 @@
     return booting ? BOOTING_COPY : (error ?? BOOTING_COPY);
   }
 
+  /** Live embed is a native CEF hole; WebKit must not steal the page click. */
+  export function hostPointerEvents(alive: boolean): "none" | "auto" {
+    return alive ? "none" : "auto";
+  }
+
   /** CEF #3396: Ozone X11 can lock a 0-size embed. Skip until the host is ≥ 1×1. */
   export function usableHostRect(rect: HostRect): boolean {
     return (
@@ -312,7 +317,7 @@
 
 <div class="view">
   <BrowserToolbar />
-  <div class="host" {@attach attachHost}>
+  <div class="host" style:pointer-events={hostPointerEvents(browser.alive)} {@attach attachHost}>
     {#if !browser.alive}
       <p class="placeholder">{placeholder}</p>
     {/if}
