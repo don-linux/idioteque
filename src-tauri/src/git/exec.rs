@@ -96,14 +96,6 @@ impl GitOutput {
     }
 }
 
-fn git_executable_name() -> &'static str {
-    if cfg!(windows) {
-        "git.exe"
-    } else {
-        "git"
-    }
-}
-
 fn find_git() -> Result<PathBuf, String> {
     if let Ok(explicit) = env::var("IDIOTEQUE_GIT") {
         let path = PathBuf::from(explicit);
@@ -114,12 +106,11 @@ fn find_git() -> Result<PathBuf, String> {
         return Err("IDIOTEQUE_GIT no apunta a un ejecutable".to_string());
     }
 
-    let name = git_executable_name();
     let path_var =
         env::var_os("PATH").ok_or_else(|| "No se encontró Git en el PATH".to_string())?;
 
     for directory in env::split_paths(&path_var) {
-        let candidate = directory.join(name);
+        let candidate = directory.join("git");
         if candidate.is_file() {
             return Ok(candidate);
         }
@@ -249,16 +240,6 @@ mod tests {
             Some("2.43.0.windows.1".to_string())
         );
         assert_eq!(parse_version("not git"), None);
-    }
-
-    #[test]
-    fn parse_version_keeps_apple_git_suffix() {
-        assert_eq!(
-            parse_version("git version 2.39.5 (Apple Git-154)\n"),
-            Some("2.39.5 (Apple Git-154)".to_string())
-        );
-        assert!(version_at_least("2.39.5 (Apple Git-154)", MIN_GIT_VERSION));
-        assert!(!version_at_least("2.14.3 (Apple Git-1)", MIN_GIT_VERSION));
     }
 
     #[test]

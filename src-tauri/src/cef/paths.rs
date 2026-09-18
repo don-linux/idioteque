@@ -8,24 +8,7 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 use tauri::{AppHandle, Manager};
 
-/// Clave de plataforma del índice oficial de CEF.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-pub const PLATFORM: &str = "linux64";
-#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-pub const PLATFORM: &str = "linuxarm64";
-#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-pub const PLATFORM: &str = "windows64";
-#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-pub const PLATFORM: &str = "macosx64";
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-pub const PLATFORM: &str = "macosarm64";
-#[cfg(not(any(
-    all(target_os = "linux", target_arch = "x86_64"),
-    all(target_os = "linux", target_arch = "aarch64"),
-    all(target_os = "windows", target_arch = "x86_64"),
-    all(target_os = "macos", target_arch = "x86_64"),
-    all(target_os = "macos", target_arch = "aarch64")
-)))]
+/// Clave de plataforma del índice oficial de CEF. Idioteque solo usa linux64.
 pub const PLATFORM: &str = "linux64";
 
 const BASE_JSON: &str = include_str!("../../cef/base.json");
@@ -143,7 +126,7 @@ impl CefPaths {
     }
 }
 
-/// Sidecar `cef-host` junto al ejecutable (`.exe` en Windows).
+/// Sidecar `cef-host` junto al ejecutable.
 /// Override: `IDIOTEQUE_CEF_HOST_BIN`.
 ///
 /// Se mira primero junto a `std::env::current_exe()`: dentro de una AppImage
@@ -231,11 +214,7 @@ fn resolve_host_binary(
 }
 
 fn host_binary_name() -> &'static str {
-    if cfg!(windows) {
-        "cef-host.exe"
-    } else {
-        "cef-host"
-    }
+    "cef-host"
 }
 
 fn create_dir(path: &Path) -> Result<(), String> {

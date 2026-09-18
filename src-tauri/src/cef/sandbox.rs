@@ -57,19 +57,11 @@ pub fn helper_usable_from(uid: u32, mode: u32, is_file: bool) -> bool {
 }
 
 pub fn helper_usable(path: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let Ok(meta) = std::fs::metadata(path) else {
-            return false;
-        };
-        helper_usable_from(meta.uid(), meta.mode(), meta.is_file())
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        false
-    }
+    use std::os::unix::fs::MetadataExt;
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    helper_usable_from(meta.uid(), meta.mode(), meta.is_file())
 }
 
 pub fn devel_sandbox_env(cef_dir: &Path) -> Option<PathBuf> {
@@ -236,43 +228,36 @@ pub fn user_namespaces_available() -> bool {
 }
 
 fn probe_user_namespaces() -> bool {
-    #[cfg(not(target_os = "linux"))]
-    {
+    let mac = detect_mac();
+    let kernel_disabled = kernel_userns_disabled_from(
+        read_sysctl_u64("/proc/sys/user/max_user_namespaces"),
+        read_sysctl_flag("/proc/sys/kernel/unprivileged_userns_clone"),
+    );
+    let apparmor_restrict = apparmor_restricts_from([
+        flag_file("/proc/sys/kernel/apparmor_restrict_unprivileged_userns"),
+        flag_file("/proc/sys/kernel/apparmor_restrict_unprivileged_unconfined"),
+    ]);
+    let profile = apparmor_profile_from(
+        read_trimmed("/proc/self/attr/apparmor/current").as_deref(),
+        read_trimmed("/proc/self/attr/current").as_deref(),
+        mac,
+    );
+    let selinux_enforcing = flag_file("/sys/fs/selinux/enforce");
+    let unpriv_user_ns = read_trimmed("/sys/fs/selinux/booleans/unpriv_user_ns")
+        .and_then(|value| parse_selinux_boolean(&value));
+    let mac_blocks = mac_blocks_userns_from(
+        mac,
+        apparmor_restrict,
+        &profile,
+        selinux_enforcing,
+        unpriv_user_ns,
+    );
+    let clone_ok = if kernel_disabled || mac_blocks {
         false
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let mac = detect_mac();
-        let kernel_disabled = kernel_userns_disabled_from(
-            read_sysctl_u64("/proc/sys/user/max_user_namespaces"),
-            read_sysctl_flag("/proc/sys/kernel/unprivileged_userns_clone"),
-        );
-        let apparmor_restrict = apparmor_restricts_from([
-            flag_file("/proc/sys/kernel/apparmor_restrict_unprivileged_userns"),
-            flag_file("/proc/sys/kernel/apparmor_restrict_unprivileged_unconfined"),
-        ]);
-        let profile = apparmor_profile_from(
-            read_trimmed("/proc/self/attr/apparmor/current").as_deref(),
-            read_trimmed("/proc/self/attr/current").as_deref(),
-            mac,
-        );
-        let selinux_enforcing = flag_file("/sys/fs/selinux/enforce");
-        let unpriv_user_ns = read_trimmed("/sys/fs/selinux/booleans/unpriv_user_ns")
-            .and_then(|value| parse_selinux_boolean(&value));
-        let mac_blocks = mac_blocks_userns_from(
-            mac,
-            apparmor_restrict,
-            &profile,
-            selinux_enforcing,
-            unpriv_user_ns,
-        );
-        let clone_ok = if kernel_disabled || mac_blocks {
-            false
-        } else {
-            probe_unshare_via_clone()
-        };
-        userns_available_from(kernel_disabled, mac_blocks, clone_ok)
-    }
+    } else {
+        probe_unshare_via_clone()
+    };
+    userns_available_from(kernel_disabled, mac_blocks, clone_ok)
 }
 
 #[cfg(target_os = "linux")]

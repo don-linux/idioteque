@@ -34,7 +34,6 @@ pub struct Manifest {
     pub files: Vec<ManifestFile>,
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const REQUIRED: &[&str] = &[
     "libcef.so",
     "icudtl.dat",
@@ -51,44 +50,12 @@ const REQUIRED: &[&str] = &[
     "chrome-sandbox",
 ];
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
-const REQUIRED: &[&str] = &[];
-
 pub fn required_files() -> &'static [&'static str] {
     REQUIRED
 }
 
 pub fn expected_platform() -> &'static str {
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    {
-        "linux64"
-    }
-    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-    {
-        "linuxarm64"
-    }
-    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-    {
-        "windows64"
-    }
-    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-    {
-        "macosx64"
-    }
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    {
-        "macosarm64"
-    }
-    #[cfg(not(any(
-        all(target_os = "linux", target_arch = "x86_64"),
-        all(target_os = "linux", target_arch = "aarch64"),
-        all(target_os = "windows", target_arch = "x86_64"),
-        all(target_os = "macos", target_arch = "x86_64"),
-        all(target_os = "macos", target_arch = "aarch64"),
-    )))]
-    {
-        "unknown"
-    }
+    "linux64"
 }
 
 /// Compiled-in CEF version string from `cef_dll_sys` (no libcef call).

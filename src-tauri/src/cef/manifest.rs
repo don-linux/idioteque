@@ -263,7 +263,7 @@ fn remove_stale(path: &Path) {
 
 fn required_files() -> &'static [&'static str] {
     match PLATFORM {
-        "linux64" | "linuxarm64" => REQUIRED_FILES_LINUX64,
+        "linux64" => REQUIRED_FILES_LINUX64,
         _ => &[],
     }
 }

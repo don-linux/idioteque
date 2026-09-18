@@ -128,7 +128,6 @@ export function planBuild(args: string[], platform: NodeJS.Platform = process.pl
   const target = extractTarget(args);
   const passthrough: BuildPlan = { buildArgs: args, appimage: false, debug, target };
 
-  if (platform !== "linux") return passthrough;
   if (hasFlag(args, "--no-bundle", "--help", "-h")) return passthrough;
 
   const requested = extractBundles(args);
@@ -150,23 +149,13 @@ export function planBuild(args: string[], platform: NodeJS.Platform = process.pl
 
 /** Arquitectura como la nombra Tauri en el fichero AppImage. */
 export function appImageArch(rustArch: string): string {
-  switch (rustArch) {
-    case "x86_64":
-      return "amd64";
-    case "i686":
-      return "i386";
-    case "aarch64":
-      return "aarch64";
-    case "armv7":
-      return "armhf";
-    default:
-      throw new Error(`Arquitectura sin AppImage en Tauri: ${rustArch}`);
-  }
+  if (rustArch === "x86_64") return "amd64";
+  throw new Error(`Arquitectura sin AppImage en Tauri: ${rustArch}`);
 }
 
 /** Arquitectura como la usan linuxdeploy y sus plugins (`ARCH`). */
 export function toolsArch(rustArch: string): string {
-  return rustArch === "armv7" ? "armhf" : rustArch;
+  return rustArch;
 }
 
 export function archOfTriple(triple: string): string {
@@ -268,7 +257,6 @@ export function linuxSurfacesInPlay(
   args: string[],
   platform: NodeJS.Platform = "linux",
 ): LinuxPackageSurface[] {
-  if (platform !== "linux") return [];
   if (hasFlag(args, "--help", "-h")) return [];
   const plan = planBuild(args, platform);
   if (hasFlag(args, "--no-bundle")) {

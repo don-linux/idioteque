@@ -441,10 +441,6 @@ fn install_ade_page_activate_filter(app: &AppHandle, window: &tauri::Window, hol
             gtk::glib::Propagation::Proceed
         });
     }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = (app, window, hole_xid);
-    }
 }
 
 /// El usuario pulsó en la UI Svelte (barra de URL, botones): el foco X11 vuelve
@@ -636,23 +632,16 @@ fn physical_bounds(x: f64, y: f64, w: f64, h: f64, scale: f64) -> (i32, i32, i32
 
 /// GDK/X11 solo en el hilo que inicializó GTK. Los comandos Tauri corren en un worker.
 fn on_gtk<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Result<T, String> {
-    #[cfg(not(target_os = "linux"))]
-    {
-        Ok(f())
+    let ctx = gtk::glib::MainContext::default();
+    if ctx.is_owner() {
+        return Ok(f());
     }
-    #[cfg(target_os = "linux")]
-    {
-        let ctx = gtk::glib::MainContext::default();
-        if ctx.is_owner() {
-            return Ok(f());
-        }
-        let (tx, rx) = std::sync::mpsc::sync_channel(1);
-        ctx.invoke(move || {
-            let _ = tx.send(f());
-        });
-        rx.recv_timeout(Duration::from_secs(5))
-            .map_err(|_| "El hilo de la UI no respondió".to_string())
-    }
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    ctx.invoke(move || {
+        let _ = tx.send(f());
+    });
+    rx.recv_timeout(Duration::from_secs(5))
+        .map_err(|_| "El hilo de la UI no respondió".to_string())
 }
 
 fn stderr_stdio(log_file: Option<&PathBuf>) -> Result<Stdio, String> {
@@ -676,18 +665,7 @@ fn stderr_stdio(log_file: Option<&PathBuf>) -> Result<Stdio, String> {
 }
 
 fn prepend_lib_path(cmd: &mut Command, cef_dir: &std::path::Path) {
-    #[cfg(target_os = "linux")]
-    {
-        prepend_env(cmd, "LD_LIBRARY_PATH", cef_dir, ":");
-    }
-    #[cfg(target_os = "macos")]
-    {
-        prepend_env(cmd, "DYLD_FALLBACK_LIBRARY_PATH", cef_dir, ":");
-    }
-    #[cfg(target_os = "windows")]
-    {
-        prepend_env(cmd, "PATH", cef_dir, ";");
-    }
+    prepend_env(cmd, "LD_LIBRARY_PATH", cef_dir, ":");
 }
 
 /// Contrato 4.1: el directorio del slot va *delante* de lo que ya hubiera.
@@ -966,25 +944,6 @@ mod hole {
                     grab_focus_webview_or_child(&child);
                 }
             }
-        }
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    mod gdk {
-        pub fn create(
-            _window: &tauri::Window,
-            _x: i32,
-            _y: i32,
-            _w: i32,
-            _h: i32,
-        ) -> Result<u64, String> {
-            Err("El navegador embebido solo está implementado en Linux/X11".to_string())
-        }
-        pub fn move_resize(_xid: u64, _x: i32, _y: i32, _w: i32, _h: i32) {}
-        pub fn set_visible(_xid: u64, _visible: bool) {}
-        pub fn destroy(_xid: u64) {}
-        pub fn focus_toplevel(_window: &tauri::Window) -> Result<(), String> {
-            Ok(())
         }
     }
 

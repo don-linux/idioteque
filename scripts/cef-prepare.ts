@@ -19,10 +19,6 @@ const BINARIES_DIR = path.join(SRC_TAURI, "binaries");
 
 export const TRIPLE_TO_PLATFORM: Record<string, string> = {
   "x86_64-unknown-linux-gnu": "linux64",
-  "aarch64-unknown-linux-gnu": "linuxarm64",
-  "x86_64-pc-windows-msvc": "windows64",
-  "x86_64-apple-darwin": "macosx64",
-  "aarch64-apple-darwin": "macosarm64",
 };
 
 export const REQUIRED_LINUX64 = [
@@ -340,9 +336,8 @@ export function prepareHost(triple: string, force: boolean, paths?: Partial<CefP
     process.exit(cargo.status ?? 1);
   }
 
-  const exe = triple.includes("windows") ? ".exe" : "";
-  const src = path.join(resolved.srcTauri, "target", "release", `cef-host${exe}`);
-  const dest = path.join(resolved.binariesDir, `cef-host-${triple}${exe}`);
+  const src = path.join(resolved.srcTauri, "target", "release", "cef-host");
+  const dest = path.join(resolved.binariesDir, `cef-host-${triple}`);
   if (!fs.existsSync(src)) {
     fail(`No se encontró el binario compilado en ${src}`);
   }
@@ -451,16 +446,14 @@ export function prepareBase(platform: string, force: boolean, paths?: Partial<Ce
   copyPreservingMode(apiHeaderPath, path.join(resolved.cefBaseDir, "include", "cef_api_versions.h"));
   copyPreservingMode(versionHeaderPath, path.join(resolved.cefBaseDir, "include", "cef_version.h"));
 
-  if (platform === "linux64") {
-    const missing = REQUIRED_LINUX64.filter((rel) => !fs.existsSync(path.join(resolved.cefBaseDir, rel)));
-    if (missing.length > 0) {
-      fail(`Slot base inválido, faltan archivos obligatorios: ${missing.join(", ")}`);
-    }
-    const sandbox = path.join(resolved.cefBaseDir, "chrome-sandbox");
-    const sandboxMode = fs.statSync(sandbox).mode;
-    if ((sandboxMode & 0o111) === 0) {
-      fail("chrome-sandbox no tiene bit de ejecución");
-    }
+  const missing = REQUIRED_LINUX64.filter((rel) => !fs.existsSync(path.join(resolved.cefBaseDir, rel)));
+  if (missing.length > 0) {
+    fail(`Slot base inválido, faltan archivos obligatorios: ${missing.join(", ")}`);
+  }
+  const sandbox = path.join(resolved.cefBaseDir, "chrome-sandbox");
+  const sandboxMode = fs.statSync(sandbox).mode;
+  if ((sandboxMode & 0o111) === 0) {
+    fail("chrome-sandbox no tiene bit de ejecución");
   }
 
   console.log("Calculando sha256 y escribiendo manifest.json…");
