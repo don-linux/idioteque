@@ -129,7 +129,8 @@ describe("BrowserToolbar", () => {
     expect(js).toMatch(/data-browser-chrome-last/);
     expect(js).toMatch(/var div = root_3\(\)/);
     expect(js).toMatch(/\$\.delegated\('focusin',\s*div,\s*onToolbarFocusIn\)/);
-    expect(js).not.toMatch(/pointerdown/);
+    expect(js).toMatch(/onToolbarPointerDown/);
+    expect(js).toMatch(/pointerdown/);
     expect(js).not.toMatch(/\$\.event\('focus',\s*input_1/);
     expect(js).not.toMatch(/\$\.delegated\('focus',\s*input_1/);
 
@@ -174,6 +175,14 @@ describe("BrowserToolbar", () => {
     expect(browser.focusApp).not.toHaveBeenCalled();
   });
 
+  it("toolbar pointerdown only unblocks the next focusin claim", () => {
+    const js = compileToolbar();
+    const pointer = extractFunction(js, "onToolbarPointerDown");
+    expect(pointer).toMatch(/toolbarClaimBlocked = false/);
+    expect(pointer).not.toMatch(/focusApp/);
+    expect(pointer).not.toMatch(/claimUrlBar/);
+  });
+
   it("does not send a second browser_focus_app when the app already owns the keyboard", () => {
     const js = compileToolbar();
     const browser = fakeBrowser({ focusOwner: "app" });
@@ -196,11 +205,9 @@ describe("BrowserToolbar", () => {
     const attach = extractFunction(js, "attachUrl");
 
     expect(attach).toMatch(/browser\.focusUrlRequested/);
-    expect(attach).toMatch(/requested === 0/);
+    expect(attach).toMatch(/shouldApplyFocusUrlRequest/);
     expect(attach).toMatch(/surface\.current !== "browser"/);
-    expect(attach).toMatch(/browser\.claimUrlBar\(\)/);
-    expect(attach.indexOf("browser.claimUrlBar()")).toBeGreaterThan(-1);
-    expect(attach.indexOf("browser.claimUrlBar()")).toBeLessThan(attach.indexOf("node.focus()"));
+    expect(attach).not.toMatch(/browser\.claimUrlBar\(\)/);
     expect(attach.indexOf("node.focus()")).toBeLessThan(attach.indexOf("node.select()"));
     expect(attach).not.toMatch(/alive/);
     expect(attach).not.toMatch(/browser\.focus\(/);

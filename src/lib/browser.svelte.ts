@@ -78,6 +78,16 @@ export function shouldHandleToolbarFocusIn(owner: FocusOwner, blocked: boolean):
   return !blocked && shouldClaimAppFocus(owner);
 }
 
+/** `attachUrl` backup: only when Ctrl+L increments the counter, never on owner flip. */
+export function shouldApplyFocusUrlRequest(requested: number, lastApplied: number): boolean {
+  return requested !== 0 && requested !== lastApplied;
+}
+
+/** Swallowed CEF glyphs belong to the URL only while chrome still owns keys. */
+export function shouldApplyForwardedKeys(owner: FocusOwner): boolean {
+  return owner === "app";
+}
+
 /** Show-time rAF must not steal keys from the URL bar. */
 export function shouldGiftCefFocus(owner: FocusOwner): boolean {
   return owner !== "app";
@@ -264,6 +274,8 @@ class BrowserState {
     this.url = url;
     this.inputUrl = displayUrl(url);
     this.error = null;
+    // Enter is a URL-owned load: page keys must not keep going to the bar.
+    this.releaseChromeKeyboard();
     await this.#command({ cmd: "navigate", url });
   }
 
@@ -334,6 +346,7 @@ class BrowserState {
    * focus+select the URL. Does not depend on the toolbar `$effect`.
    */
   claimUrlBar(): void {
+    this.toolbarClaimBlocked = false;
     const active = pageDocument()?.activeElement ?? null;
     if (shouldInvokeFocusApp(this.focusOwner, isUrlBarElement(active))) {
       void this.focusApp();
@@ -344,6 +357,17 @@ class BrowserState {
     url?.focus?.();
     url?.select?.();
     this.urlReplacePending = true;
+  }
+
+  /**
+   * Page owns keys. Set `focusOwner` first so a programmatic URL blur
+   * cannot look like a toolbar click (`focusin` → `focusApp`).
+   */
+  releaseChromeKeyboard(): void {
+    this.focusOwner = "browser";
+    this.urlReplacePending = false;
+    this.toolbarClaimBlocked = true;
+    blurActiveAppKeyboard();
   }
 
   async teardown(): Promise<void> {
@@ -467,16 +491,11 @@ class BrowserState {
 
   #onFocus(event: Extract<BrowserEvent, { event: "focus" }>): void {
     if (event.owner === "browser") {
-      this.focusOwner = "browser";
-      this.urlReplacePending = false;
-      this.toolbarClaimBlocked = true;
-      blurActiveAppKeyboard();
-      queueMicrotask(() => {
-        this.toolbarClaimBlocked = false;
-      });
+      this.releaseChromeKeyboard();
       return;
     }
     console.log("[cef] onFocus app", event.next !== false);
+    this.toolbarClaimBlocked = false;
     if (shouldClaimAppFocus(this.focusOwner)) {
       void this.focusApp();
     } else {
@@ -488,7 +507,7 @@ class BrowserState {
   }
 
   #onKeys(text: string): void {
-    if (!text) return;
+    if (!text || !shouldApplyForwardedKeys(this.focusOwner)) return;
     const url = urlBarElement();
     const replace = shouldReplaceTypedKeys(
       this.urlReplacePending,

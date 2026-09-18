@@ -489,6 +489,16 @@ fn should_swallow_page_key(app_owns_keyboard: bool, action: PreKeyAction) -> boo
     app_owns_keyboard && !matches!(action, PreKeyAction::Shortcut(_))
 }
 
+/// `OnGotFocus` / `focus owner=browser`: chrome no longer swallows page keys.
+fn app_owns_keyboard_after_handoff(handoff: FocusHandoff) -> bool {
+    matches!(handoff, FocusHandoff::App { .. })
+}
+
+/// Enter in the URL bar: the loaded page owns keys; stop forwarding glyphs.
+fn app_owns_keyboard_after_navigate() -> bool {
+    false
+}
+
 fn pre_key_action(keydown: bool, key: i32, ctrl: bool, shift: bool, alt: bool) -> PreKeyAction {
     if !keydown {
         return PreKeyAction::Ignore;
@@ -634,7 +644,7 @@ impl AppState {
             focus_handoff_event(self.args.health_check, self.is_main(browser), handoff)
         {
             self.app_owns_keyboard
-                .store(matches!(handoff, FocusHandoff::App { .. }), Ordering::SeqCst);
+                .store(app_owns_keyboard_after_handoff(handoff), Ordering::SeqCst);
             protocol::emit(&event);
         }
     }
@@ -728,9 +738,15 @@ pub fn dispatch(cmd: &HostCommand) {
     };
     match cmd {
         HostCommand::Navigate { url } => {
+            state
+                .app_owns_keyboard
+                .store(app_owns_keyboard_after_navigate(), Ordering::SeqCst);
             if let Some(browser) = state.lock_browser() {
                 if let Some(frame) = browser.main_frame() {
                     frame.load_url(Some(&cef_str(url)));
+                }
+                if let Some(host) = browser.host() {
+                    host.set_focus(1);
                 }
             }
         }
@@ -2151,6 +2167,39 @@ mod tests {
             focus_handoff_event(false, true, FocusHandoff::App { next: true }),
             focus_handoff_event(false, true, FocusHandoff::App { next: false })
         );
+    }
+
+    #[test]
+    fn got_focus_stops_swallowing_page_keys() {
+        assert!(
+            !app_owns_keyboard_after_handoff(FocusHandoff::Browser),
+            "OnGotFocus must release chrome's swallow"
+        );
+        assert!(!should_swallow_page_key(
+            app_owns_keyboard_after_handoff(FocusHandoff::Browser),
+            PreKeyAction::Ignore
+        ));
+        assert!(!should_swallow_page_key(
+            app_owns_keyboard_after_handoff(FocusHandoff::Browser),
+            PreKeyAction::Tab { next: true }
+        ));
+        assert!(app_owns_keyboard_after_handoff(FocusHandoff::App {
+            next: true
+        }));
+        assert!(should_swallow_page_key(
+            app_owns_keyboard_after_handoff(FocusHandoff::App { next: false }),
+            PreKeyAction::Ignore
+        ));
+        assert_eq!(drop_browser_focus_plan().set_focus, 0);
+        assert_eq!(give_browser_focus_plan().set_focus, 1);
+        assert!(
+            !app_owns_keyboard_after_navigate(),
+            "URL-owned navigation must release chrome's swallow"
+        );
+        assert!(!should_swallow_page_key(
+            app_owns_keyboard_after_navigate(),
+            PreKeyAction::Ignore
+        ));
     }
 
     #[test]

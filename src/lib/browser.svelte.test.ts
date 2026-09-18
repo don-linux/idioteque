@@ -34,6 +34,8 @@ const {
   shouldGiftCefFocus,
   shouldInvokeFocusApp,
   shouldHandleToolbarFocusIn,
+  shouldApplyFocusUrlRequest,
+  shouldApplyForwardedKeys,
   applyTypedKeys,
   shouldReplaceTypedKeys,
 } = await import("./browser.svelte");
@@ -721,11 +723,92 @@ describe("browser.svelte.ts state", () => {
       expect(shouldHandleToolbarFocusIn("browser", true)).toBe(false);
       expect(shouldHandleToolbarFocusIn("browser", false)).toBe(true);
       expect(shouldHandleToolbarFocusIn("app", false)).toBe(false);
+      expect(shouldApplyFocusUrlRequest(1, 0)).toBe(true);
+      expect(shouldApplyFocusUrlRequest(1, 1)).toBe(false);
+      expect(shouldApplyFocusUrlRequest(0, 0)).toBe(false);
       gate.channel?.onmessage({ event: "focus", owner: "browser" });
       expect(blur).toHaveBeenCalledTimes(1);
       expect(browser.focusOwner).toBe("browser");
       expect(browser.toolbarClaimBlocked).toBe(true);
       expect(tauri.invoke).not.toHaveBeenCalledWith("browser_focus_app");
+    });
+
+    it("owner=browser after chrome ownership does not call focusApp", async () => {
+      const gate = await spawnLive();
+      const url = {
+        tagName: "INPUT",
+        focus: vi.fn(),
+        select: vi.fn(),
+        blur: vi.fn(),
+        closest: (sel: string) => (sel === "[data-browser-url]" ? {} : null),
+      };
+      (globalThis as { document?: unknown }).document = {
+        activeElement: url,
+        querySelector: (sel: string) => (sel === "[data-browser-url]" ? url : null),
+      };
+      browser.focusOwner = "browser";
+      browser.inputUrl = "http://127.0.0.1:8765/";
+      gate.channel?.onmessage({ event: "shortcut", chord: "ctrl+l" });
+      tauri.invoke.mockClear();
+      url.focus.mockClear();
+      gate.channel?.onmessage({ event: "focus", owner: "browser" });
+      gate.channel?.onmessage({ event: "keys", text: "X" });
+      expect(browser.focusOwner).toBe("browser");
+      expect(browser.toolbarClaimBlocked).toBe(true);
+      expect(browser.inputUrl).toBe("http://127.0.0.1:8765/");
+      expect(shouldApplyForwardedKeys("browser")).toBe(false);
+      expect(shouldApplyForwardedKeys("app")).toBe(true);
+      expect(shouldHandleToolbarFocusIn(browser.focusOwner, browser.toolbarClaimBlocked)).toBe(
+        false,
+      );
+      expect(tauri.invoke).not.toHaveBeenCalledWith("browser_focus_app");
+      expect(url.focus).not.toHaveBeenCalled();
+      expect(url.blur).toHaveBeenCalled();
+    });
+
+    it("URL-owned navigate releases chrome and ignores later forwarded keys", async () => {
+      const gate = await spawnLive();
+      const url = {
+        tagName: "INPUT",
+        focus: vi.fn(),
+        select: vi.fn(),
+        blur: vi.fn(),
+        closest: (sel: string) => (sel === "[data-browser-url]" ? {} : null),
+      };
+      (globalThis as { document?: unknown }).document = {
+        activeElement: url,
+        querySelector: (sel: string) => (sel === "[data-browser-url]" ? url : null),
+      };
+      browser.focusOwner = "browser";
+      gate.channel?.onmessage({ event: "shortcut", chord: "ctrl+l" });
+      tauri.invoke.mockClear();
+      await browser.navigate("http://127.0.0.1:8765/single.html");
+      expect(browser.focusOwner).toBe("browser");
+      expect(browser.toolbarClaimBlocked).toBe(true);
+      expect(browser.urlReplacePending).toBe(false);
+      expect(url.blur).toHaveBeenCalled();
+      expect(tauri.invoke).toHaveBeenCalledWith("browser_command", {
+        cmd: { cmd: "navigate", url: "http://127.0.0.1:8765/single.html" },
+      });
+      expect(tauri.invoke).not.toHaveBeenCalledWith("browser_focus_app");
+      gate.channel?.onmessage({ event: "keys", text: "Z" });
+      expect(browser.inputUrl).toBe("http://127.0.0.1:8765/single.html");
+    });
+
+    it("keeps steps 1-5 claim contracts after the chrome-release guard", () => {
+      expect(shouldGiftCefFocus("app")).toBe(false);
+      expect(shouldGiftCefFocus("browser")).toBe(true);
+      expect(shouldHandleToolbarFocusIn("browser", false)).toBe(true);
+      expect(shouldHandleToolbarFocusIn("browser", true)).toBe(false);
+      expect(shouldHandleToolbarFocusIn("app", false)).toBe(false);
+      expect(shouldInvokeFocusApp("browser", false)).toBe(true);
+      expect(shouldInvokeFocusApp("app", true)).toBe(false);
+      expect(shouldApplyForwardedKeys("app")).toBe(true);
+      expect(shouldApplyForwardedKeys("browser")).toBe(false);
+      expect(shouldApplyFocusUrlRequest(1, 0)).toBe(true);
+      expect(shouldApplyFocusUrlRequest(1, 1)).toBe(false);
+      expect(shouldClaimAppFocus("browser")).toBe(true);
+      expect(shouldClaimAppFocus("app")).toBe(false);
     });
 
     it("does not fire two focusApp claims for one chrome click", async () => {

@@ -4,23 +4,35 @@
   import Code from "@lucide/svelte/icons/code";
   import RotateCw from "@lucide/svelte/icons/rotate-cw";
   import X from "@lucide/svelte/icons/x";
-  import { browser, shouldHandleToolbarFocusIn } from "$lib/browser.svelte";
+  import {
+    browser,
+    shouldApplyFocusUrlRequest,
+    shouldHandleToolbarFocusIn,
+  } from "$lib/browser.svelte";
   import { displayUrl } from "$lib/browser-url";
   import { surface } from "$lib/workspace-surface.svelte";
+
+  let lastFocusUrlRequest = 0;
 
   function attachUrl(node: HTMLInputElement): void {
     $effect(() => {
       const requested = browser.focusUrlRequested;
-      if (requested === 0) return;
+      if (!shouldApplyFocusUrlRequest(requested, lastFocusUrlRequest)) return;
       if (surface.current !== "browser") return;
-      // CEF `shortcut` already calls claimUrlBar; this is the increment backup.
-      browser.claimUrlBar();
+      lastFocusUrlRequest = requested;
+      // Shortcut already called claimUrlBar. Do not call it here: that
+      // would track focusOwner and reclaim chrome on a later page click.
       node.focus();
       node.select();
     });
   }
 
-  // One reclaim per chrome activation. Skip if we already own the keyboard.
+  // Page-click blur must not look like a toolbar click. Pointerdown is the
+  // user gesture that may reclaim; focusin after owner=browser is ignored.
+  function onToolbarPointerDown(): void {
+    browser.toolbarClaimBlocked = false;
+  }
+
   function onToolbarFocusIn(): void {
     if (!shouldHandleToolbarFocusIn(browser.focusOwner, browser.toolbarClaimBlocked)) return;
     void browser.focusApp();
@@ -44,7 +56,11 @@
   }
 </script>
 
-<div class="toolbar" data-browser-toolbar onfocusin={onToolbarFocusIn}>
+<div
+  class="toolbar"
+  data-browser-toolbar
+  onfocusin={onToolbarFocusIn}
+>
   <div class="row">
     <button
       type="button"
@@ -99,6 +115,7 @@
       data-browser-url
       bind:value={browser.inputUrl}
       {@attach attachUrl}
+      onpointerdown={onToolbarPointerDown}
       onkeydown={onUrlKeydown}
     />
     <button
