@@ -21,11 +21,15 @@ Regla: el ADE nunca importa el crate `cef`; `cef-host` nunca importa `tauri`.
 
 Clave de plataforma (la misma del índice oficial de CEF):
 
-- `linux64` (implementación completa en esta entrega)
-- `linuxarm64`, `windows64`, `macosx64`, `macosarm64` (preparadas, sin implementar)
+- `linux64` (implementación completa)
+- `linuxarm64` (misma forma de slot; sin embebido publicado)
 
-Se obtiene con `target_os` + `target_arch` en Rust. Todo lo específico de
-plataforma en `cef-host` vive en `src/platform/{linux,windows,macos}.rs`.
+Windows y macOS no se soportan: no hay stubs ni claves `windows64` /
+`macosx64` / `macosarm64` en el pin. El índice oficial puede seguir
+mencionándolas; el ADE no las elige.
+
+Se obtiene con `target_os` + `target_arch` en Rust. El embebido vive en
+`src/platform/linux.rs`. `cef-host` no compila fuera de Linux.
 
 ## 3. Runtime CEF en disco
 

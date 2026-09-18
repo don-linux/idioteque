@@ -1,5 +1,8 @@
 //! Navegador CEF: el ADE solo spawnea y habla con `cef-host`. Ver `docs/cef/CONTRACT.md`.
 
+#[cfg(not(target_os = "linux"))]
+compile_error!("El navegador CEF de idioteque es solo Linux");
+
 pub mod archive;
 pub mod denylist;
 pub mod download;

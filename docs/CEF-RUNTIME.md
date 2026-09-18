@@ -10,7 +10,8 @@ de nombres, rutas y mensajes está en [`cef/CONTRACT.md`](cef/CONTRACT.md).
 - **`cef-host`** es un binario aparte (`src-tauri/cef-host`) compilado contra
   el crate `cef` 152.3.0 (API de CEF `15200`). Carga la `libcef` del slot que
   se le indique y se dibuja como ventana hija X11 dentro de la ventana de
-  idioteque. El mismo binario hace el health check.
+  idioteque. El mismo binario hace el health check. Solo Linux: no hay
+  host ni pin para Windows o macOS.
 - **Base**: el CEF de fábrica que viaja en cada release. Vive en el bundle
   (`<resource_dir>/cef/base/`). Hoy es
   `152.0.6+g708dc14+chromium-152.0.7977.83` (Chromium 152.0.7977.83).

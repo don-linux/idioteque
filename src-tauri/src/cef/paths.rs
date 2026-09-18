@@ -8,24 +8,10 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 use tauri::{AppHandle, Manager};
 
-/// Clave de plataforma del índice oficial de CEF.
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-pub const PLATFORM: &str = "linux64";
+/// Clave de plataforma del índice oficial de CEF. Solo Linux.
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 pub const PLATFORM: &str = "linuxarm64";
-#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-pub const PLATFORM: &str = "windows64";
-#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-pub const PLATFORM: &str = "macosx64";
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-pub const PLATFORM: &str = "macosarm64";
-#[cfg(not(any(
-    all(target_os = "linux", target_arch = "x86_64"),
-    all(target_os = "linux", target_arch = "aarch64"),
-    all(target_os = "windows", target_arch = "x86_64"),
-    all(target_os = "macos", target_arch = "x86_64"),
-    all(target_os = "macos", target_arch = "aarch64")
-)))]
+#[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
 pub const PLATFORM: &str = "linux64";
 
 const BASE_JSON: &str = include_str!("../../cef/base.json");
@@ -143,7 +129,7 @@ impl CefPaths {
     }
 }
 
-/// Sidecar `cef-host` junto al ejecutable (`.exe` en Windows).
+/// Sidecar `cef-host` junto al ejecutable.
 /// Override: `IDIOTEQUE_CEF_HOST_BIN`.
 ///
 /// Se mira primero junto a `std::env::current_exe()`: dentro de una AppImage
@@ -231,11 +217,7 @@ fn resolve_host_binary(
 }
 
 fn host_binary_name() -> &'static str {
-    if cfg!(windows) {
-        "cef-host.exe"
-    } else {
-        "cef-host"
-    }
+    "cef-host"
 }
 
 fn create_dir(path: &Path) -> Result<(), String> {
@@ -258,14 +240,7 @@ mod tests {
 
     #[test]
     fn platform_is_a_known_index_key() {
-        assert!([
-            "linux64",
-            "linuxarm64",
-            "windows64",
-            "macosx64",
-            "macosarm64"
-        ]
-        .contains(&PLATFORM));
+        assert!(["linux64", "linuxarm64"].contains(&PLATFORM));
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         assert_eq!(PLATFORM, "linux64");
     }
@@ -502,11 +477,7 @@ mod tests {
 
     #[test]
     fn host_binary_name_is_platform_sidecar() {
-        if cfg!(windows) {
-            assert_eq!(host_binary_name(), "cef-host.exe");
-        } else {
-            assert_eq!(host_binary_name(), "cef-host");
-        }
+        assert_eq!(host_binary_name(), "cef-host");
     }
 
     #[test]

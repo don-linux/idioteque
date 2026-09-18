@@ -1,6 +1,9 @@
 //! cef-host: loads libcef from a slot and embeds a browser as an X11 child.
 //! Protocol and flags: `docs/cef/CONTRACT.md` §4.
 
+#[cfg(not(target_os = "linux"))]
+compile_error!("cef-host solo implementa Linux/X11");
+
 mod app;
 mod args;
 mod exit;

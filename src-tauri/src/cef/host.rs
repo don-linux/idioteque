@@ -676,18 +676,7 @@ fn stderr_stdio(log_file: Option<&PathBuf>) -> Result<Stdio, String> {
 }
 
 fn prepend_lib_path(cmd: &mut Command, cef_dir: &std::path::Path) {
-    #[cfg(target_os = "linux")]
-    {
-        prepend_env(cmd, "LD_LIBRARY_PATH", cef_dir, ":");
-    }
-    #[cfg(target_os = "macos")]
-    {
-        prepend_env(cmd, "DYLD_FALLBACK_LIBRARY_PATH", cef_dir, ":");
-    }
-    #[cfg(target_os = "windows")]
-    {
-        prepend_env(cmd, "PATH", cef_dir, ";");
-    }
+    prepend_env(cmd, "LD_LIBRARY_PATH", cef_dir, ":");
 }
 
 /// Contrato 4.1: el directorio del slot va *delante* de lo que ya hubiera.

@@ -102,7 +102,7 @@ Ocultar el navegador no mata el proceso ni la página. Volver a Inicio sí. Empi
 
 El motor viene de fábrica en cada instalador y se actualiza solo, sin intervención del mantenedor, mientras las CEF nuevas sigan siendo compatibles con la app. Cuando una no lo es, la app lo dice, no se rompe, y se queda con la última que funcionó. Ver [`CEF-RUNTIME.md`](CEF-RUNTIME.md).
 
-Necesita X11. En Wayland (GNOME 26.04) idioteque y CEF hablan X11 con XWayland: si hay `DISPLAY`, el ADE fija `GDK_BACKEND=x11`.
+Necesita X11. En Wayland (GNOME 26.04) idioteque y CEF hablan X11 con XWayland: si hay `DISPLAY`, el ADE fija `GDK_BACKEND=x11`. Solo Linux: no hay navegador en Windows ni macOS.
 
 ### Lo que el layout recuerda
 

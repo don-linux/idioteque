@@ -103,11 +103,10 @@ vuelta con `Ctrl+B`, un update real de 151 a 152 (descarga real, health
 check, promoción y aviso) y un update falso incompatible (denylist y
 aviso).
 
-## NO se pudo implementar
+## Fuera de soporte
 
-- Windows y macOS. Quedan preparados con stubs, pero el embebido solo
-  funciona en Linux/X11. En Wayland la app corre sobre XWayland con
-  `GDK_BACKEND=x11`.
+- Windows y macOS. El navegador es Linux/X11. En Wayland la app corre
+  sobre XWayland con `GDK_BACKEND=x11`.
 
 ## Fuera de alcance
 

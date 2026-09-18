@@ -452,7 +452,9 @@ describe("helpers de versión / plataforma", () => {
   it("mapea triples conocidos y rechaza el resto", () => {
     expect(platformOfTriple("x86_64-unknown-linux-gnu")).toBe("linux64");
     expect(platformOfTriple("aarch64-unknown-linux-gnu")).toBe("linuxarm64");
-    expect(platformOfTriple("x86_64-pc-windows-msvc")).toBe("windows64");
+    expect(platformOfTriple("x86_64-pc-windows-msvc")).toBeUndefined();
+    expect(platformOfTriple("x86_64-apple-darwin")).toBeUndefined();
+    expect(platformOfTriple("aarch64-apple-darwin")).toBeUndefined();
     expect(platformOfTriple("wasm32-unknown-unknown")).toBeUndefined();
   });
 });

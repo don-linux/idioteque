@@ -28,7 +28,8 @@ pub struct IndexVersion {
     pub files: Vec<IndexFile>,
 }
 
-/// Índice por clave de plataforma (`linux64`, `windows64`, …).
+/// Índice por clave de plataforma (`linux64`, …). El JSON oficial puede
+/// traer otras claves; solo se elige la de esta app.
 #[derive(Clone, Debug, Default)]
 pub struct CefIndex {
     platforms: HashMap<String, Vec<IndexVersion>>,
