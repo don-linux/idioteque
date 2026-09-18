@@ -153,7 +153,7 @@ fn resolve_new_target(root: &str, relative: &str, kind: NewKind) -> Result<PathB
 }
 
 fn portable_path(path: &Path) -> String {
-    path.to_string_lossy().into_owned()
+    path.to_string_lossy() as String
 }
 
 /// Immediate child names only: one normal component, no `..` or slashes.
