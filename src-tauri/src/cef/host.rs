@@ -1,10 +1,11 @@
 //! Spawn y protocolo de `cef-host`. Sin tipos Tauri en `spawn_host` / `HostProcess`.
 
+use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -17,8 +18,11 @@ use super::ipc::{encode_command, parse_event, HostCommand, HostEvent};
 use super::manifest::{self, EffectiveSource};
 use super::paths::{self, CefPaths};
 
-const X11_REQUIRED: &str = "El navegador necesita X11 (en GNOME Wayland, XWayland)";
 const GRACEFUL_TIMEOUT: Duration = Duration::from_secs(2);
+/// Views DIP, no píxeles de dispositivo: el compositor Wayland pone el scale.
+const DEFAULT_DIP_BOUNDS: (i32, i32, i32, i32) = (0, 0, 1200, 800);
+const DEFAULT_SCALE: f64 = 1.0;
+const NO_DISPLAY: &str = "sin compositor Wayland";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,7 +48,6 @@ pub struct HostLaunch {
     pub binary: PathBuf,
     pub cef_dir: PathBuf,
     pub cache_dir: PathBuf,
-    pub parent_xid: Option<u64>,
     pub bounds: Option<(i32, i32, i32, i32)>,
     pub scale: f64,
     pub url: String,
@@ -67,10 +70,6 @@ pub struct HostProcess {
 pub struct CefState {
     host: Mutex<Option<HostProcess>>,
     pub no_sandbox: AtomicBool,
-    /// XID del hueco GDK que aloja a CEF; `0` cuando no hay ninguno.
-    hole_xid: AtomicU64,
-    /// CEF child xid from `ready`; used by the ADE page-activate fallback.
-    cef_xid: AtomicU64,
 }
 
 impl Default for CefState {
@@ -78,8 +77,6 @@ impl Default for CefState {
         Self {
             host: Mutex::new(None),
             no_sandbox: AtomicBool::new(false),
-            hole_xid: AtomicU64::new(0),
-            cef_xid: AtomicU64::new(0),
         }
     }
 }
@@ -106,18 +103,13 @@ pub fn spawn_host(launch: &HostLaunch) -> Result<HostProcess, String> {
     cmd.arg("--idq-cef-dir").arg(&launch.cef_dir);
     cmd.arg("--idq-cache-dir").arg(&launch.cache_dir);
 
-    if let Some(xid) = launch.parent_xid {
-        cmd.arg("--idq-parent").arg(xid.to_string());
-    }
     if let Some((x, y, w, h)) = launch.bounds {
         cmd.arg("--idq-bounds").arg(format!("{x},{y},{w},{h}"));
     }
-    cmd.arg("--idq-scale").arg(launch.scale.to_string());
-    let url = if launch.url.trim().is_empty() {
-        "about:blank"
-    } else {
-        launch.url.as_str()
-    };
+    if should_pass_idq_scale(launch.scale) {
+        cmd.arg("--idq-scale").arg(launch.scale.to_string());
+    }
+    let url = visible_spawn_url(&launch.url);
     cmd.arg("--idq-url").arg(url);
     if launch.health_check {
         cmd.arg("--idq-health-check");
@@ -265,29 +257,21 @@ pub fn kill_on_exit(state: &CefState) {
 #[tauri::command]
 pub fn browser_spawn(
     app: AppHandle,
-    window: tauri::Window,
     state: State<CefState>,
     url: String,
-    bounds: Bounds,
-    scale: f64,
+    bounds: Option<Bounds>,
+    scale: Option<f64>,
     on_event: Channel<HostEvent>,
 ) -> Result<BrowserBoot, String> {
+    require_wayland_display()?;
     take_and_kill(&state)?;
-    destroy_hole(&state);
 
     let paths = CefPaths::from_app(&app)?;
     paths.ensure_dirs()?;
     let slot = manifest::resolve_effective(&paths)?;
     let binary = paths::host_binary_path(&app)?;
-    let (_, _, phys_w, phys_h) = physical_bounds(bounds.x, bounds.y, bounds.w, bounds.h, scale);
-    let (lx, ly, lw, lh) = hole::sanitize_css_bounds(bounds.x, bounds.y, bounds.w, bounds.h);
-    let hole_xid = {
-        let window = window.clone();
-        on_gtk(move || hole::create(&window, lx, ly, lw, lh))?
-    }?;
-    state.hole_xid.store(hole_xid, Ordering::SeqCst);
-    state.cef_xid.store(0, Ordering::SeqCst);
-    install_ade_page_activate_filter(&app, &window, hole_xid);
+    let scale = resolve_scale(scale);
+    let bounds_dip = resolve_dip_bounds(bounds.as_ref());
 
     let no_sandbox =
         super::sandbox::wants_no_sandbox(&slot.dir) || state.no_sandbox.load(Ordering::SeqCst);
@@ -295,16 +279,15 @@ pub fn browser_spawn(
         state.no_sandbox.store(true, Ordering::SeqCst);
     }
 
+    let policy = visible_ade_policy(&url);
     let launch = HostLaunch {
         binary,
         cef_dir: slot.dir.clone(),
         cache_dir: paths.profile(),
-        parent_xid: Some(hole_xid),
-        // Dentro del hueco CEF empieza en (0, 0); el hueco ya está colocado.
-        bounds: Some((0, 0, phys_w.max(1), phys_h.max(1))),
+        bounds: Some(bounds_dip),
         scale,
-        url,
-        health_check: false,
+        url: policy.url,
+        health_check: policy.health_check,
         no_sandbox,
         log_file: Some(paths.logs_dir().join("chromium.log")),
         stderr_file: Some(paths.logs_dir().join("cef-host.log")),
@@ -345,30 +328,15 @@ pub fn browser_set_bounds(
     y: f64,
     w: f64,
     h: f64,
-    scale: f64,
 ) -> Result<(), String> {
-    let (lx, ly, lw, lh) = hole::sanitize_css_bounds(x, y, w, h);
-    let (_, _, pw, ph) = physical_bounds(x, y, w, h, scale);
-    let xid = state.hole_xid.load(Ordering::SeqCst);
-    if xid != 0 {
-        on_gtk(move || hole::move_resize(xid, lx, ly, lw, lh))?;
-    }
+    let (x, y, w, h) = dip_bounds(x, y, w, h);
     with_host(&state, |host| {
-        host.send(&HostCommand::SetBounds {
-            x: 0,
-            y: 0,
-            w: pw.max(1),
-            h: ph.max(1),
-        })
+        host.send(&HostCommand::SetBounds { x, y, w, h })
     })
 }
 
 #[tauri::command]
 pub fn browser_set_visible(state: State<CefState>, visible: bool) -> Result<(), String> {
-    let xid = state.hole_xid.load(Ordering::SeqCst);
-    if xid != 0 {
-        on_gtk(move || hole::set_visible(xid, visible))?;
-    }
     let cmd = if visible {
         HostCommand::Show
     } else {
@@ -377,87 +345,9 @@ pub fn browser_set_visible(state: State<CefState>, visible: bool) -> Result<(), 
     with_host(&state, |host| host.send(&cmd))
 }
 
-/// After the toplevel owns X11, drop CEF's logical focus. Never moves X11 itself.
-fn reclaim_app_keyboard(
-    take_x11: impl FnOnce() -> Result<(), String>,
-    send: impl FnOnce(&HostCommand) -> Result<(), String>,
-) -> Result<(), String> {
-    take_x11()?;
-    match send(&HostCommand::Unfocus) {
-        Ok(()) => Ok(()),
-        // No host / broken pipe: chrome already has X11.
-        Err(_) => Ok(()),
-    }
-}
-
-/// Line the Lab greps to count URL-bar reclaim. Keep this exact.
-fn browser_focus_app_log() -> &'static str {
-    "[cef] browser_focus_app"
-}
-
-fn should_ade_page_activate(press_xid: u64, hole: u64, shim: u64, cef: u64) -> bool {
-    press_xid != 0 && (press_xid == hole || press_xid == shim || press_xid == cef)
-}
-
-fn send_page_activate(
-    send: impl FnOnce(&HostCommand) -> Result<(), String>,
-) -> Result<(), String> {
-    match send(&HostCommand::Activate) {
-        Ok(()) => Ok(()),
-        Err(_) => Ok(()),
-    }
-}
-
-/// Fallback when the press target is the hole / shim / CEF xid (not chrome).
-fn install_ade_page_activate_filter(app: &AppHandle, window: &tauri::Window, hole_xid: u64) {
-    #[cfg(target_os = "linux")]
-    {
-        use gtk::prelude::*;
-        use gtk::glib::Cast;
-
-        let Ok(gtk_window) = window.gtk_window() else {
-            return;
-        };
-        let app = app.clone();
-        gtk_window.connect_button_press_event(move |_, event| {
-            let press = event
-                .window()
-                .and_then(|gdk_window| {
-                    gdk_window
-                        .downcast_ref::<gdkx11::X11Window>()
-                        .map(|x11| x11.xid() as u64)
-                })
-                .unwrap_or(0);
-            let state = app.state::<CefState>();
-            if should_ade_page_activate(
-                press,
-                hole_xid,
-                0,
-                state.cef_xid.load(Ordering::SeqCst),
-            ) {
-                eprintln!("[cef] ade page-activate press={press:#x}");
-                let _ = send_page_activate(|cmd| with_host(&state, |host| host.send(cmd)));
-            }
-            gtk::glib::Propagation::Proceed
-        });
-    }
-}
-
-/// El usuario pulsó en la UI Svelte (barra de URL, botones): el foco X11 vuelve
-/// al toplevel y CEF suelta el foco lógico (`unfocus`).
-#[tauri::command]
-pub fn browser_focus_app(window: tauri::Window, state: State<CefState>) -> Result<(), String> {
-    eprintln!("{}", browser_focus_app_log());
-    reclaim_app_keyboard(
-        || on_gtk(move || hole::focus_toplevel(&window))?,
-        |cmd| with_host(&state, |host| host.send(cmd)),
-    )
-}
-
 #[tauri::command]
 pub fn browser_kill(app: AppHandle, state: State<CefState>) -> Result<(), String> {
     let result = take_and_kill(&state);
-    destroy_hole(&state);
     promote_pending_after_close(&app);
     result
 }
@@ -504,17 +394,10 @@ fn start_forward_thread(
                 state.no_sandbox.store(true, Ordering::SeqCst);
                 let mut process = spawn_host(retry)?;
                 let next = process.take_events();
-                if let Ok(mut guard) = state.host.lock() {
-                    *guard = Some(process);
-                }
+                replace_host(&state, process)?;
                 Ok(next)
             },
-            |event| {
-                if let HostEvent::Ready { xid, .. } = &event {
-                    state.cef_xid.store(*xid, Ordering::SeqCst);
-                }
-                on_event.send(event).is_ok()
-            },
+            |event| on_event.send(event).is_ok(),
         );
     });
 }
@@ -544,17 +427,8 @@ fn pump_host_events(
                 if matches!(event, HostEvent::Ready { .. }) {
                     saw_ready = true;
                 }
-                match &event {
-                    HostEvent::Shortcut { chord } => {
-                        eprintln!("[cef] shortcut forwarded {chord}");
-                    }
-                    HostEvent::Focus { owner, next } => {
-                        eprintln!("[cef] focus forwarded owner={owner:?} next={next:?}");
-                    }
-                    HostEvent::Keys { text } => {
-                        eprintln!("[cef] keys forwarded {text:?}");
-                    }
-                    _ => {}
+                if let HostEvent::Shortcut { chord } = &event {
+                    eprintln!("[cef] shortcut forwarded {chord}");
                 }
                 if !emit(event) {
                     break;
@@ -610,6 +484,17 @@ fn take_and_kill(state: &CefState) -> Result<(), String> {
     Ok(())
 }
 
+fn replace_host(state: &CefState, process: HostProcess) -> Result<(), String> {
+    take_and_kill(state)?;
+    let mut guard = state.host.lock().map_err(|error| error.to_string())?;
+    *guard = Some(process);
+    Ok(())
+}
+
+fn should_pass_idq_scale(scale: f64) -> bool {
+    scale.is_finite() && (scale - 1.0).abs() > f64::EPSILON
+}
+
 fn with_host<T>(
     state: &CefState,
     f: impl FnOnce(&HostProcess) -> Result<T, String>,
@@ -621,27 +506,74 @@ fn with_host<T>(
     f(host)
 }
 
-fn physical_bounds(x: f64, y: f64, w: f64, h: f64, scale: f64) -> (i32, i32, i32, i32) {
+/// CONTRATO §4.1 / §4.4: `--idq-bounds` y `set_bounds` son DIP de Views. El
+/// scale no multiplica la geometría; va aparte en `--idq-scale`.
+fn dip_bounds(x: f64, y: f64, w: f64, h: f64) -> (i32, i32, i32, i32) {
     (
-        (x * scale).round() as i32,
-        (y * scale).round() as i32,
-        (w * scale).round() as i32,
-        (h * scale).round() as i32,
+        x.round() as i32,
+        y.round() as i32,
+        (w.round() as i32).max(1),
+        (h.round() as i32).max(1),
     )
 }
 
-/// GDK/X11 solo en el hilo que inicializó GTK. Los comandos Tauri corren en un worker.
-fn on_gtk<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Result<T, String> {
-    let ctx = gtk::glib::MainContext::default();
-    if ctx.is_owner() {
-        return Ok(f());
+fn resolve_scale(scale: Option<f64>) -> f64 {
+    scale.unwrap_or(DEFAULT_SCALE)
+}
+
+/// Visible Ctrl+B spawn. Health check is a separate ADE path.
+fn visible_spawn_health_check() -> bool {
+    false
+}
+
+fn visible_spawn_url(url: &str) -> &str {
+    if url.trim().is_empty() {
+        "about:blank"
+    } else {
+        url
     }
-    let (tx, rx) = std::sync::mpsc::sync_channel(1);
-    ctx.invoke(move || {
-        let _ = tx.send(f());
-    });
-    rx.recv_timeout(Duration::from_secs(5))
-        .map_err(|_| "El hilo de la UI no respondió".to_string())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VisibleAdePolicy {
+    health_check: bool,
+    url: String,
+}
+
+/// Fields `browser_spawn` must apply. Health check is a different ADE path.
+fn visible_ade_policy(url: &str) -> VisibleAdePolicy {
+    VisibleAdePolicy {
+        health_check: visible_spawn_health_check(),
+        url: visible_spawn_url(url).to_string(),
+    }
+}
+
+#[cfg(test)]
+fn visible_spawn_forbids_host_flag(flag: &str) -> bool {
+    matches!(
+        flag,
+        "--idq-health-check" | "--idq-parent" | "--idq-parent=1"
+    ) || flag.starts_with("--idq-parent=")
+        || flag.starts_with("--idq-health-check=")
+}
+
+fn resolve_dip_bounds(bounds: Option<&Bounds>) -> (i32, i32, i32, i32) {
+    match bounds {
+        Some(bounds) => dip_bounds(bounds.x, bounds.y, bounds.w, bounds.h),
+        None => DEFAULT_DIP_BOUNDS,
+    }
+}
+
+fn has_wayland_display(value: Option<&OsStr>) -> bool {
+    matches!(value, Some(value) if !value.is_empty())
+}
+
+fn require_wayland_display() -> Result<(), String> {
+    if has_wayland_display(std::env::var_os("WAYLAND_DISPLAY").as_deref()) {
+        Ok(())
+    } else {
+        Err(NO_DISPLAY.to_string())
+    }
 }
 
 fn stderr_stdio(log_file: Option<&PathBuf>) -> Result<Stdio, String> {
@@ -682,285 +614,10 @@ fn prepend_env(cmd: &mut Command, key: &str, cef_dir: &std::path::Path, sep: &st
     cmd.env(key, compose_search_path(&prefix, existing.as_deref(), sep));
 }
 
-/// Ventana X11 "hueco" para CEF.
-///
-/// GDK pinta el toplevel con cairo en modo `IncludeInferiors`, así que una
-/// ventana X ajena colgada directamente del toplevel queda tapada en cada
-/// repintado. Un hijo nativo creado por GDK sí se descuenta de la región de
-/// recorte del toplevel: CEF se reparenta dentro de él. Las coordenadas del
-/// hueco son lógicas (CSS px); dentro, CEF ocupa `(0, 0)` en píxeles físicos.
-///
-/// Quitar este hueco rompe el embed (GTK recubre al hijo X11). Se conserva.
-mod hole {
-    /// CSS px → geometría GDK. Tamaño 0 / NaN / ±Inf no llegan a `CreateWindow`
-    /// como 0×0 ni como `i32::MAX`: se tratan como inválidos (1×1, origen 0).
-    pub fn sanitize_css_bounds(x: f64, y: f64, w: f64, h: f64) -> (i32, i32, i32, i32) {
-        (css_coord(x), css_coord(y), css_size(w), css_size(h))
-    }
-
-    fn css_coord(v: f64) -> i32 {
-        if !v.is_finite() {
-            return 0;
-        }
-        v.round().clamp(i32::MIN as f64, i32::MAX as f64) as i32
-    }
-
-    fn css_size(v: f64) -> i32 {
-        if !v.is_finite() {
-            return 1;
-        }
-        v.round().clamp(1.0, i32::MAX as f64) as i32
-    }
-
-    pub fn clamp_geom(x: i32, y: i32, w: i32, h: i32) -> (i32, i32, i32, i32) {
-        (x, y, w.max(1), h.max(1))
-    }
-
-    /// Ozone keeps delivering page keys after `unfocus` while the pointer is
-    /// over the child. Reclaim must ungrab and give GTK the webview.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct ToplevelReclaimPlan {
-        pub ungrab_keyboard: bool,
-        pub ungrab_pointer: bool,
-        pub x11_focus: bool,
-        pub gtk_grab_focus: bool,
-    }
-
-    pub fn toplevel_reclaim_plan() -> ToplevelReclaimPlan {
-        ToplevelReclaimPlan {
-            ungrab_keyboard: true,
-            ungrab_pointer: true,
-            x11_focus: true,
-            gtk_grab_focus: true,
-        }
-    }
-
-    /// Visual que debe llevar `GdkWindowAttr`. Nunca el del padre (a menudo GL):
-    /// Chromium hace `CreateWindow` con el visual por defecto y colormap
-    /// `CopyFromParent` (CEF #3294 / #2804). Sin `system`, GDK hereda el GL
-    /// del toplevel y el servidor devuelve `BadMatch`.
-    pub fn window_attr_visual<V>(system: Option<V>, _parent: Option<V>) -> Result<V, String> {
-        system.ok_or_else(|| {
-            "La pantalla no tiene visual por defecto; el hueco GDK no puede embeder CEF".to_string()
-        })
-    }
-
-    /// `gdk_window_new` entrega una ref `from_glib_full`. gtk-rs `IntoGlibPtr`
-    /// es `ManuallyDrop` + `to_glib_none`: no incrementa, solo evita el
-    /// `g_object_unref` del Drop. Esa ref del creador tiene que seguir viva
-    /// hasta `gdk_window_destroy`. Si el wrapper se droppea, el GObject llega
-    /// a 0 y la tabla XID de GDK se queda con un puntero colgante (UAF en
-    /// DestroyNotify).
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum CreatorRef {
-        LeakUntilDestroy,
-        DestroyNow,
-    }
-
-    pub fn creator_ref_after_new(ensure_native_ok: bool) -> CreatorRef {
-        if ensure_native_ok {
-            CreatorRef::LeakUntilDestroy
-        } else {
-            CreatorRef::DestroyNow
-        }
-    }
-
-    /// Refcount GObject del creador tras `gdk_window_new` (= 1).
-    #[cfg(test)]
-    pub fn modeled_creator_refs(into_glib_ptr: bool, rust_drop: bool, gdk_destroy: bool) -> u32 {
-        let mut refs = 1u32;
-        if rust_drop && !into_glib_ptr {
-            refs = refs.saturating_sub(1);
-        }
-        if gdk_destroy {
-            refs = refs.saturating_sub(1);
-        }
-        refs
-    }
-
-    #[cfg(test)]
-    pub fn xid_table_use_after_free(gobject_refs: u32, xid_still_registered: bool) -> bool {
-        xid_still_registered && gobject_refs == 0
-    }
-
-    #[cfg(target_os = "linux")]
-    mod gdk {
-        use gtk::glib::Cast;
-        use gtk::prelude::*;
-
-        use super::super::X11_REQUIRED;
-        use super::{clamp_geom, creator_ref_after_new, window_attr_visual, CreatorRef};
-
-        fn lookup(xid: u64) -> Option<gdk::Window> {
-            let display = gdk::Display::default()?;
-            let x11_display = display.downcast_ref::<gdkx11::X11Display>()?;
-            gdkx11::X11Window::lookup_for_display(x11_display, xid as _).map(|w| w.upcast())
-        }
-
-        pub fn create(
-            window: &tauri::Window,
-            x: i32,
-            y: i32,
-            w: i32,
-            h: i32,
-        ) -> Result<u64, String> {
-            let gtk_window = window.gtk_window().map_err(|_| X11_REQUIRED.to_string())?;
-            let parent = gtk_window
-                .window()
-                .ok_or_else(|| "La ventana de idioteque aún no está realizada".to_string())?;
-            if parent.downcast_ref::<gdkx11::X11Window>().is_none() {
-                return Err(X11_REQUIRED.to_string());
-            }
-
-            let (x, y, w, h) = clamp_geom(x, y, w, h);
-            let visual =
-                window_attr_visual(parent.screen().system_visual(), Some(parent.visual()))?;
-            let attrs = gdk::WindowAttr {
-                window_type: gdk::WindowType::Child,
-                wclass: gdk::WindowWindowClass::InputOutput,
-                x: Some(x),
-                y: Some(y),
-                width: w,
-                height: h,
-                visual: Some(visual),
-                event_mask: gdk::EventMask::empty(),
-                ..Default::default()
-            };
-            let hole = gdk::Window::new(Some(&parent), &attrs);
-            match creator_ref_after_new(hole.ensure_native()) {
-                CreatorRef::DestroyNow => {
-                    hole.destroy();
-                    return Err("GDK no pudo crear la ventana nativa para el navegador".to_string());
-                }
-                CreatorRef::LeakUntilDestroy => {
-                    hole.show();
-                    hole.raise();
-                    let xid = hole
-                        .downcast_ref::<gdkx11::X11Window>()
-                        .ok_or_else(|| X11_REQUIRED.to_string())?
-                        .xid();
-                    // glib-0.18 `IntoGlibPtr` for GObject: ManuallyDrop + to_glib_none.
-                    let _: *mut gdk::ffi::GdkWindow =
-                        unsafe { gtk::glib::translate::IntoGlibPtr::into_glib_ptr(hole) };
-                    Ok(xid as u64)
-                }
-            }
-        }
-
-        pub fn move_resize(xid: u64, x: i32, y: i32, w: i32, h: i32) {
-            let (x, y, w, h) = clamp_geom(x, y, w, h);
-            if let Some(hole) = lookup(xid) {
-                hole.move_resize(x, y, w, h);
-            }
-        }
-
-        pub fn set_visible(xid: u64, visible: bool) {
-            if let Some(hole) = lookup(xid) {
-                if visible {
-                    hole.show();
-                    hole.raise();
-                } else {
-                    hole.hide();
-                }
-            }
-        }
-
-        pub fn destroy(xid: u64) {
-            if let Some(hole) = lookup(xid) {
-                hole.hide();
-                // Consume la ref del creador que `create` dejó viva. El wrapper
-                // de `lookup` (`from_glib_none`) suelta su ref temporal al drop;
-                // la entrada XID la quita GDK al DestroyNotify.
-                hole.destroy();
-            }
-        }
-
-        /// Devuelve el teclado al chrome wry. Ozone no cede el InputFocus de X11
-        /// (sigue en el toplevel) y a menudo mantiene un grab mientras el
-        /// puntero está sobre el hijo: `XSetInputFocus` solo no basta.
-        pub fn focus_toplevel(window: &tauri::Window) -> Result<(), String> {
-            let gtk_window = window.gtk_window().map_err(|_| X11_REQUIRED.to_string())?;
-            let gdk_window = gtk_window
-                .window()
-                .ok_or_else(|| "La ventana de idioteque aún no está realizada".to_string())?;
-            let x11_window = gdk_window
-                .downcast_ref::<gdkx11::X11Window>()
-                .ok_or_else(|| X11_REQUIRED.to_string())?;
-            let xid = x11_window.xid();
-            let plan = super::toplevel_reclaim_plan();
-            unsafe {
-                let xdisplay = gdkx11::ffi::gdk_x11_get_default_xdisplay();
-                if xdisplay.is_null() {
-                    return Err(X11_REQUIRED.to_string());
-                }
-                if plan.ungrab_keyboard {
-                    x11::xlib::XUngrabKeyboard(xdisplay, x11::xlib::CurrentTime);
-                }
-                if plan.ungrab_pointer {
-                    x11::xlib::XUngrabPointer(xdisplay, x11::xlib::CurrentTime);
-                }
-                if plan.x11_focus {
-                    x11::xlib::XSetInputFocus(
-                        xdisplay,
-                        xid as x11::xlib::Window,
-                        x11::xlib::RevertToParent,
-                        x11::xlib::CurrentTime,
-                    );
-                }
-                x11::xlib::XFlush(xdisplay);
-            }
-            if plan.gtk_grab_focus {
-                grab_webview_keyboard(&gtk_window);
-            }
-            eprintln!("[cef] reclaim toplevel ungrab+gtk");
-            Ok(())
-        }
-
-        fn grab_webview_keyboard(gtk_window: &gtk::ApplicationWindow) {
-            gtk_window.grab_focus();
-            if let Some(widget) = gtk_window.focused_widget() {
-                widget.grab_focus();
-            }
-            if let Some(child) = gtk_window.child() {
-                grab_focus_webview_or_child(&child);
-            }
-        }
-
-        fn grab_focus_webview_or_child(widget: &gtk::Widget) {
-            let name = widget.type_().name();
-            eprintln!("[cef] gtk walk {name}");
-            if name.contains("WebView") || name.contains("WebKit") {
-                widget.grab_focus();
-                if let Some(window) = widget
-                    .toplevel()
-                    .and_then(|t| t.downcast::<gtk::Window>().ok())
-                {
-                    window.set_focus(Some(widget));
-                }
-                return;
-            }
-            if let Ok(container) = widget.clone().downcast::<gtk::Container>() {
-                for child in container.children() {
-                    grab_focus_webview_or_child(&child);
-                }
-            }
-        }
-    }
-
-    pub(super) use gdk::{create, destroy, focus_toplevel, move_resize, set_visible};
-}
-
-fn destroy_hole(state: &CefState) {
-    state.cef_xid.store(0, Ordering::SeqCst);
-    let xid = state.hole_xid.swap(0, Ordering::SeqCst);
-    if xid != 0 {
-        let _ = on_gtk(move || hole::destroy(xid));
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
     use tempfile::TempDir;
 
     #[cfg(unix)]
@@ -980,8 +637,7 @@ mod tests {
             binary,
             cef_dir,
             cache_dir,
-            parent_xid: None,
-            bounds: Some((0, 36, 1200, 700)),
+            bounds: Some(DEFAULT_DIP_BOUNDS),
             scale: 1.0,
             url: "about:blank".into(),
             health_check: false,
@@ -993,7 +649,7 @@ mod tests {
 
     #[cfg(unix)]
     const FAKE_HOST: &str = r#"#!/bin/sh
-printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200,"xid":1}'
+printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200}'
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in
     *'"cmd":"close"'*) exit 0 ;;
@@ -1015,7 +671,7 @@ exit 15
 
     #[cfg(unix)]
     const EXIT_16_FATAL: &str = r#"#!/bin/sh
-printf '%s\n' '{"event":"fatal","message":"no X11","code":16}'
+printf '%s\n' '{"event":"fatal","message":"sin compositor Wayland","code":16}'
 exit 16
 "#;
 
@@ -1024,7 +680,7 @@ exit 16
     const SANDBOX_FATAL_UNTIL_NO_SANDBOX: &str = r#"#!/bin/sh
 case " $* " in
   *" --idq-no-sandbox "*)
-    printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200,"xid":1}'
+    printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200}'
     while IFS= read -r line || [ -n "$line" ]; do
       case "$line" in
         *'"cmd":"close"'*) exit 0 ;;
@@ -1039,19 +695,19 @@ exit 15
 
     #[cfg(unix)]
     const READY_THEN_EXIT_15: &str = r#"#!/bin/sh
-printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200,"xid":1}'
+printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200}'
 exit 15
 "#;
 
     #[cfg(unix)]
     const IGNORE_CLOSE: &str = r#"#!/bin/sh
-printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200,"xid":1}'
+printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200}'
 exec sleep 30
 "#;
 
     #[cfg(unix)]
     const MULTI_EVENT: &str = r#"#!/bin/sh
-printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200,"xid":1}'
+printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200}'
 printf '%s\n' '{"event":"title","title":"one"}'
 printf '%s\n' '{"event":"title","title":"two"}'
 printf '%s\n' '{"event":"title","title":"three"}'
@@ -1068,32 +724,8 @@ exit 0
 printf '\n'
 printf '   \n'
 printf 'not-json\n'
-printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200,"xid":1}'
+printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200}'
 while IFS= read -r line || [ -n "$line" ]; do
-  case "$line" in
-    *'"cmd":"close"'*) exit 0 ;;
-  esac
-done
-exit 0
-"#;
-
-    /// Escribe `LD_LIBRARY_PATH` y si llegó `--idq-no-sandbox` en `--idq-cache-dir`.
-    /// Records each stdin command line into `--idq-cache-dir`/cmds.
-    #[cfg(unix)]
-    const RECORD_CMDS: &str = r#"#!/bin/sh
-cache=""
-prev=""
-for arg in "$@"; do
-  if [ "$prev" = "--idq-cache-dir" ]; then
-    cache="$arg"
-  fi
-  prev="$arg"
-done
-mkdir -p "$cache"
-: > "$cache/cmds"
-printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200,"xid":1}'
-while IFS= read -r line || [ -n "$line" ]; do
-  printf '%s\n' "$line" >> "$cache/cmds"
   case "$line" in
     *'"cmd":"close"'*) exit 0 ;;
   esac
@@ -1115,11 +747,15 @@ mkdir -p "$cache"
 {
   printf '%s' "$LD_LIBRARY_PATH"
 } > "$cache/ld_library_path"
+: > "$cache/args"
+for arg in "$@"; do
+  printf '%s\n' "$arg" >> "$cache/args"
+done
 case " $* " in
   *" --idq-no-sandbox "*) printf '1' > "$cache/no_sandbox" ;;
   *) printf '0' > "$cache/no_sandbox" ;;
 esac
-printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200,"xid":1}'
+printf '%s\n' '{"event":"ready","cef":"x","chromium":"y","apiVersion":15200}'
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in
     *'"cmd":"close"'*) exit 0 ;;
@@ -1153,7 +789,6 @@ exit 0
                 cef: "x".into(),
                 chromium: "y".into(),
                 api_version: 15200,
-                xid: 1,
             }
         );
         assert!(host.is_alive());
@@ -1186,6 +821,88 @@ exit 0
 
     #[cfg(unix)]
     #[test]
+    fn spawn_host_passes_views_window_flags() {
+        let tmp = TempDir::new().unwrap();
+        let slot = tmp.path().join("slot-dir");
+        fs::create_dir_all(&slot).unwrap();
+        let cache = tmp.path().join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        let binary = write_script(tmp.path(), "dump-env", DUMP_SPAWN_ENV);
+        let policy = visible_ade_policy("about:blank");
+        let mut launch = launch(binary, slot.clone(), cache.clone());
+        launch.health_check = policy.health_check;
+        launch.url = policy.url;
+        let mut host = spawn_host(&launch).expect("spawn");
+        let events = host.take_events();
+        let _ = events.recv_timeout(Duration::from_secs(3)).expect("ready");
+        let args = fs::read_to_string(cache.join("args")).expect("args");
+        let lines: Vec<&str> = args.lines().collect();
+        assert_eq!(
+            lines,
+            [
+                "--idq-cef-dir",
+                slot.to_str().expect("utf8 slot"),
+                "--idq-cache-dir",
+                cache.to_str().expect("utf8 cache"),
+                "--idq-bounds",
+                "0,0,1200,800",
+                "--idq-url",
+                "about:blank",
+            ]
+        );
+        assert!(
+            !lines.contains(&"--idq-scale"),
+            "scale 1 lo da el compositor: {lines:?}"
+        );
+        assert!(
+            !lines
+                .iter()
+                .any(|flag| visible_spawn_forbids_host_flag(flag)),
+            "visible ADE argv no lleva health ni padre nativo: {lines:?}"
+        );
+        host.send(&HostCommand::Close).expect("close");
+        let _ = events.recv_timeout(Duration::from_secs(3));
+    }
+
+    #[test]
+    fn visible_ade_launch_is_not_health_and_defaults_blank() {
+        let empty = visible_ade_policy("");
+        assert!(!empty.health_check);
+        assert_eq!(empty.url, "about:blank");
+        let spaces = visible_ade_policy("   ");
+        assert!(!spaces.health_check);
+        assert_eq!(spaces.url, "about:blank");
+        let ok = visible_ade_policy("https://ok.test");
+        assert!(!ok.health_check);
+        assert_eq!(ok.url, "https://ok.test");
+        assert!(!visible_spawn_health_check());
+        assert_eq!(visible_spawn_url(""), "about:blank");
+        assert_eq!(visible_spawn_url("   "), "about:blank");
+        assert_eq!(visible_spawn_url("https://ok.test"), "https://ok.test");
+        assert!(visible_spawn_forbids_host_flag("--idq-health-check"));
+        assert!(visible_spawn_forbids_host_flag("--idq-parent"));
+        assert!(visible_spawn_forbids_host_flag("--idq-parent=12345"));
+        assert!(!visible_spawn_forbids_host_flag("--idq-url"));
+        #[cfg(unix)]
+        {
+            let tmp = TempDir::new().unwrap();
+            let mut launch = launch(
+                tmp.path().join("missing-host"),
+                tmp.path().to_path_buf(),
+                tmp.path().join("cache"),
+            );
+            launch.health_check = true;
+            launch.url.clear();
+            let policy = visible_ade_policy(&launch.url);
+            launch.health_check = policy.health_check;
+            launch.url = policy.url;
+            assert!(!launch.health_check);
+            assert_eq!(launch.url, "about:blank");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn kill_graceful_kills_a_stuck_host() {
         let tmp = TempDir::new().unwrap();
         let binary = write_script(tmp.path(), "stuck-host", IGNORE_CLOSE);
@@ -1207,123 +924,81 @@ exit 0
         }
     }
 
+    /// Views toma DIP: multiplicar por el scale era la geometría física de X11.
     #[test]
-    fn physical_bounds_rounds_css_times_scale() {
-        assert_eq!(
-            physical_bounds(10.2, 20.6, 100.4, 50.5, 2.0),
-            (20, 41, 201, 101)
-        );
-        assert_eq!(
-            physical_bounds(0.0, 36.0, 1200.0, 700.0, 1.0),
-            (0, 36, 1200, 700)
-        );
+    fn dip_bounds_round_without_scaling() {
+        assert_eq!(dip_bounds(10.2, 20.6, 100.4, 50.5), (10, 21, 100, 51));
+        assert_eq!(dip_bounds(0.0, 36.0, 1200.0, 700.0), (0, 36, 1200, 700));
+        assert_eq!(dip_bounds(-4.4, -8.6, 800.0, 600.0), (-4, -9, 800, 600));
+        assert_eq!(dip_bounds(0.0, 0.0, 0.0, 0.0), (0, 0, 1, 1));
+        assert_eq!(dip_bounds(0.0, 0.0, -10.0, -10.0), (0, 0, 1, 1));
     }
 
     #[test]
-    fn hole_css_bounds_round_without_scale() {
-        assert_eq!(
-            hole::sanitize_css_bounds(10.2, 20.6, 100.4, 50.5),
-            (10, 21, 100, 51)
-        );
-        assert_eq!(
-            hole::sanitize_css_bounds(0.0, 36.0, 1200.0, 700.0),
-            (0, 36, 1200, 700)
-        );
+    fn resolve_dip_bounds_defaults_to_contract_window() {
+        assert_eq!(resolve_dip_bounds(None), (0, 0, 1200, 800));
+        assert_eq!(resolve_dip_bounds(None), DEFAULT_DIP_BOUNDS);
+        assert_eq!(resolve_scale(None), 1.0);
+        assert_eq!(resolve_scale(Some(1.5)), 1.5);
+        let bounds = Bounds {
+            x: 10.2,
+            y: 20.6,
+            w: 100.4,
+            h: 50.5,
+        };
+        assert_eq!(resolve_dip_bounds(Some(&bounds)), (10, 21, 100, 51));
+        let tiny = Bounds {
+            x: 0.0,
+            y: 0.0,
+            w: 0.0,
+            h: 0.0,
+        };
+        assert_eq!(resolve_dip_bounds(Some(&tiny)), (0, 0, 1, 1));
     }
 
+    /// El scale no puede entrar dos veces: DIP a la ventana, `--idq-scale` aparte.
     #[test]
-    fn hole_css_bounds_zero_and_negative_size_become_one() {
-        assert_eq!(hole::sanitize_css_bounds(8.0, 9.0, 0.0, 0.0), (8, 9, 1, 1));
-        assert_eq!(
-            hole::sanitize_css_bounds(-4.2, 12.0, -10.0, 0.4),
-            (-4, 12, 1, 1)
-        );
-        assert_eq!(hole::clamp_geom(3, 4, 0, -2), (3, 4, 1, 1));
-    }
-
-    #[test]
-    fn hole_css_bounds_nan_and_inf_do_not_reach_gdk() {
-        let nan = f64::NAN;
-        let inf = f64::INFINITY;
-        let ninf = f64::NEG_INFINITY;
-        assert_eq!(hole::sanitize_css_bounds(nan, nan, nan, nan), (0, 0, 1, 1));
-        assert_eq!(
-            hole::sanitize_css_bounds(inf, ninf, inf, ninf),
-            (0, 0, 1, 1)
-        );
-        assert_eq!(
-            hole::sanitize_css_bounds(10.0, nan, 800.0, inf),
-            (10, 0, 800, 1)
-        );
-        // Old `logical_bounds` did `round().max(1.0) as i32`: Inf became i32::MAX.
-        let old_inf = inf.round().max(1.0) as i32;
-        assert_eq!(old_inf, i32::MAX);
-        assert_ne!(
-            hole::sanitize_css_bounds(0.0, 0.0, inf, inf),
-            (0, 0, i32::MAX, i32::MAX)
-        );
-        assert_eq!(
-            hole::sanitize_css_bounds(1e20, -1e20, 1e20, 8.0),
-            (i32::MAX, i32::MIN, i32::MAX, 8)
-        );
-    }
-
-    #[test]
-    fn hole_never_falls_back_to_parent_gl_visual() {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-        enum Kind {
-            System,
-            Parent,
+    fn scale_never_multiplies_dip_bounds() {
+        let bounds = Bounds {
+            x: 0.0,
+            y: 0.0,
+            w: 1200.0,
+            h: 800.0,
+        };
+        let dip = resolve_dip_bounds(Some(&bounds));
+        assert_eq!(dip, (0, 0, 1200, 800));
+        for scale in [1.0, 1.25, 2.0, 3.0] {
+            assert_eq!(
+                resolve_dip_bounds(Some(&bounds)),
+                dip,
+                "scale {scale} no puede cambiar los DIP"
+            );
+            assert_eq!(resolve_scale(Some(scale)), scale);
         }
-        assert_eq!(
-            hole::window_attr_visual(Some(Kind::System), Some(Kind::Parent)).unwrap(),
-            Kind::System
-        );
-        assert!(
-            hole::window_attr_visual::<Kind>(None, Some(Kind::Parent)).is_err(),
-            "parent GL visual must not be a fallback; Chromium CreateWindow BadMatch"
-        );
-        assert!(hole::window_attr_visual::<Kind>(None, None).is_err());
-    }
-
-    #[test]
-    fn into_glib_ptr_keeps_creator_ref_until_destroy() {
-        let leaked = hole::modeled_creator_refs(true, true, false);
-        assert_eq!(leaked, 1);
-        assert!(
-            !hole::xid_table_use_after_free(leaked, true),
-            "into_glib_ptr (ManuallyDrop) must leave the from_glib_full ref alive"
-        );
-        let after_destroy = hole::modeled_creator_refs(true, true, true);
-        assert_eq!(after_destroy, 0);
-        assert!(
-            !hole::xid_table_use_after_free(after_destroy, false),
-            "gdk_window_destroy consumes the creator ref and drops the XID entry"
+        assert_ne!(
+            dip,
+            (0, 0, 2400, 1600),
+            "2400x1600 era el tamaño físico X11"
         );
     }
 
     #[test]
-    fn dropping_full_wrapper_without_into_glib_ptr_uafs_xid_table() {
-        let dropped = hole::modeled_creator_refs(false, true, false);
-        assert_eq!(dropped, 0);
-        assert!(
-            hole::xid_table_use_after_free(dropped, true),
-            "dropping the gtk-rs wrapper unrefs to 0 while GDK still has the XID"
-        );
-    }
-
-    #[test]
-    fn native_failure_destroys_wrapper_instead_of_leaking() {
-        assert_eq!(
-            hole::creator_ref_after_new(true),
-            hole::CreatorRef::LeakUntilDestroy
-        );
-        assert_eq!(
-            hole::creator_ref_after_new(false),
-            hole::CreatorRef::DestroyNow
-        );
-        // `hole.destroy()` on the from_glib_full wrapper (no into_glib_ptr).
-        assert_eq!(hole::modeled_creator_refs(false, false, true), 0);
+    fn visible_spawn_requires_wayland_display() {
+        assert_eq!(NO_DISPLAY, "sin compositor Wayland");
+        assert!(!has_wayland_display(None));
+        assert!(!has_wayland_display(Some(OsStr::new(""))));
+        assert!(has_wayland_display(Some(OsStr::new("wayland-0"))));
+        assert!(has_wayland_display(Some(OsStr::new("wayland-1"))));
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            let display = OsString::from_vec(vec![0xff]);
+            assert!(has_wayland_display(Some(display.as_os_str())));
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = OsString::new();
+        }
     }
 
     #[test]
@@ -1658,6 +1333,12 @@ exit 0
 
         assert_eq!(ui.len(), 1, "{ui:?}");
         assert!(matches!(ui[0], HostEvent::Fatal { code: 16, .. }), "{ui:?}");
+        match &ui[0] {
+            HostEvent::Fatal { message, code: 16 } => {
+                assert_eq!(message, "sin compositor Wayland");
+            }
+            other => panic!("{other:?}"),
+        }
         drop(first);
     }
 
@@ -1713,154 +1394,75 @@ exit 0
         assert!(!host.is_alive());
     }
 
-    #[test]
-    fn browser_focus_app_logs_stable_line() {
-        assert_eq!(browser_focus_app_log(), "[cef] browser_focus_app");
-        assert!(
-            browser_focus_app_log().contains("browser_focus_app"),
-            "Lab counts this exact token in the ADE log"
-        );
-    }
-
-    #[test]
-    fn toplevel_reclaim_ungrabs_and_grabs_webview() {
-        let plan = hole::toplevel_reclaim_plan();
-        assert!(
-            plan.ungrab_keyboard && plan.ungrab_pointer && plan.x11_focus && plan.gtk_grab_focus,
-            "XSetInputFocus alone leaves Ozone routing keys to the child"
-        );
-        assert_ne!(
-            plan,
-            hole::ToplevelReclaimPlan {
-                ungrab_keyboard: false,
-                ungrab_pointer: false,
-                x11_focus: true,
-                gtk_grab_focus: false,
-            }
-        );
-    }
-
-    #[test]
-    fn reclaim_app_keyboard_sends_unfocus_once_after_x11() {
-        let mut x11 = 0;
-        let mut cmds = Vec::new();
-        reclaim_app_keyboard(
-            || {
-                x11 += 1;
-                Ok(())
-            },
-            |cmd| {
-                cmds.push(cmd.clone());
-                Ok(())
-            },
-        )
-        .expect("reclaim");
-        assert_eq!(x11, 1);
-        assert_eq!(cmds, vec![HostCommand::Unfocus]);
-    }
-
-    #[test]
-    fn reclaim_app_keyboard_skips_unfocus_if_x11_fails() {
-        let mut cmds = Vec::new();
-        let err = reclaim_app_keyboard(
-            || Err("no X11".into()),
-            |cmd| {
-                cmds.push(cmd.clone());
-                Ok(())
-            },
-        )
-        .expect_err("x11 must abort the command");
-        assert_eq!(err, "no X11");
-        assert!(
-            cmds.is_empty(),
-            "unfocus must not run before XSetInputFocus"
-        );
-    }
-
-    #[test]
-    fn reclaim_app_keyboard_swallows_missing_host() {
-        reclaim_app_keyboard(
-            || Ok(()),
-            |_| Err("No hay un navegador en ejecución".into()),
-        )
-        .expect("chrome already has X11");
-    }
-
-    #[test]
-    fn ade_page_activate_only_for_hole_shim_or_cef() {
-        assert!(should_ade_page_activate(10, 10, 0, 0));
-        assert!(should_ade_page_activate(11, 10, 11, 0));
-        assert!(should_ade_page_activate(12, 10, 11, 12));
-        assert!(!should_ade_page_activate(0, 10, 11, 12));
-        assert!(!should_ade_page_activate(99, 10, 11, 12));
-        assert!(!should_ade_page_activate(10, 0, 0, 0));
-    }
-
-    #[test]
-    fn send_page_activate_is_activate_not_focus_app() {
-        let mut cmds = Vec::new();
-        send_page_activate(|cmd| {
-            cmds.push(cmd.clone());
-            Ok(())
-        })
-        .expect("activate");
-        assert_eq!(cmds, vec![HostCommand::Activate]);
-        assert_ne!(cmds, vec![HostCommand::Focus]);
-        assert_ne!(cmds, vec![HostCommand::Unfocus]);
-        send_page_activate(|_| Err("No hay un navegador en ejecución".into()))
-            .expect("missing host is ok");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn browser_focus_app_with_fake_host_sends_unfocus_once() {
-        let tmp = TempDir::new().unwrap();
-        let cache = tmp.path().join("cache-unfocus");
-        let binary = write_script(tmp.path(), "record-cmds", RECORD_CMDS);
-        let mut host =
-            spawn_host(&launch(binary, tmp.path().to_path_buf(), cache.clone())).expect("spawn");
-        let events = host.take_events();
-        let _ = events.recv_timeout(Duration::from_secs(3)).expect("ready");
-        let state = CefState::default();
-        state.set_host_for_test(host);
-
-        reclaim_app_keyboard(|| Ok(()), |cmd| with_host(&state, |h| h.send(cmd))).expect("unfocus");
-
-        // The child appends after the write+flush from HostProcess::send.
-        let cmds_path = cache.join("cmds");
-        let mut recorded = String::new();
-        for _ in 0..50 {
-            recorded = fs::read_to_string(&cmds_path).unwrap_or_default();
-            if recorded.contains("unfocus") {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        let lines: Vec<&str> = recorded
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .collect();
-        assert_eq!(
-            lines,
-            vec![r#"{"cmd":"unfocus"}"#],
-            "browser_focus_app must send unfocus exactly once: {recorded:?}"
-        );
-        assert_eq!(
-            lines
-                .iter()
-                .filter(|line| **line == r#"{"cmd":"unfocus"}"#)
-                .count(),
-            1
-        );
-        take_and_kill(&state).expect("cleanup");
-    }
-
     #[cfg(unix)]
     #[test]
     fn take_and_kill_is_ok_on_empty_state() {
         let state = CefState::default();
         take_and_kill(&state).expect("vacío");
+        assert!(!state.host_alive());
+    }
+
+    #[test]
+    fn idq_scale_is_omitted_at_one() {
+        assert!(!should_pass_idq_scale(1.0));
+        assert!(!should_pass_idq_scale(DEFAULT_SCALE));
+        assert!(!should_pass_idq_scale(f64::NAN));
+        assert!(should_pass_idq_scale(1.5));
+        assert!(should_pass_idq_scale(2.0));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn spawn_host_passes_idq_scale_when_not_one() {
+        let tmp = TempDir::new().unwrap();
+        let slot = tmp.path().join("slot-dir");
+        fs::create_dir_all(&slot).unwrap();
+        let cache = tmp.path().join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        let binary = write_script(tmp.path(), "dump-env", DUMP_SPAWN_ENV);
+        let mut launch = launch(binary, slot, cache.clone());
+        launch.scale = 2.0;
+        let mut host = spawn_host(&launch).expect("spawn");
+        let events = host.take_events();
+        let _ = events.recv_timeout(Duration::from_secs(3)).expect("ready");
+        let args = fs::read_to_string(cache.join("args")).expect("args");
+        let lines: Vec<&str> = args.lines().collect();
+        assert!(
+            lines.windows(2).any(|pair| pair == ["--idq-scale", "2"]),
+            "{lines:?}"
+        );
+        host.send(&HostCommand::Close).expect("close");
+        let _ = events.recv_timeout(Duration::from_secs(3));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replace_host_kills_the_previous_process() {
+        let tmp = TempDir::new().unwrap();
+        let stuck = write_script(tmp.path(), "stuck", IGNORE_CLOSE);
+        let ready = write_script(tmp.path(), "ready", FAKE_HOST);
+        let mut first = spawn_ok(stuck, tmp.path(), "cache-a");
+        let first_events = first.take_events();
+        let _ = first_events
+            .recv_timeout(Duration::from_secs(3))
+            .expect("ready");
+        let first_pid = first.pid();
+        let state = CefState::default();
+        state.set_host_for_test(first);
+        assert!(state.host_alive());
+
+        let mut second = spawn_ok(ready, tmp.path(), "cache-b");
+        let second_events = second.take_events();
+        let _ = second_events
+            .recv_timeout(Duration::from_secs(3))
+            .expect("ready 2");
+        replace_host(&state, second).expect("replace");
+        assert!(state.host_alive());
+        assert!(
+            !pid_alive(first_pid),
+            "el host anterior del retry no puede seguir vivo"
+        );
+        take_and_kill(&state).expect("cleanup");
         assert!(!state.host_alive());
     }
 

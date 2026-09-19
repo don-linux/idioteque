@@ -1,3 +1,4 @@
+// @ts-nocheck svelte-check has no @types/node; vitest still runs this file.
 /**
  * `bun run tauri <subcomando>`: envoltorio del CLI de Tauri.
  *
@@ -17,8 +18,8 @@
  *   plugin no pasan por `/tmp`. Eso no es un quirk de Ubuntu: `/tmp` tmpfs
  *   con usrquota (systemd ≥ 258) aparece en Debian, Fedora/RHEL y openSUSE.
  *   El rpm va sin compresión (`none`): gzip de ~350 MB tarda decenas de
- *   minutos. Si quitar el TMPDIR de build o la inyección post-linuxdeploy
- *   rompe el empaquetado, se conservan (política de workarounds).
+ *   minutos. TMPDIR de build e inyección post-linuxdeploy son el diseño
+ *   actual del empaquetado.
  * - `dev`: `cef:prepare` debe terminar bien; un fallo no lanza `tauri dev`.
  * - Otros subcomandos: passthrough.
  */
@@ -213,9 +214,10 @@ export function buildTmpDir(): string {
  * acaba en `Disk quota exceeded (os error 122)`. Si el usuario ya trae
  * `TMPDIR`, se respeta.
  *
- * Workaround conservado: no se vuelve a `/tmp` “porque el doc no lo pide”.
  * El staging grande (rpm `compression: none`, AppImage + CEF) no cabe en
  * tmpfs con usrquota en Debian/Fedora/RHEL/openSUSE, no solo en Ubuntu.
+ * Por eso el build usa `src-tauri/target/tmp` salvo que el usuario traiga
+ * `TMPDIR`.
  */
 export function buildEnv(env: NodeJS.ProcessEnv, tmpDir: string): NodeJS.ProcessEnv {
   if (env.TMPDIR && env.TMPDIR.length > 0) return { ...env };

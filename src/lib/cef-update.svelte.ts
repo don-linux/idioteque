@@ -17,7 +17,6 @@ import {
   shouldDefer,
 } from "$lib/cef-update";
 import { toasts } from "$lib/toast.svelte";
-import { surface } from "$lib/workspace-surface.svelte";
 
 export class CefUpdates {
   #pending: CefUpdateEvent[] = [];
@@ -61,7 +60,7 @@ export class CefUpdates {
   }
 
   enqueue(event: CefUpdateEvent): void {
-    if (shouldDefer(surface.current)) {
+    if (shouldDefer()) {
       this.#pending = enqueueCefUpdate(this.#pending, event);
       return;
     }
@@ -69,7 +68,7 @@ export class CefUpdates {
   }
 
   flush(): void {
-    if (shouldDefer(surface.current)) {
+    if (shouldDefer()) {
       return;
     }
     const drained = drainCefUpdates(this.#pending);

@@ -549,7 +549,6 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
- "x11-dl",
 ]
 
 [[package]]
@@ -2086,9 +2085,6 @@ dependencies = [
  "bzip2 0.5.2",
  "fontdb",
  "fs2",
- "gdk",
- "gdkx11",
- "gtk",
  "hex",
  "libc",
  "notify",
@@ -2105,7 +2101,6 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "tempfile",
- "x11",
 ]
 
 [[package]]

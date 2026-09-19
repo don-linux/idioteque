@@ -20,7 +20,7 @@ export const RELOAD_AFTER_CHECK_MS = 5000;
 
 export const COPY = {
   heading: "Navegador",
-  lead: "Motor Chromium embebido. No hay nada que guardar aquí: es información y un botón.",
+  lead: "Motor Chromium en una ventana propia. No hay nada que guardar aquí: es información y un botón.",
   loading: "Cargando…",
   check: "Buscar actualización",
   denylistLabel: "Versiones descartadas:",

@@ -9,8 +9,9 @@ de nombres, rutas y mensajes está en [`cef/CONTRACT.md`](cef/CONTRACT.md).
   `cef-host`.
 - **`cef-host`** es un binario aparte (`src-tauri/cef-host`) compilado contra
   el crate `cef` 152.3.0 (API de CEF `15200`). Carga la `libcef` del slot que
-  se le indique y se dibuja como ventana hija X11 dentro de la ventana de
-  idioteque. El mismo binario hace el health check.
+  se le indique y abre una ventana Views Alloy propia (Ozone `wayland` cuando
+  es visible; `headless` + windowless en el health). El mismo binario hace el
+  health check.
 - **Base**: el CEF de fábrica que viaja en cada release. Vive en el bundle
   (`<resource_dir>/cef/base/`). Hoy es
   `152.0.6+g708dc14+chromium-152.0.7977.83` (Chromium 152.0.7977.83).
@@ -138,51 +139,25 @@ el orden de un minuto; el rpm pesa el doble que el deb y se acepta.
 ### Dependencias del sistema
 
 `libcef.so` necesita librerías que no vienen con webkit2gtk/gtk3: NSS/NSPR,
-ALSA, DRM/GBM, dbus, cups y varias X11. `tauri.conf.json` las declara en
-`bundle.linux.deb.depends` (nombres clásicos de paquete; Ubuntu 24.04+ hace
-`Provides` de ellos desde los `t64`) y en `bundle.linux.rpm.depends` como
-`Requires` por soname (`libnss3.so()(64bit)`…), que resuelven dnf y zypper en
-cualquier distro. `src/lib/linux-bundle-deps.test.ts` exige que las dos listas
-cubran los mismos sonames. La AppImage no declara dependencias: linuxdeploy
-bundlea gtk y compañía, el resto está en la excludelist oficial (glibc, mesa,
-X11, fontconfig, alsa…) y solo asume NSS/NSPR (`libnss3`) del sistema, igual
+ALSA, DRM/GBM, dbus, cups y los sonames del tarball Chromium `linux64`.
+`tauri.conf.json` las declara en `bundle.linux.deb.depends` (nombres
+clásicos de paquete; Ubuntu 24.04+ hace `Provides` de ellos desde los
+`t64`) y en `bundle.linux.rpm.depends` como `Requires` por soname
+(`libnss3.so()(64bit)`…), que resuelven dnf y zypper en cualquier distro.
+`src/lib/linux-bundle-deps.test.ts` exige que las dos listas cubran los
+mismos sonames. La AppImage no declara dependencias: linuxdeploy bundlea
+gtk y compañía, el resto está en la excludelist oficial (glibc, mesa,
+fontconfig, alsa…) y solo asume NSS/NSPR (`libnss3`) del sistema, igual
 que Electron y Chrome; está en cualquier escritorio con navegador.
 
-### Navegador embebido: X11 / XWayland y sandbox
+### Ventana Alloy y sandbox
 
-El embed es una ventana hija X11. En GNOME Wayland (Ubuntu 26.04 no ofrece
-sesión Xorg) Mutter sigue levantando XWayland: idioteque fija
-`GDK_BACKEND=x11` si hay `DISPLAY` y CEF usa `--ozone-platform=x11` contra
-ese mismo display. No es embed Wayland nativo.
-
-Foco X11 entre el toplevel y el hijo CEF: cefclient GTK envía
-`WM_TAKE_FOCUS` al toplevel cuando la barra de URL reclama el teclado
-(workaround GTK+X11, cefclient #3782). idioteque no usa ese ClientMessage
-para la barra: `browser_focus_app` suelta el grab X11 del ADE, hace
-`XSetInputFocus` sobre el toplevel, `grab_focus` del webview wry y manda
-`{"cmd":"unfocus"}` (`set_focus(false)` + `XUngrabKeyboard` en el display
-del host, que es quien tiene el grab de Ozone). `CefFocusHandler`
-avisa cuando el hijo gana (`owner=browser`) o cede (`owner=app`) el foco.
-Un clic de página con el chrome dueño de las teclas no espera a
-`OnGotFocus` (Ozone a menudo no lo manda): `OnSetFocus` / X11
-`ButtonPress`/`FocusIn` en el xid del hijo dispara un `activate`
-(`set_focus(true)`, **sin** `XSetInputFocus`) y `focus owner=browser`,
-solo esa primera vez. El ADE no hace `grab_focus` del webview en ese
-clic. En este embed el hijo Ozone **no** toma el InputFocus de X11 (`getwindowfocus`
-sigue en el toplevel aunque el caret esté en la página); las teclas llegan
-a CEF por GTK. El `.host` de BrowserView tiene `pointer-events: none`
-mientras `browser.alive` (el placeholder sí recibe eventos al arrancar).
-Alloy nativo recicla Tab dentro del HTML, así que
-`OnTakeFocus` casi nunca dispara: el host consume Tab en `on_pre_key_event`
-y pregunta al renderer (`__idiotequeHandleTab`); si el activo es el
-primero o el último, avisa con `idioteque://chrome/take-focus?next=` y
-`console.info('idioteque:take-focus:')`. El trap se inyecta en
-`on_context_created` (renderer, main frame) y otra vez en `on_load_start`.
-Ctrl+L lo captura `on_pre_key_event` (`RAWKEYDOWN` o `KEYDOWN`); el wry
-no ve el acorde mientras CEF tiene el caret. Tras `unfocus`, el host
-traga CHAR de página y los reenvía como `{"event":"keys"}` para la
-barra. No se elimina el manejo de `WM_TAKE_FOCUS` si Chromium lo entrega;
-no es el camino de la barra.
+El visible es Ozone `wayland` (Views Alloy, `--use-alloy-style`).
+No `--use-native`. Sin `WAYLAND_DISPLAY` el proceso no arranca: exit 16,
+“sin compositor Wayland”. El health es windowless / Ozone `headless` y
+no abre display. `IDIOTEQUE_CEF_ARGS` no saca el visible de wayland ni
+el health de headless, y no mete `--use-native` ni `--ozone-platform-hint`
+(con `DISPLAY` puesto, el hint `x11` / `auto` devuelve Ozone a X11).
 
 `chrome-sandbox` solo se exporta como `CHROME_DEVEL_SANDBOX` si es setuid-root.
 En `tauri dev` el helper es del usuario; en la AppImage el squashfs no puede
@@ -221,7 +196,7 @@ está en `logs/cef-host.log` (`cef-host: shm DevShm`). Por la misma razón,
 traigas uno): el staging del deb/rpm y la extracción del plugin de AppImage
 no pasan por `/tmp`.
 
-## Cómo migrar el base en un release
+## Cómo subir el base en un release
 
 Cuando una CEF nueva rompe el last-good y adaptas el host:
 

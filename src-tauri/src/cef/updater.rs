@@ -1596,8 +1596,8 @@ exit 0
         let sha = sha1_file(&tarball_path).unwrap();
 
         // 12 watchdog health, 13 version mismatch, 14 bad slot, 15 sandbox
-        // (SUID o userns; AppImage suele ir sin helper), 16 no X11 (sesión
-        // nativa, XWayland o AppImage sin DISPLAY). No son códigos de Ubuntu.
+        // (SUID o userns; AppImage suele ir sin helper), 16 sin compositor
+        // Wayland (`WAYLAND_DISPLAY` ausente). No son códigos de Ubuntu.
         for code in [12, 13, 14, 15, 16] {
             let tmp = TempDir::new().unwrap();
             let host = write_script(
@@ -1666,7 +1666,7 @@ exit 0
         );
         let host = write_script(
             tmp.path(),
-            "health-then-no-x11",
+            "health-then-no-display",
             r#"#!/bin/sh
 printf '%s\n' '{"event":"health","ok":true,"cef":"153.0.1+gabc+chromium-153.0.8000.10","chromium":"153.0.8000.10","apiVersion":15200}'
 exit 16

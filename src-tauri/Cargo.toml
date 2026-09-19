@@ -39,12 +39,6 @@ hex = "0.4"
 fs2 = "0.4"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-# XID de la ventana Tauri para reparentar la ventana de cef-host (mismas versiones que tao).
-gtk = "0.18"
-gdk = "0.18"
-gdkx11 = "0.18"
-# XSetInputFocus para devolver el foco X11 del hijo CEF al toplevel.
-x11 = { version = "2", features = ["xlib"] }
 # Probe de user namespaces (`unshare` / `CLONE_NEWUSER`) cuando no hay `unshare(1)`.
 libc = "0.2"
 

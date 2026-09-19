@@ -9,15 +9,16 @@
 //! crbug/715363):
 //!
 //! 1. Default: `/dev/shm` usable → cero flags (`GetShmemTempDir` → `/dev/shm`).
-//! 2. Único workaround documentado: `--disable-dev-shm-usage` → `$TMPDIR`/`/tmp`.
+//! 2. Flag oficial: `--disable-dev-shm-usage` → `$TMPDIR`/`/tmp`.
 //!
 //! ChromeDriver solo hace `access(W_OK|X_OK)`. Chromium **no** autodetecta
 //! tamaño. Docker default `--shm-size` = 64 MiB es **un** caso de fallo, no
 //! la política de producto (deb/rpm/AppImage en escritorio con 1–8 GiB
 //! siguen en `DevShm`).
 //!
-//! Extras de idioteque (no están en CEF/Chromium). Se conservan porque
-//! quitarlos tumba el arranque (política de workarounds / ADVERSARIAL.md):
+//! Extras de idioteque (no están en CEF/Chromium). El probe y `CacheDir`
+//! son el diseño actual: sin ellos Chromium no reserva memoria compartida
+//! en un tmpfs pequeño o con cuota:
 //!
 //! - Probe `fallocate` de [`PROBE_BYTES`] (128 MiB): un check tipo ChromeDriver
 //!   acepta un `/dev/shm` de 64 MiB y Chromium muere segundos después

@@ -19,7 +19,6 @@ pub enum HostEvent {
         chromium: String,
         #[serde(rename = "apiVersion")]
         api_version: u32,
-        xid: u64,
     },
     Nav {
         url: String,
@@ -42,16 +41,6 @@ pub enum HostEvent {
     },
     Shortcut {
         chord: String,
-    },
-    /// Printable text swallowed while chrome owns the keyboard (Ozone still
-    /// delivers keys to the child; wry never sees them).
-    Keys {
-        text: String,
-    },
-    Focus {
-        owner: FocusOwner,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        next: Option<bool>,
     },
     RenderCrashed {
         status: String,
@@ -96,20 +85,8 @@ pub enum HostCommand {
     },
     Show,
     Hide,
-    Focus,
-    Unfocus,
-    /// Page click while chrome owns keys: `set_focus(true)`, no `XSetInputFocus`.
-    Activate,
     Devtools,
     Close,
-}
-
-/// Who should own the keyboard after a `focus` event (CONTRACT: one owner).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum FocusOwner {
-    App,
-    Browser,
 }
 
 /// Why the stdin pump stopped. All three map to orderly shutdown / exit 0
@@ -278,84 +255,6 @@ mod tests {
     }
 
     #[test]
-    fn write_keys_event_is_one_contract_json_line() {
-        let mut buf = Vec::new();
-        write_event(
-            &mut buf,
-            &HostEvent::Keys {
-                text: "A".into(),
-            },
-        )
-        .unwrap();
-        let text = String::from_utf8(buf).unwrap();
-        assert_eq!(text.bytes().filter(|&b| b == b'\n').count(), 1);
-        let value: serde_json::Value = serde_json::from_str(text.trim_end()).unwrap();
-        assert_eq!(value["event"], "keys");
-        assert_eq!(value["text"], "A");
-    }
-
-    #[test]
-    fn write_focus_event_is_one_contract_json_line() {
-        let mut buf = Vec::new();
-        write_event(
-            &mut buf,
-            &HostEvent::Focus {
-                owner: FocusOwner::Browser,
-                next: None,
-            },
-        )
-        .unwrap();
-        let text = String::from_utf8(buf).unwrap();
-        assert_eq!(text.bytes().filter(|&b| b == b'\n').count(), 1);
-        let value: serde_json::Value = serde_json::from_str(text.trim_end()).unwrap();
-        assert_eq!(value["event"], "focus");
-        assert_eq!(value["owner"], "browser");
-        assert!(value.get("next").is_none());
-
-        let mut buf = Vec::new();
-        write_event(
-            &mut buf,
-            &HostEvent::Focus {
-                owner: FocusOwner::App,
-                next: Some(false),
-            },
-        )
-        .unwrap();
-        let value: serde_json::Value =
-            serde_json::from_str(String::from_utf8(buf).unwrap().trim_end()).unwrap();
-        assert_eq!(value["event"], "focus");
-        assert_eq!(value["owner"], "app");
-        assert_eq!(value["next"], false);
-    }
-
-    #[test]
-    fn unfocus_command_is_snake_case_and_not_focus() {
-        let json = serde_json::to_string(&HostCommand::Unfocus).unwrap();
-        assert_eq!(json, r#"{"cmd":"unfocus"}"#);
-        assert_ne!(json, serde_json::to_string(&HostCommand::Focus).unwrap());
-        assert_eq!(
-            parse_command_line(r#"{"cmd":"unfocus"}"#),
-            Some(HostCommand::Unfocus)
-        );
-        assert_eq!(
-            parse_command_line(r#"{"cmd":"focus"}"#),
-            Some(HostCommand::Focus)
-        );
-    }
-
-    #[test]
-    fn activate_command_is_not_focus() {
-        let json = serde_json::to_string(&HostCommand::Activate).unwrap();
-        assert_eq!(json, r#"{"cmd":"activate"}"#);
-        assert_ne!(json, serde_json::to_string(&HostCommand::Focus).unwrap());
-        assert_ne!(json, serde_json::to_string(&HostCommand::Unfocus).unwrap());
-        assert_eq!(
-            parse_command_line(r#"{"cmd":"activate"}"#),
-            Some(HostCommand::Activate)
-        );
-    }
-
-    #[test]
     fn write_event_is_one_contract_json_line() {
         let mut buf = Vec::new();
         write_event(
@@ -364,7 +263,6 @@ mod tests {
                 cef: "152.0.6+…".into(),
                 chromium: "152.0.7977.83".into(),
                 api_version: 15200,
-                xid: 123456,
             },
         )
         .unwrap();
@@ -377,7 +275,7 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(text.trim_end()).unwrap();
         assert_eq!(value["event"], "ready");
         assert_eq!(value["apiVersion"], 15200);
-        assert_eq!(value["xid"], 123456);
+        assert!(value.get("xid").is_none());
     }
 
     #[test]
@@ -640,9 +538,6 @@ mod tests {
             },
             HostCommand::Show,
             HostCommand::Hide,
-            HostCommand::Focus,
-            HostCommand::Unfocus,
-            HostCommand::Activate,
             HostCommand::Devtools,
             HostCommand::Close,
         ];
@@ -658,7 +553,7 @@ mod tests {
 
     #[test]
     fn cursor_without_final_newline_matches_partial_rule() {
-        let data = b"{\"cmd\":\"focus\"}";
+        let data = b"{\"cmd\":\"show\"}";
         let (cmds, stop) = posted_reader(Cursor::new(data));
         assert_eq!(cmds, vec![HostCommand::Close]);
         assert_eq!(stop, StdinStop::Eof);

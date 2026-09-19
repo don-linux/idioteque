@@ -20,7 +20,7 @@
     >
       <SquarePlus size={16} strokeWidth={1.75} aria-hidden="true" />
     </button>
-  {:else if surface.current !== "browser"}
+  {:else}
     {#if editorSession.canUndo}
       <button
         type="button"

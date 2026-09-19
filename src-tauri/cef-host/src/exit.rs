@@ -13,7 +13,7 @@ pub const HEALTH_TIMEOUT: i32 = 12;
 pub const VERSION_MISMATCH: i32 = 13;
 pub const BAD_SLOT: i32 = 14;
 pub const SANDBOX: i32 = 15;
-pub const NO_X11: i32 = 16;
+pub const NO_DISPLAY: i32 = 16;
 
 /// Failure that becomes a `fatal` protocol event and a process exit.
 /// Extracted so unit tests can inspect JSON + codes without `process::exit`.
@@ -73,7 +73,7 @@ mod tests {
             (VERSION_MISMATCH, 13),
             (BAD_SLOT, 14),
             (SANDBOX, 15),
-            (NO_X11, 16),
+            (NO_DISPLAY, 16),
         ]
     }
 
@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn empty_message_still_emits_valid_fatal() {
-        let json = encode_fatal(&FatalError::new(NO_X11, ""));
+        let json = encode_fatal(&FatalError::new(NO_DISPLAY, ""));
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(value["event"], "fatal");
         assert_eq!(value["message"], "");

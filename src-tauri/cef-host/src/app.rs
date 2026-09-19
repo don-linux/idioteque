@@ -1,26 +1,24 @@
 //! CEF App / Client / handlers and UI-thread command dispatch.
 
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
 
 use cef::sys::cef_event_flags_t;
 use cef::{
-    wrap_app, wrap_browser_process_handler, wrap_client, wrap_context_menu_handler,
-    wrap_display_handler, wrap_focus_handler, wrap_keyboard_handler, wrap_life_span_handler,
-    wrap_load_handler, wrap_request_handler, wrap_task, *,
+    wrap_app, wrap_browser_process_handler, wrap_browser_view_delegate, wrap_client,
+    wrap_context_menu_handler, wrap_display_handler, wrap_keyboard_handler, wrap_life_span_handler,
+    wrap_load_handler, wrap_request_handler, wrap_task, wrap_window_delegate, *,
 };
 
 use crate::args::HostArgs;
 use crate::exit::{self, fatal};
 use crate::platform;
-use crate::protocol::{self, FocusOwner, HostCommand, HostEvent};
+use crate::protocol::{self, HostCommand, HostEvent};
 use crate::slot::{self, Manifest};
 
-const MENU_INSPECT: i32 = 26500; // MENU_ID_USER_FIRST
+const MENU_INSPECT: i32 = 26500;
 const MENU_RELOAD: i32 = 26501;
 
-const VK_TAB: i32 = 0x09;
 const VK_ESCAPE: i32 = 0x1B;
 const VK_LEFT: i32 = 0x25;
 const VK_RIGHT: i32 = 0x27;
@@ -39,8 +37,6 @@ const FLAG_ALT: u32 = cef_event_flags_t::EVENTFLAG_ALT_DOWN.0;
 /// Chromium `net::ERR_ABORTED`. Contract §4.3: do not emit `load-error` for it.
 const ERR_ABORTED: i32 = -3;
 
-/// Embed stays Ozone X11 (XWayland). Health is windowless and must not open
-/// an X11 Ozone window. Native Wayland is not the embed path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct OzoneMode {
     platform: &'static str,
@@ -59,7 +55,7 @@ fn ozone_mode(health_check: bool) -> OzoneMode {
         }
     } else {
         OzoneMode {
-            platform: "x11",
+            platform: "wayland",
             disable_gpu: false,
             use_gl: None,
             use_angle: None,
@@ -71,26 +67,138 @@ fn ozone_platform(health_check: bool) -> &'static str {
     ozone_mode(health_check).platform
 }
 
-/// `IDIOTEQUE_CEF_ARGS` cannot flip embed to Wayland or health to ozone-x11.
-/// Windowless health + `--ozone-platform=x11` is the combo that fails this
-/// CEF; native Wayland embed is not supported.
+/// `IDIOTEQUE_CEF_ARGS` cannot flip visible off wayland or health off headless.
 fn effective_ozone_platform(health_check: bool, extra_switches: &[String]) -> &'static str {
     let _ = extra_switches;
     ozone_platform(health_check)
 }
 
-fn required_alloy_native_switches() -> &'static [&'static str] {
-    &["use-alloy-style", "use-native"]
+fn required_alloy_switches() -> &'static [&'static str] {
+    &["use-alloy-style"]
+}
+
+fn extra_switch_name(raw: &str) -> Option<&str> {
+    let trimmed = raw.trim();
+    let stripped = trimmed.strip_prefix("--").unwrap_or(trimmed);
+    if stripped.is_empty() {
+        return None;
+    }
+    Some(
+        stripped
+            .split_once('=')
+            .map(|(name, _)| name)
+            .unwrap_or(stripped),
+    )
+}
+
+/// Switches that would take the visible browser off Views/Wayland.
+/// `ozone-platform-hint` counts: with `DISPLAY` set, `x11` / `auto` send Ozone
+/// back to X11 even though `ozone-platform` is forced afterwards.
+fn denied_extra_switches() -> &'static [&'static str] {
+    &["use-native", "ozone-platform", "ozone-platform-hint"]
+}
+
+fn extra_switch_allowed(raw: &str) -> bool {
+    match extra_switch_name(raw) {
+        Some(name) => !denied_extra_switches().contains(&name),
+        None => false,
+    }
+}
+
+fn extras_for_command_line(extra_switches: &[String]) -> Vec<&str> {
+    extra_switches
+        .iter()
+        .map(String::as_str)
+        .filter(|raw| extra_switch_allowed(raw))
+        .collect()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BrowserCreatePath {
+    Views,
+    Windowless,
+}
+
+fn browser_create_path(health_check: bool) -> BrowserCreatePath {
+    if health_check {
+        BrowserCreatePath::Windowless
+    } else {
+        BrowserCreatePath::Views
+    }
+}
+
+fn should_force_device_scale(scale: Option<f64>) -> bool {
+    match scale {
+        Some(value) if value.is_finite() && (value - 1.0).abs() > f64::EPSILON => true,
+        _ => false,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindowVisibility {
+    Show,
+    Hide,
+}
+
+fn window_visibility(visible: bool) -> WindowVisibility {
+    if visible {
+        WindowVisibility::Show
+    } else {
+        WindowVisibility::Hide
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ViewsWindowFlags {
+    can_resize: i32,
+    can_maximize: i32,
+    can_minimize: i32,
+    with_standard_window_buttons: i32,
+}
+
+fn views_window_flags() -> ViewsWindowFlags {
+    ViewsWindowFlags {
+        can_resize: 1,
+        can_maximize: 1,
+        can_minimize: 1,
+        with_standard_window_buttons: 1,
+    }
+}
+
+fn popup_browser_view_creates_window() -> bool {
+    true
+}
+
+/// CONTRACT §4.6: DevTools es una ventana Views propia. `show_dev_tools` no
+/// recibe `WindowInfo`: pasar uno (aunque sea `default()`) es pedir el camino
+/// nativo, que en Linux es X11.
+fn devtools_window_info() -> Option<WindowInfo> {
+    None
+}
+
+/// `use_default_window = 1` cambiaría la ventana Views del padre por la ventana
+/// por defecto (nativa). El padre es un `BrowserView`, así que siempre 0.
+fn devtools_uses_default_window() -> i32 {
+    0
+}
+
+fn is_devtools_url(url: Option<&str>) -> bool {
+    url.is_some_and(|value| value.starts_with("devtools://"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PopupDisposition {
-    /// CEF: non-zero cancels the new window.
     cancel: bool,
     load_in_main: Option<String>,
 }
 
 fn popup_disposition(target_url: Option<&str>) -> PopupDisposition {
+    if is_devtools_url(target_url) {
+        return PopupDisposition {
+            cancel: false,
+            load_in_main: None,
+        };
+    }
     PopupDisposition {
         cancel: true,
         load_in_main: target_url.map(str::to_string),
@@ -103,10 +211,6 @@ struct ClosePlan {
     quit_loop: bool,
 }
 
-/// First `close`: `close_browser` if we have one, then always quit.
-/// Already closing: quit again. Ozone X11 children often never fire
-/// `on_before_close` (software presenter errors), so waiting on that
-/// callback alone would hang the host.
 fn close_plan(already_closing: bool, has_browser: bool) -> ClosePlan {
     ClosePlan {
         close_browser: !already_closing && has_browser,
@@ -118,8 +222,6 @@ fn should_quit_on_before_close(browser_id: i32, main_id: i32) -> bool {
     main_id == 0 || browser_id == main_id
 }
 
-/// Health success: emit `health` and quit the loop. Do not `close_browser`
-/// — windowless/headless teardown via that path SIGTRAPs on this CEF.
 fn health_success_teardown() -> ClosePlan {
     ClosePlan {
         close_browser: false,
@@ -143,128 +245,6 @@ fn emit_chrome_ui_event(health_check: bool, is_main: bool) -> bool {
     !health_check && is_main
 }
 
-/// Alloy native children wrap Tab inside the document, so `OnTakeFocus` often
-/// never fires. The trap beacons this prefix (console) or the custom scheme.
-const TAKE_FOCUS_BEACON: &str = "idioteque:take-focus:";
-const TAKE_FOCUS_URL: &str = "idioteque://chrome/take-focus?next=";
-
-pub(crate) const TAKE_FOCUS_SCRIPT: &str = r#"(function(){
-  function visible(el){
-    if (el.tabIndex < 0) return false;
-    var st = window.getComputedStyle(el);
-    if (!st || st.visibility === 'hidden' || st.display === 'none') return false;
-    return el.getClientRects().length > 0;
-  }
-  function list(){
-    var sel = 'a[href],button:not([disabled]),input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
-    return Array.prototype.filter.call(document.querySelectorAll(sel), visible);
-  }
-  function beacon(next){
-    try { var a = document.activeElement; if (a && a.blur) a.blur(); } catch (e) {}
-    try { console.info('idioteque:take-focus:' + (next ? '1' : '0')); } catch (e) {}
-    try { location.assign('idioteque://chrome/take-focus?next=' + (next ? '1' : '0')); } catch (e) {}
-  }
-  window.__idiotequeHandleTab = function(forward){
-    var items = list();
-    var active = document.activeElement;
-    var empty = items.length === 0;
-    var first = empty ? null : items[0];
-    var last = empty ? null : items[items.length - 1];
-    var atStart = empty || !active || active === document.body || active === document.documentElement || active === first;
-    var atEnd = empty || active === last;
-    if ((forward && atEnd) || (!forward && atStart)) {
-      beacon(!!forward);
-      return true;
-    }
-    if (empty) return false;
-    var i = items.indexOf(active);
-    var target = i < 0 ? (forward ? first : last) : items[i + (forward ? 1 : -1)];
-    if (target) target.focus();
-    return false;
-  };
-  if (window.__idiotequeTakeFocus) return;
-  window.__idiotequeTakeFocus = 1;
-  window.addEventListener('keydown', function(e){
-    if (e.key !== 'Tab' || e.ctrlKey || e.altKey || e.metaKey || e.isComposing) return;
-    if (window.__idiotequeHandleTab(!e.shiftKey)) {
-      e.preventDefault();
-      e.stopImmediatePropagation();
-    }
-  }, true);
-})();"#;
-
-fn parse_take_focus_beacon(message: &str) -> Option<bool> {
-    let text = message.trim();
-    if let Some(rest) = text.strip_prefix(TAKE_FOCUS_BEACON) {
-        return match rest {
-            "1" => Some(true),
-            "0" => Some(false),
-            _ => None,
-        };
-    }
-    if let Some(rest) = text.strip_prefix(TAKE_FOCUS_URL) {
-        return match rest.chars().next() {
-            Some('1') => Some(true),
-            Some('0') => Some(false),
-            _ => None,
-        };
-    }
-    if !text.starts_with("idioteque:") || !text.contains("take-focus") {
-        return None;
-    }
-    if let Some(rest) = text.split("next=").nth(1) {
-        return match rest.chars().next() {
-            Some('1') => Some(true),
-            Some('0') => Some(false),
-            _ => None,
-        };
-    }
-    None
-}
-
-fn take_focus_from_beacon(health_check: bool, is_main: bool, message: &str) -> Option<HostEvent> {
-    parse_take_focus_beacon(message)
-        .and_then(|next| focus_handoff_event(health_check, is_main, FocusHandoff::App { next }))
-}
-
-fn should_inject_take_focus_trap(
-    health_check: bool,
-    is_main_browser: bool,
-    is_main_frame: bool,
-) -> bool {
-    !health_check && is_main_browser && is_main_frame
-}
-
-pub(crate) fn inject_take_focus_trap(frame: &Frame) {
-    frame.execute_java_script(
-        Some(&cef_str(TAKE_FOCUS_SCRIPT)),
-        Some(&cef_str("idioteque-take-focus-trap")),
-        1,
-    );
-}
-
-fn tab_dispatch_script(next: bool) -> String {
-    let flag = if next { "true" } else { "false" };
-    format!(
-        "(function(){{if(typeof window.__idiotequeHandleTab==='function'){{window.__idiotequeHandleTab({flag});return;}}{TAKE_FOCUS_SCRIPT}if(typeof window.__idiotequeHandleTab==='function')window.__idiotequeHandleTab({flag});}})();"
-    )
-}
-
-fn dispatch_tab_in_page(browser: Option<&mut Browser>, next: bool) {
-    let Some(browser) = browser else {
-        return;
-    };
-    let Some(frame) = browser.main_frame() else {
-        return;
-    };
-    let script = tab_dispatch_script(next);
-    frame.execute_java_script(
-        Some(&cef_str(&script)),
-        Some(&cef_str("idioteque-tab-dispatch")),
-        1,
-    );
-}
-
 fn is_host_keydown(kind: KeyEventType) -> bool {
     kind == KeyEventType::RAWKEYDOWN || kind == KeyEventType::KEYDOWN
 }
@@ -286,228 +266,6 @@ fn shortcut_event(health_check: bool, is_main: bool, chord: &str) -> Option<Host
     })
 }
 
-/// Keyboard handoff from `CefFocusHandler`. Main browser only, same filter as nav/title.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FocusHandoff {
-    Browser,
-    App { next: bool },
-}
-
-fn focus_handoff_event(
-    health_check: bool,
-    is_main: bool,
-    handoff: FocusHandoff,
-) -> Option<HostEvent> {
-    if !emit_chrome_ui_event(health_check, is_main) {
-        return None;
-    }
-    Some(match handoff {
-        FocusHandoff::Browser => HostEvent::Focus {
-            owner: FocusOwner::Browser,
-            next: None,
-        },
-        FocusHandoff::App { next } => HostEvent::Focus {
-            owner: FocusOwner::App,
-            next: Some(next),
-        },
-    })
-}
-
-/// `{"cmd":"focus"}` moves X11 onto the CEF child. `{"cmd":"unfocus"}` must not.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct BrowserFocusPlan {
-    x11: bool,
-    set_focus: i32,
-}
-
-fn give_browser_focus_plan() -> BrowserFocusPlan {
-    BrowserFocusPlan {
-        x11: true,
-        set_focus: 1,
-    }
-}
-
-fn drop_browser_focus_plan() -> BrowserFocusPlan {
-    BrowserFocusPlan {
-        x11: false,
-        set_focus: 0,
-    }
-}
-
-/// First page click while chrome owns keys: SetFocus(true), never XSetInputFocus.
-fn page_click_activate_plan() -> BrowserFocusPlan {
-    BrowserFocusPlan {
-        x11: false,
-        set_focus: 1,
-    }
-}
-
-fn should_activate_page_from_chrome(app_owns_keyboard: bool) -> bool {
-    app_owns_keyboard
-}
-
-fn activate_page_log() -> &'static str {
-    "[cef] activate page from chrome"
-}
-
-/// One `set_focus(1)` + `focus owner=browser` after unfocus. Second click is a no-op.
-fn try_activate_page_from_chrome(state: &AppState, browser: Option<&Browser>) -> bool {
-    if !should_activate_page_from_chrome(state.app_owns_keyboard.load(Ordering::SeqCst)) {
-        return false;
-    }
-    if state
-        .app_owns_keyboard
-        .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
-    {
-        return false;
-    }
-    eprintln!("{}", activate_page_log());
-    apply_browser_focus(state, page_click_activate_plan());
-    if let Some(browser) = browser {
-        state.emit_focus(browser, FocusHandoff::Browser);
-    } else if let Some(browser) = state.lock_browser() {
-        state.emit_focus(&browser, FocusHandoff::Browser);
-    }
-    true
-}
-
-fn should_ungrab_on_unfocus() -> bool {
-    true
-}
-
-fn should_drop_modified_char(kind: KeyEventType, ctrl: bool, alt: bool) -> bool {
-    kind == KeyEventType::CHAR && (ctrl || alt)
-}
-
-fn printable_char(raw: u32) -> Option<char> {
-    let ch = char::from_u32(raw)?;
-    if ch.is_control() || ch == '\0' {
-        None
-    } else {
-        Some(ch)
-    }
-}
-
-fn vk_typed_char(windows: i32, shift: bool) -> Option<char> {
-    let key = host_key_code(windows);
-    match key {
-        0x20 => Some(' '),
-        0x30..=0x39 if !shift => char::from_u32(key as u32),
-        0x41..=0x5A => {
-            let letter = char::from_u32(key as u32)?;
-            Some(if shift {
-                letter
-            } else {
-                letter.to_ascii_lowercase()
-            })
-        }
-        _ => None,
-    }
-}
-
-/// CHAR is dropped when we consume KEYDOWN, so read the glyph from keydown too.
-fn key_text(event: &KeyEvent) -> Option<String> {
-    if event.modifiers & (FLAG_CTRL | FLAG_ALT) != 0 {
-        return None;
-    }
-    if let Some(ch) = printable_char(event.character as u32) {
-        if event.type_ == KeyEventType::CHAR || is_host_keydown(event.type_) {
-            return Some(ch.to_string());
-        }
-    }
-    if !is_host_keydown(event.type_) {
-        return None;
-    }
-    vk_typed_char(
-        event.windows_key_code,
-        event.modifiers & FLAG_SHIFT != 0,
-    )
-    .map(|ch| ch.to_string())
-}
-
-fn keys_event(health_check: bool, is_main: bool, text: String) -> Option<HostEvent> {
-    if !emit_chrome_ui_event(health_check, is_main) || text.is_empty() {
-        return None;
-    }
-    Some(HostEvent::Keys { text })
-}
-
-fn apply_browser_focus(state: &AppState, plan: BrowserFocusPlan) {
-    let was = state.app_owns_keyboard.load(Ordering::SeqCst);
-    state
-        .app_owns_keyboard
-        .store(plan.set_focus == 0, Ordering::SeqCst);
-    eprintln!(
-        "[cef] apply_browser_focus set_focus={} x11={} app_owns_keyboard {}->{}",
-        plan.set_focus,
-        plan.x11,
-        was,
-        plan.set_focus == 0
-    );
-    if plan.x11 {
-        platform::focus_window(state.xid());
-    }
-    if plan.set_focus == 0 && should_ungrab_on_unfocus() {
-        eprintln!("[cef] ungrab host X11");
-        platform::ungrab_input();
-    }
-    if let Some(browser) = state.lock_browser() {
-        if let Some(host) = browser.host() {
-            host.set_focus(plan.set_focus);
-        }
-        if plan.set_focus == 0 {
-            blur_page_keyboard(&browser);
-        }
-    }
-}
-
-const BLUR_PAGE_SCRIPT: &str =
-    r#"(function(){try{var a=document.activeElement;if(a&&a.blur)a.blur();}catch(e){}})();"#;
-
-fn blur_page_keyboard(browser: &Browser) {
-    let Some(frame) = browser.main_frame() else {
-        return;
-    };
-    frame.execute_java_script(
-        Some(&cef_str(BLUR_PAGE_SCRIPT)),
-        Some(&cef_str("idioteque-blur-page")),
-        1,
-    );
-}
-
-fn take_focus_should_emit(last: &Mutex<Option<(bool, Instant)>>, next: bool) -> bool {
-    let Ok(mut guard) = last.lock() else {
-        return true;
-    };
-    if let Some((prev, at)) = *guard {
-        if prev == next && at.elapsed() < Duration::from_millis(80) {
-            return false;
-        }
-    }
-    *guard = Some((next, Instant::now()));
-    true
-}
-
-fn emit_take_focus(state: &AppState, is_main: bool, message: &str) -> bool {
-    let Some(event) = take_focus_from_beacon(state.args.health_check, is_main, message) else {
-        return false;
-    };
-    let next = match &event {
-        HostEvent::Focus {
-            next: Some(value), ..
-        } => *value,
-        _ => true,
-    };
-    if !take_focus_should_emit(&state.last_take_focus, next) {
-        eprintln!("[cef] take-focus debounce next={next}");
-        return true;
-    }
-    state.app_owns_keyboard.store(true, Ordering::SeqCst);
-    protocol::emit(&event);
-    true
-}
-
 fn emit_load_error(
     health_check: bool,
     is_main: bool,
@@ -521,7 +279,6 @@ fn emit_load_error(
 enum PreKeyAction {
     Ignore,
     Shortcut(&'static str),
-    Tab { next: bool },
     ToggleDevtools,
     Reload { ignore_cache: bool },
     Back,
@@ -529,35 +286,13 @@ enum PreKeyAction {
     Stop,
 }
 
-/// While chrome owns the caret, Ozone still sees keys (pointer stays over the
-/// child; `set_focus(0)` is often a no-op). Swallow page keys; keep shortcuts.
-fn should_swallow_page_key(app_owns_keyboard: bool, action: PreKeyAction) -> bool {
-    app_owns_keyboard && !matches!(action, PreKeyAction::Shortcut(_))
-}
-
-/// `OnGotFocus` / `focus owner=browser`: chrome no longer swallows page keys.
-fn app_owns_keyboard_after_handoff(handoff: FocusHandoff) -> bool {
-    matches!(handoff, FocusHandoff::App { .. })
-}
-
-/// Enter in the URL bar: the loaded page owns keys; stop forwarding glyphs.
-fn app_owns_keyboard_after_navigate() -> bool {
-    false
-}
-
 fn pre_key_action(keydown: bool, key: i32, ctrl: bool, shift: bool, alt: bool) -> PreKeyAction {
     if !keydown {
         return PreKeyAction::Ignore;
     }
     let key = host_key_code(key);
-    if !ctrl && !alt && key == VK_TAB {
-        return PreKeyAction::Tab { next: !shift };
-    }
     if ctrl && !alt && key == VK_B {
         return PreKeyAction::Shortcut(if shift { "ctrl+shift+b" } else { "ctrl+b" });
-    }
-    if ctrl && !alt && !shift && key == VK_L {
-        return PreKeyAction::Shortcut("ctrl+l");
     }
     if key == VK_F12 || (ctrl && shift && !alt && key == VK_I) {
         return PreKeyAction::ToggleDevtools;
@@ -624,19 +359,14 @@ pub struct AppState {
     pub args: HostArgs,
     pub manifest: Manifest,
     pub browser: Mutex<Option<Browser>>,
+    pub window: Mutex<Option<Window>>,
     pub main_id: AtomicI32,
     pub ready_sent: AtomicBool,
     pub health_emitted: AtomicBool,
     pub closing: AtomicBool,
     pub health_cancel: Mutex<Option<Arc<AtomicBool>>>,
-    /// Ventana X intermedia (visual por defecto) entre el hueco del ADE y CEF.
-    pub shim_xid: AtomicU64,
-    /// `--disable-dev-shm-usage`: solo si `/dev/shm` no sirve (`shm::decide`).
+    /// `--disable-dev-shm-usage`: only when `/dev/shm` is unusable (`shm::decide`).
     pub disable_dev_shm: bool,
-    /// ADE chrome owns keys (`unfocus`). Ozone still delivers page keys until
-    /// a real click, so `on_pre_key_event` swallows them.
-    pub app_owns_keyboard: AtomicBool,
-    last_take_focus: Mutex<Option<(bool, Instant)>>,
 }
 
 impl AppState {
@@ -646,14 +376,12 @@ impl AppState {
             manifest,
             disable_dev_shm,
             browser: Mutex::new(None),
+            window: Mutex::new(None),
             main_id: AtomicI32::new(0),
             ready_sent: AtomicBool::new(false),
             health_emitted: AtomicBool::new(false),
             closing: AtomicBool::new(false),
             health_cancel: Mutex::new(None),
-            shim_xid: AtomicU64::new(0),
-            app_owns_keyboard: AtomicBool::new(false),
-            last_take_focus: Mutex::new(None),
         })
     }
 
@@ -665,13 +393,6 @@ impl AppState {
         self.browser.lock().ok().and_then(|g| g.clone())
     }
 
-    fn xid(&self) -> u64 {
-        self.lock_browser()
-            .and_then(|b| b.host())
-            .map(|h| platform::xid_from_handle(h.window_handle()))
-            .unwrap_or(0)
-    }
-
     fn versions(&self) -> (String, String, u32) {
         (
             self.manifest.cef_version.clone(),
@@ -680,19 +401,8 @@ impl AppState {
         )
     }
 
-    /// Solo el browser principal alimenta la barra: DevTools y otros popups no.
     fn is_main(&self, browser: &Browser) -> bool {
         is_main_browser(self.main_id.load(Ordering::SeqCst), browser.identifier())
-    }
-
-    fn emit_focus(&self, browser: &Browser, handoff: FocusHandoff) {
-        if let Some(event) =
-            focus_handoff_event(self.args.health_check, self.is_main(browser), handoff)
-        {
-            self.app_owns_keyboard
-                .store(app_owns_keyboard_after_handoff(handoff), Ordering::SeqCst);
-            protocol::emit(&event);
-        }
     }
 
     fn emit_nav(&self, browser: &Browser, url: Option<String>) {
@@ -722,10 +432,10 @@ impl AppState {
             host.close_dev_tools();
             return;
         }
-        let window_info = WindowInfo::default();
         let settings = BrowserSettings::default();
+        let window_info = devtools_window_info();
         host.show_dev_tools(
-            Some(&window_info),
+            window_info.as_ref(),
             None,
             Some(&settings),
             inspect_at.as_ref(),
@@ -745,10 +455,38 @@ impl AppState {
                 }
             }
         }
-        // Do not wait only on on_before_close: Ozone X11 child windows
-        // sometimes never deliver it (software presenter errors).
         if plan.quit_loop {
             quit_message_loop();
+        }
+    }
+
+    fn apply_visibility(&self, visible: bool) {
+        if let Ok(guard) = self.window.lock() {
+            if let Some(window) = guard.as_ref() {
+                match window_visibility(visible) {
+                    WindowVisibility::Show => window.show(),
+                    WindowVisibility::Hide => window.hide(),
+                }
+            }
+        }
+        if let Some(browser) = self.lock_browser() {
+            if let Some(host) = browser.host() {
+                host.was_hidden(platform::hidden_flag(visible));
+            }
+        }
+    }
+
+    fn apply_bounds(&self, x: i32, y: i32, w: i32, h: i32) {
+        let bounds = Rect {
+            x,
+            y,
+            width: platform::clamp_extent(w),
+            height: platform::clamp_extent(h),
+        };
+        if let Ok(guard) = self.window.lock() {
+            if let Some(window) = guard.as_ref() {
+                window.set_bounds(Some(&bounds));
+            }
         }
     }
 }
@@ -784,15 +522,9 @@ pub fn dispatch(cmd: &HostCommand) {
     };
     match cmd {
         HostCommand::Navigate { url } => {
-            state
-                .app_owns_keyboard
-                .store(app_owns_keyboard_after_navigate(), Ordering::SeqCst);
             if let Some(browser) = state.lock_browser() {
                 if let Some(frame) = browser.main_frame() {
                     frame.load_url(Some(&cef_str(url)));
-                }
-                if let Some(host) = browser.host() {
-                    host.set_focus(1);
                 }
             }
         }
@@ -820,54 +552,9 @@ pub fn dispatch(cmd: &HostCommand) {
                 }
             }
         }
-        HostCommand::SetBounds { x, y, w, h } => {
-            let xid = state.xid();
-            let shim = state.shim_xid.load(Ordering::SeqCst);
-            let (cx, cy) = if shim != 0 {
-                platform::move_resize(shim, *x, *y, *w, *h);
-                (0, 0)
-            } else {
-                (*x, *y)
-            };
-            if let Some(browser) = state.lock_browser() {
-                if let Some(host) = browser.host() {
-                    host.notify_move_or_resize_started();
-                    platform::move_resize(xid, cx, cy, *w, *h);
-                    host.was_resized();
-                }
-            } else {
-                platform::move_resize(xid, cx, cy, *w, *h);
-            }
-        }
-        HostCommand::Show => {
-            let shim = state.shim_xid.load(Ordering::SeqCst);
-            if shim != 0 {
-                platform::map_window(shim);
-            }
-            platform::map_window(state.xid());
-            if let Some(browser) = state.lock_browser() {
-                if let Some(host) = browser.host() {
-                    host.was_hidden(0);
-                }
-            }
-        }
-        HostCommand::Hide => {
-            platform::unmap_window(state.xid());
-            let shim = state.shim_xid.load(Ordering::SeqCst);
-            if shim != 0 {
-                platform::unmap_window(shim);
-            }
-            if let Some(browser) = state.lock_browser() {
-                if let Some(host) = browser.host() {
-                    host.was_hidden(1);
-                }
-            }
-        }
-        HostCommand::Focus => apply_browser_focus(state, give_browser_focus_plan()),
-        HostCommand::Unfocus => apply_browser_focus(state, drop_browser_focus_plan()),
-        HostCommand::Activate => {
-            let _ = try_activate_page_from_chrome(state, None);
-        }
+        HostCommand::SetBounds { x, y, w, h } => state.apply_bounds(*x, *y, *w, *h),
+        HostCommand::Show => state.apply_visibility(true),
+        HostCommand::Hide => state.apply_visibility(false),
         HostCommand::Devtools => state.toggle_devtools(None),
         HostCommand::Close => state.request_close(),
     }
@@ -890,9 +577,7 @@ fn add_switch_value(command_line: &mut CommandLine, name: &str, value: &str) {
 }
 
 fn apply_switches(state: &AppState, command_line: &mut CommandLine) {
-    // Native windows, not Chrome-runtime Views (Views needs a GPU compositor
-    // that deadlocks on this Xvnc without DRI3 during CefInitialize).
-    for name in required_alloy_native_switches() {
+    for name in required_alloy_switches() {
         add_switch(command_line, name);
     }
     add_switch(command_line, "no-first-run");
@@ -919,17 +604,10 @@ fn apply_switches(state: &AppState, command_line: &mut CommandLine) {
         add_switch(command_line, "no-sandbox");
         add_switch(command_line, "no-zygote");
     }
-    // Official Chromium workaround (`kDisableDevShmUsage` / crbug/715363) only
-    // when `/dev/shm` is unusable (permissions, ENOSPC, EDQUOT) or when
-    // `IDIOTEQUE_CEF_ARGS` forces the flag. Docker's 64 MiB default is one
-    // failure case, not product policy. Never tied to the sandbox: see shm.rs.
     if crate::shm::command_line_disables_dev_shm(state.disable_dev_shm, &state.args.extra_switches)
     {
         add_switch(command_line, crate::shm::DISABLE_DEV_SHM_USAGE);
     }
-    // Software GL for X servers without DRI3 (the dev VM). A user machine that
-    // merely lacks the sandbox keeps its GPU: pass these via IDIOTEQUE_CEF_ARGS
-    // or IDIOTEQUE_CEF_SOFTWARE_GL=1 when needed.
     if std::env::var("IDIOTEQUE_CEF_SOFTWARE_GL").is_ok_and(|v| v == "1") {
         add_switch(command_line, "disable-gpu-sandbox");
         add_switch_value(command_line, "use-gl", "angle");
@@ -942,14 +620,18 @@ fn apply_switches(state: &AppState, command_line: &mut CommandLine) {
             );
         }
     }
-    if let Some(scale) = state.args.scale {
+    if should_force_device_scale(state.args.scale) {
+        let scale = state
+            .args
+            .scale
+            .expect("checked by should_force_device_scale");
         let value = format!("{scale}");
         command_line.append_switch_with_value(
             Some(&cef_str("force-device-scale-factor")),
             Some(&cef_str(&value)),
         );
     }
-    for raw in &state.args.extra_switches {
+    for raw in extras_for_command_line(&state.args.extra_switches) {
         let s = raw.trim();
         let s = s.strip_prefix("--").unwrap_or(s);
         if s.is_empty() {
@@ -961,8 +643,6 @@ fn apply_switches(state: &AppState, command_line: &mut CommandLine) {
             command_line.append_switch(Some(&cef_str(s)));
         }
     }
-    // After extras: lock ozone so IDIOTEQUE_CEF_ARGS cannot move embed to
-    // Wayland or health to ozone-x11. Chromium's switch map keeps last write.
     command_line.append_switch_with_value(
         Some(&cef_str("ozone-platform")),
         Some(&cef_str(effective_ozone_platform(
@@ -972,38 +652,79 @@ fn apply_switches(state: &AppState, command_line: &mut CommandLine) {
     );
 }
 
-fn window_info_for(state: &AppState) -> WindowInfo {
-    let args = &state.args;
-    if args.health_check {
-        return crate::health::window_info();
-    }
-    let bounds = Rect {
+fn window_info_for_health() -> WindowInfo {
+    crate::health::window_info()
+}
+
+fn views_bounds(args: &HostArgs) -> Rect {
+    Rect {
         x: args.bounds.x,
         y: args.bounds.y,
-        width: args.bounds.w.max(1),
-        height: args.bounds.h.max(1),
+        width: platform::clamp_extent(args.bounds.w),
+        height: platform::clamp_extent(args.bounds.h),
+    }
+}
+
+fn views_preferred_size(bounds: &Rect) -> Size {
+    Size {
+        width: bounds.width,
+        height: bounds.height,
+    }
+}
+
+fn popup_window_bounds() -> Rect {
+    Rect {
+        x: 0,
+        y: 0,
+        width: 800,
+        height: 600,
+    }
+}
+
+fn create_alloy_window(browser_view: BrowserView, bounds: Rect, is_main: bool) -> bool {
+    let Some(state) = STATE.get().cloned() else {
+        return false;
     };
-    let base = WindowInfo {
-        runtime_style: RuntimeStyle::ALLOY,
-        window_name: cef_str("idioteque"),
-        bounds: bounds.clone(),
-        ..Default::default()
+    let mut delegate = HostWindowDelegate::new(browser_view, bounds, state, is_main);
+    window_create_top_level(Some(&mut delegate)).is_some()
+}
+
+fn create_visible_browser(state: &Arc<AppState>, client: &mut Client) {
+    let url = cef_str(&state.args.url);
+    let settings = BrowserSettings::default();
+    let mut view_delegate = HostBrowserViewDelegate::new();
+    let Some(browser_view) = browser_view_create(
+        Some(client),
+        Some(&url),
+        Some(&settings),
+        None,
+        None,
+        Some(&mut view_delegate),
+    ) else {
+        fatal(exit::INIT_FAILED, "browser_view_create failed");
     };
-    if let Some(parent) = args.parent {
-        let shim = platform::create_default_visual_child(parent, bounds.width, bounds.height);
-        if shim == 0 {
-            fatal(exit::NO_X11, "no se pudo crear la ventana intermedia X11");
-        }
-        state.shim_xid.store(shim, Ordering::SeqCst);
-        let inner = Rect {
-            x: 0,
-            y: 0,
-            width: bounds.width,
-            height: bounds.height,
-        };
-        base.set_as_child(shim as cef::sys::cef_window_handle_t, &inner)
-    } else {
-        base
+    if !create_alloy_window(browser_view, views_bounds(&state.args), true) {
+        fatal(exit::INIT_FAILED, "window_create_top_level failed");
+    }
+}
+
+fn create_health_browser(state: &Arc<AppState>, client: &mut Client) {
+    let url = cef_str(&state.args.url);
+    let window_info = window_info_for_health();
+    let mut settings = BrowserSettings::default();
+    settings.windowless_frame_rate = 1;
+    settings.background_color = 0xFF1C1E22;
+    settings.webgl = State::DISABLED;
+    let ok = browser_host_create_browser(
+        Some(&window_info),
+        Some(client),
+        Some(&url),
+        Some(&settings),
+        None,
+        None,
+    );
+    if ok == 0 {
+        fatal(exit::INIT_FAILED, "browser_host_create_browser failed");
     }
 }
 
@@ -1013,14 +734,13 @@ fn make_client(state: Arc<AppState>) -> Client {
     let display = HostDisplay::new(state.clone());
     let keyboard = HostKeyboard::new(state.clone());
     let menu = HostMenu::new(state.clone());
-    let request = HostRequest::new(state.clone());
+    let request = HostRequest::new();
     let render = if state.args.health_check {
         Some(crate::health::HealthRenderHandler::new())
     } else {
         None
     };
-    let focus = HostFocus::new(state.clone());
-    HostClient::new(life, load, display, keyboard, menu, request, render, focus)
+    HostClient::new(life, load, display, keyboard, menu, request, render)
 }
 
 wrap_task! {
@@ -1060,6 +780,134 @@ wrap_app! {
     }
 }
 
+wrap_window_delegate! {
+    struct HostWindowDelegate {
+        browser_view: BrowserView,
+        bounds: Rect,
+        state: Arc<AppState>,
+        is_main: bool,
+    }
+
+    impl ViewDelegate {
+        fn preferred_size(&self, _view: Option<&mut View>) -> Size {
+            views_preferred_size(&self.bounds)
+        }
+    }
+
+    impl PanelDelegate {}
+
+    impl WindowDelegate {
+        fn on_window_created(&self, window: Option<&mut Window>) {
+            let Some(window) = window else {
+                return;
+            };
+            if self.is_main {
+                window.set_title(Some(&cef_str(platform::window_identity().title)));
+            }
+            let mut view = View::from(&self.browser_view);
+            window.add_child_view(Some(&mut view));
+            if self.is_main {
+                if let Ok(mut slot) = self.state.window.lock() {
+                    *slot = Some(window.clone());
+                }
+            }
+            window.show();
+        }
+
+        fn on_window_destroyed(&self, _window: Option<&mut Window>) {
+            if self.is_main {
+                if let Ok(mut slot) = self.state.window.lock() {
+                    *slot = None;
+                }
+            }
+        }
+
+        fn initial_bounds(&self, _window: Option<&mut Window>) -> Rect {
+            self.bounds.clone()
+        }
+
+        fn initial_show_state(&self, _window: Option<&mut Window>) -> ShowState {
+            ShowState::NORMAL
+        }
+
+        fn can_resize(&self, _window: Option<&mut Window>) -> i32 {
+            views_window_flags().can_resize
+        }
+
+        fn can_maximize(&self, _window: Option<&mut Window>) -> i32 {
+            views_window_flags().can_maximize
+        }
+
+        fn can_minimize(&self, _window: Option<&mut Window>) -> i32 {
+            views_window_flags().can_minimize
+        }
+
+        fn can_close(&self, _window: Option<&mut Window>) -> i32 {
+            if let Some(browser) = self.browser_view.browser() {
+                if let Some(host) = browser.host() {
+                    return host.try_close_browser();
+                }
+            }
+            1
+        }
+
+        fn with_standard_window_buttons(&self, _window: Option<&mut Window>) -> i32 {
+            views_window_flags().with_standard_window_buttons
+        }
+
+        fn window_runtime_style(&self) -> RuntimeStyle {
+            RuntimeStyle::ALLOY
+        }
+
+        fn linux_window_properties(
+            &self,
+            _window: Option<&mut Window>,
+            properties: Option<&mut LinuxWindowProperties>,
+        ) -> i32 {
+            let Some(properties) = properties else {
+                return 0;
+            };
+            let identity = platform::window_identity();
+            properties.wayland_app_id = cef_str(identity.wayland_app_id);
+            properties.wm_class_class = cef_str(identity.wm_class_class);
+            properties.wm_class_name = cef_str(identity.wm_class_name);
+            properties.wm_role_name = cef_str(identity.wm_role_name);
+            1
+        }
+    }
+}
+
+wrap_browser_view_delegate! {
+    struct HostBrowserViewDelegate {}
+
+    impl ViewDelegate {}
+
+    impl BrowserViewDelegate {
+        fn browser_runtime_style(&self) -> RuntimeStyle {
+            RuntimeStyle::ALLOY
+        }
+
+        fn on_popup_browser_view_created(
+            &self,
+            _browser_view: Option<&mut BrowserView>,
+            popup_browser_view: Option<&mut BrowserView>,
+            _is_devtools: ::std::os::raw::c_int,
+        ) -> ::std::os::raw::c_int {
+            let Some(popup) = popup_browser_view else {
+                return 0;
+            };
+            if !popup_browser_view_creates_window() {
+                return 0;
+            }
+            i32::from(create_alloy_window(
+                popup.clone(),
+                popup_window_bounds(),
+                false,
+            ))
+        }
+    }
+}
+
 wrap_browser_process_handler! {
     struct HostBrowserProcessHandler {
         state: Arc<AppState>,
@@ -1073,24 +921,13 @@ wrap_browser_process_handler! {
                 *slot = Some(client.clone());
             }
 
-            let url = cef_str(&self.state.args.url);
-            let window_info = window_info_for(&self.state);
-            let mut settings = BrowserSettings::default();
-            if self.state.args.health_check {
-                settings.windowless_frame_rate = 1;
-                settings.background_color = 0xFF1C1E22;
-                settings.webgl = State::DISABLED;
-            }
-            let ok = browser_host_create_browser(
-                Some(&window_info),
-                Some(&mut client),
-                Some(&url),
-                Some(&settings),
-                None,
-                None,
-            );
-            if ok == 0 {
-                fatal(exit::INIT_FAILED, "browser_host_create_browser failed");
+            match browser_create_path(self.state.args.health_check) {
+                BrowserCreatePath::Windowless => {
+                    create_health_browser(&self.state, &mut client);
+                }
+                BrowserCreatePath::Views => {
+                    create_visible_browser(&self.state, &mut client);
+                }
             }
         }
 
@@ -1116,7 +953,6 @@ wrap_client! {
         menu: ContextMenuHandler,
         request: RequestHandler,
         render: Option<RenderHandler>,
-        focus: FocusHandler,
     }
 
     impl Client {
@@ -1140,9 +976,6 @@ wrap_client! {
         }
         fn render_handler(&self) -> Option<RenderHandler> {
             self.render.clone()
-        }
-        fn focus_handler(&self) -> Option<FocusHandler> {
-            Some(self.focus.clone())
         }
     }
 }
@@ -1176,10 +1009,26 @@ wrap_life_span_handler! {
                     frame.load_url(Some(&cef_str(url)));
                 }
             }
-            if disposition.cancel {
-                1
-            } else {
-                0
+            i32::from(disposition.cancel)
+        }
+
+        /// CEF solo la llama en Chrome style, y los `WindowInfo` de un padre
+        /// Views se ignoran. Está por si el runtime style se torciera: Alloy, y
+        /// nunca la ventana por defecto en lugar de la Views del padre.
+        fn on_before_dev_tools_popup(
+            &self,
+            _browser: Option<&mut Browser>,
+            window_info: Option<&mut WindowInfo>,
+            _client: Option<&mut Option<Client>>,
+            _settings: Option<&mut BrowserSettings>,
+            _extra_info: Option<&mut Option<DictionaryValue>>,
+            use_default_window: Option<&mut ::std::os::raw::c_int>,
+        ) {
+            if let Some(window_info) = window_info {
+                window_info.runtime_style = RuntimeStyle::ALLOY;
+            }
+            if let Some(use_default_window) = use_default_window {
+                *use_default_window = devtools_uses_default_window();
             }
         }
 
@@ -1206,49 +1055,15 @@ wrap_life_span_handler! {
             if !emit_ready_event(self.state.args.health_check) {
                 return;
             }
-            let xid = browser
-                .host()
-                .map(|h| platform::xid_from_handle(h.window_handle()))
-                .unwrap_or(0);
-            if self.state.args.parent.is_some() {
-                let b = &self.state.args.bounds;
-                let shim = self.state.shim_xid.load(Ordering::SeqCst);
-                platform::reparent(xid, shim, 0, 0);
-                platform::move_resize(xid, 0, 0, b.w, b.h);
-                platform::map_window(xid);
-                if let Some(host) = browser.host() {
-                    host.notify_move_or_resize_started();
-                    host.was_resized();
-                    host.was_hidden(0);
-                }
+            if let Some(host) = browser.host() {
+                host.was_hidden(0);
             }
             let (cef, chromium, api_version) = self.state.versions();
             protocol::emit(&HostEvent::Ready {
                 cef,
                 chromium,
                 api_version,
-                xid,
             });
-            #[cfg(target_os = "linux")]
-            {
-                let state = self.state.clone();
-                platform::start_page_input_watch(
-                    platform::page_click_watch_xids(
-                        xid,
-                        state.shim_xid.load(Ordering::SeqCst),
-                        state.args.parent.unwrap_or(0),
-                    ),
-                    move |event| {
-                        eprintln!(
-                            "[cef] native page {event:?} app_owns_keyboard={}",
-                            state.app_owns_keyboard.load(Ordering::SeqCst)
-                        );
-                        if state.app_owns_keyboard.load(Ordering::SeqCst) {
-                            post_cmd(HostCommand::Activate);
-                        }
-                    },
-                );
-            }
         }
 
         fn on_before_close(&self, browser: Option<&mut Browser>) {
@@ -1283,27 +1098,6 @@ wrap_load_handler! {
                 return;
             };
             self.state.emit_nav(browser, None);
-        }
-
-        fn on_load_start(
-            &self,
-            browser: Option<&mut Browser>,
-            frame: Option<&mut Frame>,
-            _transition_type: TransitionType,
-        ) {
-            let Some(frame) = frame else {
-                return;
-            };
-            if frame.is_main() == 0 {
-                return;
-            }
-            let is_main = browser
-                .as_ref()
-                .map(|b| self.state.is_main(b))
-                .unwrap_or(true);
-            if should_inject_take_focus_trap(self.state.args.health_check, is_main, true) {
-                inject_take_focus_trap(frame);
-            }
         }
 
         fn on_load_end(
@@ -1342,9 +1136,6 @@ wrap_load_handler! {
                         chromium,
                         api_version,
                     });
-                    // Windowless/headless teardown via close_browser often SIGTRAPs
-                    // on this CEF/X11 combo. Quitting the loop is enough; main
-                    // then shuts down and exits 0.
                     let plan = health_success_teardown();
                     if plan.close_browser {
                         if let Some(browser) = browser {
@@ -1358,14 +1149,6 @@ wrap_load_handler! {
                     }
                 }
                 return;
-            }
-            let is_main_browser = browser
-                .as_ref()
-                .map(|b| self.state.is_main(b))
-                .unwrap_or(true);
-            if should_inject_take_focus_trap(self.state.args.health_check, is_main_browser, true)
-            {
-                inject_take_focus_trap(frame);
             }
             let _ = browser;
             protocol::emit(&HostEvent::LoadEnd {
@@ -1434,82 +1217,6 @@ wrap_display_handler! {
                 title: title.map(|t| t.to_string()).unwrap_or_default(),
             });
         }
-
-        fn on_console_message(
-            &self,
-            browser: Option<&mut Browser>,
-            _level: LogSeverity,
-            message: Option<&CefString>,
-            _source: Option<&CefString>,
-            _line: ::std::os::raw::c_int,
-        ) -> ::std::os::raw::c_int {
-            let Some(message) = message else {
-                return 0;
-            };
-            let is_main = browser
-                .as_ref()
-                .map(|b| self.state.is_main(b))
-                .unwrap_or(true);
-            let text = message.to_string();
-            if !emit_take_focus(&self.state, is_main, &text) {
-                return 0;
-            }
-            eprintln!("[cef] take-focus console {text}");
-            1
-        }
-    }
-}
-
-wrap_focus_handler! {
-    struct HostFocus {
-        state: Arc<AppState>,
-    }
-
-    impl FocusHandler {
-        fn on_got_focus(&self, browser: Option<&mut Browser>) {
-            let Some(browser) = browser else {
-                return;
-            };
-            eprintln!(
-                "[cef] on_got_focus app_owns_keyboard={}",
-                self.state.app_owns_keyboard.load(Ordering::SeqCst)
-            );
-            // If chrome still owns keys, this *is* the first page click: SetFocus(true)
-            // once. Clearing the flag here without set_focus would skip activate.
-            if try_activate_page_from_chrome(&self.state, Some(browser)) {
-                return;
-            }
-            self.state
-                .app_owns_keyboard
-                .store(false, Ordering::SeqCst);
-            self.state.emit_focus(browser, FocusHandoff::Browser);
-        }
-
-        fn on_set_focus(
-            &self,
-            browser: Option<&mut Browser>,
-            source: FocusSource,
-        ) -> ::std::os::raw::c_int {
-            let Some(browser) = browser else {
-                return 0;
-            };
-            eprintln!(
-                "[cef] on_set_focus source={source:?} app_owns_keyboard={}",
-                self.state.app_owns_keyboard.load(Ordering::SeqCst)
-            );
-            if self.state.is_main(browser) {
-                let _ = try_activate_page_from_chrome(&self.state, Some(browser));
-            }
-            0
-        }
-
-        fn on_take_focus(&self, browser: Option<&mut Browser>, next: ::std::os::raw::c_int) {
-            let Some(browser) = browser else {
-                return;
-            };
-            self.state
-                .emit_focus(browser, FocusHandoff::App { next: next != 0 });
-        }
     }
 }
 
@@ -1523,7 +1230,7 @@ wrap_keyboard_handler! {
             &self,
             browser: Option<&mut Browser>,
             event: Option<&KeyEvent>,
-            os_event: Option<&mut cef::sys::XEvent>,
+            _os_event: Option<&mut cef::sys::XEvent>,
             _is_keyboard_shortcut: Option<&mut ::std::os::raw::c_int>,
         ) -> ::std::os::raw::c_int {
             let Some(event) = event else {
@@ -1533,13 +1240,6 @@ wrap_keyboard_handler! {
             let ctrl = mods & FLAG_CTRL != 0;
             let shift = mods & FLAG_SHIFT != 0;
             let alt = mods & FLAG_ALT != 0;
-            if should_drop_modified_char(event.type_, ctrl, alt) {
-                eprintln!(
-                    "[cef] drop modified CHAR win={:#x}",
-                    event.windows_key_code
-                );
-                return 1;
-            }
             let action = pre_key_action(
                 is_host_keydown(event.type_),
                 event.windows_key_code,
@@ -1547,42 +1247,8 @@ wrap_keyboard_handler! {
                 shift,
                 alt,
             );
-            if ctrl {
-                eprintln!(
-                    "[cef] pre-key ctrl type={:?} win={:#x} action={action:?}",
-                    event.type_, event.windows_key_code
-                );
-            }
-            if should_swallow_page_key(
-                self.state.app_owns_keyboard.load(Ordering::SeqCst),
-                action,
-            ) {
-                let is_main = browser
-                    .as_ref()
-                    .map(|b| self.state.is_main(b))
-                    .unwrap_or(true);
-                if let Some(text) = key_text(event) {
-                    if let Some(event) =
-                        keys_event(self.state.args.health_check, is_main, text.clone())
-                    {
-                        eprintln!("[cef] emit keys {text:?}");
-                        protocol::emit(&event);
-                    }
-                }
-                let _ = os_event;
-                eprintln!(
-                    "[cef] swallow page key win={:#x} while app owns keyboard",
-                    event.windows_key_code
-                );
-                return 1;
-            }
             match action {
                 PreKeyAction::Ignore => 0,
-                PreKeyAction::Tab { next } => {
-                    eprintln!("[cef] tab-edge dispatch next={next}");
-                    dispatch_tab_in_page(browser, next);
-                    1
-                }
                 PreKeyAction::Shortcut(chord) => {
                     let is_main = browser
                         .as_ref()
@@ -1591,10 +1257,6 @@ wrap_keyboard_handler! {
                     if let Some(event) =
                         shortcut_event(self.state.args.health_check, is_main, chord)
                     {
-                        self.state
-                            .app_owns_keyboard
-                            .store(true, Ordering::SeqCst);
-                        eprintln!("[cef] emit shortcut {chord}");
                         protocol::emit(&event);
                     }
                     1
@@ -1687,34 +1349,9 @@ wrap_context_menu_handler! {
 }
 
 wrap_request_handler! {
-    struct HostRequest {
-        state: Arc<AppState>,
-    }
+    struct HostRequest;
 
     impl RequestHandler {
-        fn on_before_browse(
-            &self,
-            browser: Option<&mut Browser>,
-            _frame: Option<&mut Frame>,
-            request: Option<&mut Request>,
-            _user_gesture: ::std::os::raw::c_int,
-            _is_redirect: ::std::os::raw::c_int,
-        ) -> ::std::os::raw::c_int {
-            let Some(request) = request else {
-                return 0;
-            };
-            let url = CefString::from(&request.url()).to_string();
-            let is_main = browser
-                .as_ref()
-                .map(|b| self.state.is_main(b))
-                .unwrap_or(true);
-            if !emit_take_focus(&self.state, is_main, &url) {
-                return 0;
-            }
-            eprintln!("[cef] take-focus beacon {url}");
-            1
-        }
-
         fn on_render_process_terminated(
             &self,
             _browser: Option<&mut Browser>,
@@ -1734,191 +1371,254 @@ wrap_request_handler! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::args::{Bounds, HostArgs};
 
-    #[test]
-    fn ozone_embed_is_x11_not_wayland_or_headless() {
-        let mode = ozone_mode(false);
-        assert_eq!(mode.platform, "x11");
-        assert_ne!(mode.platform, "wayland");
-        assert_ne!(mode.platform, "headless");
-        assert_eq!(ozone_platform(false), "x11");
-        assert!(!mode.disable_gpu);
-        assert_eq!(mode.use_gl, None);
-        assert_eq!(mode.use_angle, None);
+    fn empty_args(health_check: bool) -> HostArgs {
+        HostArgs {
+            info: false,
+            cef_dir: None,
+            cache_dir: None,
+            bounds: Bounds::default(),
+            scale: None,
+            url: "about:blank".into(),
+            health_check,
+            no_sandbox: false,
+            log_file: None,
+            extra_switches: Vec::new(),
+        }
     }
 
     #[test]
-    fn ozone_health_is_headless_not_x11() {
+    fn ozone_visible_is_wayland() {
+        let mode = ozone_mode(false);
+        assert_eq!(mode.platform, "wayland");
+        assert_ne!(mode.platform, "headless");
+        assert_eq!(ozone_platform(false), "wayland");
+        assert!(!mode.disable_gpu);
+    }
+
+    #[test]
+    fn ozone_health_is_headless() {
         let mode = ozone_mode(true);
         assert_eq!(mode.platform, "headless");
-        assert_ne!(mode.platform, "x11");
         assert_ne!(mode.platform, "wayland");
-        assert_eq!(ozone_platform(true), "headless");
         assert!(mode.disable_gpu);
         assert_eq!(mode.use_gl, Some("angle"));
         assert_eq!(mode.use_angle, Some("swiftshader"));
     }
 
     #[test]
-    fn ozone_modes_are_mutually_exclusive() {
-        assert_ne!(ozone_platform(false), ozone_platform(true));
-        assert_ne!(ozone_mode(false), ozone_mode(true));
-    }
-
-    #[test]
-    fn ozone_does_not_depend_on_shm_policy() {
-        // shm/--disable-dev-shm-usage is another slice. ozone_mode takes
-        // only health_check — both modes stay valid with the shm switch on or off.
-        assert_eq!(ozone_mode(false).platform, ozone_platform(false));
-        assert_eq!(ozone_mode(true).platform, ozone_platform(true));
-        assert_ne!(ozone_platform(false), ozone_platform(true));
-    }
-
-    fn consumes_key(action: PreKeyAction) -> bool {
-        !matches!(action, PreKeyAction::Ignore)
-    }
-
-    #[test]
-    fn extras_cannot_override_ozone_to_wayland_or_swap_mode() {
+    fn extras_cannot_override_ozone() {
         let wayland = ["--ozone-platform=wayland".to_string()];
-        let x11 = ["--ozone-platform=x11".to_string()];
-        let headless = ["ozone-platform=headless".to_string()];
-        assert_eq!(effective_ozone_platform(false, &wayland), "x11");
+        let headless = ["--ozone-platform=headless".to_string()];
+        assert_eq!(effective_ozone_platform(false, &headless), "wayland");
         assert_eq!(effective_ozone_platform(true, &wayland), "headless");
-        assert_eq!(effective_ozone_platform(true, &x11), "headless");
-        assert_eq!(effective_ozone_platform(false, &headless), "x11");
+        assert_eq!(effective_ozone_platform(false, &[]), "wayland");
+        assert_eq!(effective_ozone_platform(true, &[]), "headless");
     }
 
     #[test]
-    fn alloy_native_required_for_embed_and_health() {
-        let switches = required_alloy_native_switches();
-        assert!(switches.contains(&"use-alloy-style"));
-        assert!(switches.contains(&"use-native"));
-        assert!(!switches.contains(&"ozone-platform"));
+    fn alloy_style_required_without_use_native() {
+        let switches = required_alloy_switches();
+        assert_eq!(switches, &["use-alloy-style"]);
+        assert!(!switches.contains(&"use-native"));
     }
 
     #[test]
-    fn popup_always_cancels_and_loads_main() {
-        let with_url = popup_disposition(Some("https://example.test/a"));
-        assert!(with_url.cancel);
+    fn extras_cannot_reintroduce_use_native_or_flip_ozone() {
+        assert!(
+            !required_alloy_switches().contains(&"use-native"),
+            "required Alloy switches must not reintroduce use-native: {:?}",
+            required_alloy_switches()
+        );
+        let extras = [
+            "--use-native".to_string(),
+            "--use-native=1".to_string(),
+            "--ozone-platform=x11".to_string(),
+            "--ozone-platform=headless".to_string(),
+            "--disable-gpu".to_string(),
+            "  --foo=bar  ".to_string(),
+            "--".to_string(),
+            String::new(),
+        ];
+        let allowed = extras_for_command_line(&extras);
+        assert_eq!(allowed, ["--disable-gpu", "  --foo=bar  "]);
+        assert!(!allowed
+            .iter()
+            .any(|raw| extra_switch_name(raw) == Some("use-native")));
+        assert!(!allowed
+            .iter()
+            .any(|raw| extra_switch_name(raw) == Some("ozone-platform")));
+        assert!(!extra_switch_allowed("use-native"));
+        assert!(!extra_switch_allowed("--use-native"));
+        assert!(extra_switch_allowed("--disable-gpu"));
+        assert_eq!(effective_ozone_platform(false, &extras), "wayland");
+        assert_eq!(effective_ozone_platform(true, &extras), "headless");
+    }
+
+    /// `ozone-platform` forzado al final no tapa el hint: con `DISPLAY` puesto,
+    /// `--ozone-platform-hint=x11|auto` devolvía Ozone a X11.
+    #[test]
+    fn extras_cannot_hint_ozone_back_to_x11() {
+        assert!(denied_extra_switches().contains(&"ozone-platform-hint"));
+        let extras = [
+            "--ozone-platform-hint=x11".to_string(),
+            "--ozone-platform-hint=auto".to_string(),
+            "--ozone-platform-hint".to_string(),
+            "ozone-platform-hint=x11".to_string(),
+            "  --ozone-platform-hint=x11  ".to_string(),
+            "--disable-gpu".to_string(),
+        ];
+        let allowed = extras_for_command_line(&extras);
+        assert_eq!(allowed, ["--disable-gpu"]);
+        assert!(
+            !allowed
+                .iter()
+                .any(|raw| extra_switch_name(raw) == Some("ozone-platform-hint")),
+            "el hint no puede llegar a la command line: {allowed:?}"
+        );
+        assert!(!extra_switch_allowed("--ozone-platform-hint=x11"));
+        assert!(!extra_switch_allowed("--ozone-platform-hint=auto"));
+        assert!(!extra_switch_allowed("ozone-platform-hint"));
+        // Un switch que solo empieza igual sigue pasando: no es prefix match.
+        assert!(extra_switch_allowed("--ozone-platform-hint-extra=1"));
+        assert_eq!(effective_ozone_platform(false, &extras), "wayland");
+        assert_eq!(effective_ozone_platform(true, &extras), "headless");
+    }
+
+    #[test]
+    fn visible_uses_views_health_uses_windowless() {
+        assert_eq!(browser_create_path(false), BrowserCreatePath::Views);
+        assert_eq!(browser_create_path(true), BrowserCreatePath::Windowless);
+        assert_ne!(browser_create_path(false), browser_create_path(true));
+    }
+
+    #[test]
+    fn window_info_health_is_windowless_alloy() {
+        let info = window_info_for_health();
+        assert_eq!(info.windowless_rendering_enabled, 1);
+        assert_eq!(info.runtime_style, RuntimeStyle::ALLOY);
+        assert_eq!(info.parent_window, 0);
+    }
+
+    #[test]
+    fn views_preferred_size_is_contract_bounds() {
+        let args = empty_args(false);
+        let bounds = views_bounds(&args);
+        assert_eq!(bounds.x, 0);
+        assert_eq!(bounds.y, 0);
+        assert_eq!(bounds.width, 1200);
+        assert_eq!(bounds.height, 800);
+        let size = views_preferred_size(&bounds);
+        assert_eq!(size.width, 1200);
+        assert_eq!(size.height, 800);
+        let flags = views_window_flags();
+        assert_eq!(flags.can_resize, 1);
+        assert_eq!(flags.can_maximize, 1);
+        assert_eq!(flags.can_minimize, 1);
+        assert_eq!(flags.with_standard_window_buttons, 1);
+    }
+
+    #[test]
+    fn views_bounds_clamps_extents() {
+        let mut args = empty_args(false);
+        args.bounds = Bounds {
+            x: 10,
+            y: 20,
+            w: 0,
+            h: -4,
+        };
+        let bounds = views_bounds(&args);
+        assert_eq!(bounds.x, 10);
+        assert_eq!(bounds.y, 20);
+        assert_eq!(bounds.width, 1);
+        assert_eq!(bounds.height, 1);
+    }
+
+    #[test]
+    fn force_device_scale_skips_one_and_none() {
+        assert!(!should_force_device_scale(None));
+        assert!(!should_force_device_scale(Some(1.0)));
+        assert!(!should_force_device_scale(Some(f64::NAN)));
+        assert!(should_force_device_scale(Some(1.5)));
+        assert!(should_force_device_scale(Some(2.0)));
+    }
+
+    #[test]
+    fn show_hide_are_window_ops() {
+        assert_eq!(window_visibility(true), WindowVisibility::Show);
+        assert_eq!(window_visibility(false), WindowVisibility::Hide);
+        assert_ne!(window_visibility(true), window_visibility(false));
+        assert_eq!(platform::hidden_flag(true), 0);
+        assert_eq!(platform::hidden_flag(false), 1);
+    }
+
+    #[test]
+    fn popup_browser_view_opens_views_window() {
+        assert!(popup_browser_view_creates_window());
+        let popup = popup_window_bounds();
+        assert_eq!(popup.width, 800);
+        assert_eq!(popup.height, 600);
+    }
+
+    /// `show_dev_tools` con `WindowInfo` (aunque sea `default()`) es el camino
+    /// nativo: en Linux, X11. DevTools sale por la Views del padre.
+    #[test]
+    fn devtools_never_asks_for_a_native_window() {
+        assert!(
+            devtools_window_info().is_none(),
+            "DevTools no puede llevar WindowInfo"
+        );
         assert_eq!(
-            with_url.load_in_main.as_deref(),
-            Some("https://example.test/a")
+            devtools_uses_default_window(),
+            0,
+            "use_default_window = 1 cambia la Views del padre por la nativa"
         );
-
-        let empty = popup_disposition(Some(""));
-        assert!(empty.cancel);
-        assert_eq!(empty.load_in_main.as_deref(), Some(""));
-
-        let none = popup_disposition(None);
-        assert!(none.cancel);
-        assert_eq!(none.load_in_main, None);
-
-        let js = popup_disposition(Some("javascript:alert(1)"));
-        assert!(js.cancel);
-        assert_eq!(js.load_in_main.as_deref(), Some("javascript:alert(1)"));
+        // La ventana de DevTools la sigue creando el camino Views del popup.
+        assert!(popup_browser_view_creates_window());
+        let devtools = popup_disposition(Some("devtools://devtools/bundled/inspector.html"));
+        assert!(!devtools.cancel);
+        assert_eq!(devtools.load_in_main, None);
     }
 
     #[test]
-    fn close_always_quits_when_on_before_close_is_missing() {
-        let first = close_plan(false, true);
-        assert!(first.close_browser);
-        assert!(
-            first.quit_loop,
-            "Ozone X11 child may never fire on_before_close"
+    fn close_plan_quits_and_closes_once() {
+        assert_eq!(
+            close_plan(false, true),
+            ClosePlan {
+                close_browser: true,
+                quit_loop: true
+            }
         );
-
-        let no_browser = close_plan(false, false);
-        assert!(!no_browser.close_browser);
-        assert!(no_browser.quit_loop);
-
-        let again = close_plan(true, true);
-        assert!(
-            !again.close_browser,
-            "already closing must not close_browser again"
+        assert_eq!(
+            close_plan(true, true),
+            ClosePlan {
+                close_browser: false,
+                quit_loop: true
+            }
         );
-        assert!(again.quit_loop);
-    }
-
-    #[test]
-    fn before_close_quits_only_for_main_browser() {
-        assert!(should_quit_on_before_close(7, 7));
-        assert!(should_quit_on_before_close(3, 0));
-        assert!(
-            !should_quit_on_before_close(99, 7),
-            "DevTools/popup close must not quit the host"
+        assert_eq!(
+            health_success_teardown(),
+            ClosePlan {
+                close_browser: false,
+                quit_loop: true
+            }
         );
-    }
-
-    #[test]
-    fn health_success_quits_without_close_browser() {
-        let plan = health_success_teardown();
-        assert!(!plan.close_browser);
-        assert!(plan.quit_loop);
-        assert!(!emit_ready_event(true));
-        assert!(emit_ready_event(false));
-        assert!(take_main_browser(false, false));
-        assert!(!take_main_browser(true, false));
-        assert!(!take_main_browser(false, true));
     }
 
     #[test]
     fn shortcut_contract_chords_are_consumed() {
-        for (shift, chord) in [(false, "ctrl+b"), (true, "ctrl+shift+b")] {
-            let action = pre_key_action(true, VK_B, true, shift, false);
-            assert_eq!(action, PreKeyAction::Shortcut(chord));
-            assert!(consumes_key(action));
-        }
-        let ctrl_l = pre_key_action(true, VK_L, true, false, false);
-        assert_eq!(ctrl_l, PreKeyAction::Shortcut("ctrl+l"));
-        assert!(consumes_key(ctrl_l));
-    }
-
-    #[test]
-    fn shortcut_modifiers_do_not_false_positive() {
         assert_eq!(
-            pre_key_action(true, VK_B, true, false, true),
-            PreKeyAction::Ignore,
-            "ctrl+alt+b is not a host shortcut"
+            pre_key_action(true, VK_B, true, false, false),
+            PreKeyAction::Shortcut("ctrl+b")
         );
         assert_eq!(
-            pre_key_action(true, VK_L, true, true, false),
-            PreKeyAction::Ignore,
-            "ctrl+shift+l is not ctrl+l"
+            pre_key_action(true, VK_B, true, true, false),
+            PreKeyAction::Shortcut("ctrl+shift+b")
         );
         assert_eq!(
-            pre_key_action(true, VK_L, false, false, false),
+            pre_key_action(true, VK_L, true, false, false),
             PreKeyAction::Ignore
-        );
-        assert_eq!(
-            pre_key_action(true, VK_B, false, false, false),
-            PreKeyAction::Ignore
-        );
-        assert_eq!(
-            pre_key_action(false, VK_B, true, false, false),
-            PreKeyAction::Ignore,
-            "only RAWKEYDOWN"
-        );
-        assert_eq!(
-            pre_key_action(true, VK_I, false, false, false),
-            PreKeyAction::Ignore
-        );
-    }
-
-    #[test]
-    fn reload_back_forward_stop_devtools_keys() {
-        assert_eq!(
-            pre_key_action(true, VK_F12, false, false, false),
-            PreKeyAction::ToggleDevtools
-        );
-        assert_eq!(
-            pre_key_action(true, VK_F12, true, true, true),
-            PreKeyAction::ToggleDevtools,
-            "F12 toggles even with modifiers"
-        );
-        assert_eq!(
-            pre_key_action(true, VK_I, true, true, false),
-            PreKeyAction::ToggleDevtools
         );
         assert_eq!(
             pre_key_action(true, VK_F5, false, false, false),
@@ -1927,21 +1627,8 @@ mod tests {
             }
         );
         assert_eq!(
-            pre_key_action(true, VK_F5, true, true, false),
-            PreKeyAction::Reload {
-                ignore_cache: false
-            },
-            "ctrl+shift+F5 is still a normal reload"
-        );
-        assert_eq!(
-            pre_key_action(true, VK_R, true, false, false),
-            PreKeyAction::Reload {
-                ignore_cache: false
-            }
-        );
-        assert_eq!(
-            pre_key_action(true, VK_R, true, true, false),
-            PreKeyAction::Reload { ignore_cache: true }
+            pre_key_action(true, VK_F12, false, false, false),
+            PreKeyAction::ToggleDevtools
         );
         assert_eq!(
             pre_key_action(true, VK_LEFT, false, false, true),
@@ -1952,421 +1639,36 @@ mod tests {
             PreKeyAction::Forward
         );
         assert_eq!(
-            pre_key_action(true, VK_LEFT, true, false, true),
-            PreKeyAction::Ignore,
-            "ctrl+alt+left is not back"
-        );
-        assert_eq!(
             pre_key_action(true, VK_ESCAPE, false, false, false),
             PreKeyAction::Stop
         );
-        assert_eq!(
-            pre_key_action(true, VK_ESCAPE, true, true, true),
-            PreKeyAction::Stop,
-            "Escape always stops"
-        );
-        assert!(consumes_key(pre_key_action(
-            true, VK_F5, false, false, false
+    }
+
+    #[test]
+    fn popup_loads_in_main_and_cancels() {
+        let d = popup_disposition(Some("https://popup.test"));
+        assert!(d.cancel);
+        assert_eq!(d.load_in_main.as_deref(), Some("https://popup.test"));
+    }
+
+    #[test]
+    fn ready_is_visible_main_browser_only() {
+        assert!(emit_ready_event(false));
+        assert!(!emit_ready_event(true));
+        assert!(take_main_browser(false, false));
+        assert!(!take_main_browser(true, false));
+        assert!(!take_main_browser(false, true));
+        assert!(!take_main_browser(true, true));
+    }
+
+    #[test]
+    fn popup_devtools_is_not_cancelled() {
+        let d = popup_disposition(Some("devtools://devtools/bundled/devtools_app.html"));
+        assert!(!d.cancel);
+        assert_eq!(d.load_in_main, None);
+        assert!(is_devtools_url(Some(
+            "devtools://devtools/bundled/inspector.html"
         )));
-        assert!(!consumes_key(pre_key_action(
-            true, VK_L, false, false, false
-        )));
-    }
-
-    #[test]
-    fn render_crash_status_uses_contract_labels() {
-        assert_eq!(render_crash_status(RenderTerm::Crashed, None), "crashed");
-        assert_eq!(render_crash_status(RenderTerm::Killed, Some("x")), "killed");
-        assert_eq!(render_crash_status(RenderTerm::Abnormal, None), "abnormal");
-        assert_eq!(render_crash_status(RenderTerm::Oom, None), "oom");
-        assert_eq!(
-            render_crash_status(RenderTerm::LaunchFailed, None),
-            "launch-failed"
-        );
-        assert_eq!(
-            render_crash_status(RenderTerm::Other(42), Some("gpu-reset")),
-            "gpu-reset"
-        );
-        assert_eq!(render_crash_status(RenderTerm::Other(7), None), "7");
-        assert_eq!(
-            render_crash_status(RenderTerm::Other(7), Some("")),
-            "",
-            "empty error_string is still used when present"
-        );
-    }
-
-    #[test]
-    fn chrome_events_skip_health_and_non_main() {
-        assert!(is_main_browser(0, 99));
-        assert!(is_main_browser(4, 4));
-        assert!(!is_main_browser(4, 5));
-        assert!(!emit_chrome_ui_event(true, true));
-        assert!(!emit_chrome_ui_event(false, false));
-        assert!(emit_chrome_ui_event(false, true));
-        assert!(!emit_load_error(true, true, true, -105));
-        assert!(!emit_load_error(false, false, true, -105));
-        assert!(!emit_load_error(false, true, false, -105));
-        assert!(!emit_load_error(false, true, true, ERR_ABORTED));
-        assert_eq!(ERR_ABORTED, -3);
-        assert!(emit_load_error(false, true, true, -105));
-    }
-
-    #[test]
-    fn focus_handler_emits_only_for_main_browser() {
-        assert_eq!(
-            focus_handoff_event(true, true, FocusHandoff::Browser),
-            None,
-            "health-check must not emit chrome focus"
-        );
-        assert_eq!(
-            focus_handoff_event(false, false, FocusHandoff::Browser),
-            None,
-            "DevTools / popup must not emit focus"
-        );
-        assert_eq!(
-            focus_handoff_event(false, false, FocusHandoff::App { next: true }),
-            None
-        );
-        assert_eq!(
-            focus_handoff_event(false, true, FocusHandoff::Browser),
-            Some(HostEvent::Focus {
-                owner: FocusOwner::Browser,
-                next: None,
-            })
-        );
-    }
-
-    #[test]
-    fn shortcut_ctrl_l_emits_only_for_main_browser() {
-        assert_eq!(
-            shortcut_event(false, true, "ctrl+l"),
-            Some(HostEvent::Shortcut {
-                chord: "ctrl+l".into()
-            })
-        );
-        assert_eq!(
-            shortcut_event(true, true, "ctrl+l"),
-            None,
-            "health-check must not emit chrome shortcuts"
-        );
-        assert_eq!(
-            shortcut_event(false, false, "ctrl+l"),
-            None,
-            "DevTools / popup must not emit ctrl+l"
-        );
-        assert_eq!(
-            shortcut_event(false, true, "ctrl+b"),
-            Some(HostEvent::Shortcut {
-                chord: "ctrl+b".into()
-            })
-        );
-    }
-
-    #[test]
-    fn take_focus_console_emits_owner_app_for_main_browser() {
-        assert_eq!(
-            take_focus_from_beacon(false, true, "idioteque:take-focus:1"),
-            Some(HostEvent::Focus {
-                owner: FocusOwner::App,
-                next: Some(true),
-            })
-        );
-        assert_eq!(
-            take_focus_from_beacon(false, true, "idioteque:take-focus:0"),
-            Some(HostEvent::Focus {
-                owner: FocusOwner::App,
-                next: Some(false),
-            })
-        );
-        assert_ne!(
-            take_focus_from_beacon(false, true, "idioteque:take-focus:1"),
-            take_focus_from_beacon(false, true, "idioteque:take-focus:0")
-        );
-        assert_eq!(
-            take_focus_from_beacon(true, true, "idioteque:take-focus:1"),
-            None
-        );
-        assert_eq!(
-            take_focus_from_beacon(false, false, "idioteque:take-focus:0"),
-            None
-        );
-    }
-
-    #[test]
-    fn take_focus_beacon_rejects_page_noise() {
-        assert_eq!(
-            parse_take_focus_beacon("idioteque:take-focus:1"),
-            Some(true)
-        );
-        assert_eq!(
-            parse_take_focus_beacon("  idioteque:take-focus:0\n"),
-            Some(false)
-        );
-        assert_eq!(parse_take_focus_beacon("idioteque:take-focus:2"), None);
-        assert_eq!(parse_take_focus_beacon("idioteque:take-focus:"), None);
-        assert_eq!(parse_take_focus_beacon("take-focus:1"), None);
-        assert_eq!(parse_take_focus_beacon("console.info"), None);
-        assert_eq!(parse_take_focus_beacon(""), None);
-        assert_eq!(
-            parse_take_focus_beacon("idioteque://chrome/take-focus?next=1"),
-            Some(true)
-        );
-        assert_eq!(
-            parse_take_focus_beacon(&format!("{TAKE_FOCUS_URL}0")),
-            Some(false)
-        );
-        assert_eq!(
-            take_focus_from_beacon(false, true, "idioteque://chrome/take-focus?next=1"),
-            Some(HostEvent::Focus {
-                owner: FocusOwner::App,
-                next: Some(true),
-            })
-        );
-        assert!(TAKE_FOCUS_SCRIPT.contains(TAKE_FOCUS_BEACON));
-        assert!(TAKE_FOCUS_SCRIPT.contains(TAKE_FOCUS_URL));
-        assert!(TAKE_FOCUS_SCRIPT.contains("window.addEventListener"));
-        assert!(
-            !TAKE_FOCUS_SCRIPT.contains("document.addEventListener"),
-            "capture must be on window so it can run before page document listeners"
-        );
-        assert!(TAKE_FOCUS_SCRIPT.contains("__idiotequeHandleTab"));
-        assert!(TAKE_FOCUS_SCRIPT.contains("location.assign"));
-        assert!(TAKE_FOCUS_SCRIPT.contains("keydown"));
-        assert!(TAKE_FOCUS_SCRIPT.contains("Tab"));
-        assert!(TAKE_FOCUS_SCRIPT.contains("preventDefault"));
-        assert!(TAKE_FOCUS_SCRIPT.contains("__idiotequeTakeFocus"));
-        assert!(
-            TAKE_FOCUS_SCRIPT.contains("}, true)"),
-            "Tab trap must register with capture:true"
-        );
-        assert!(TAKE_FOCUS_SCRIPT.contains("a.blur"));
-        assert!(BLUR_PAGE_SCRIPT.contains("activeElement"));
-        assert!(should_swallow_page_key(
-            true,
-            pre_key_action(true, VK_TAB, false, false, false)
-        ));
-        assert!(should_swallow_page_key(
-            true,
-            pre_key_action(true, VK_L, false, false, false)
-        ));
-        assert!(!should_swallow_page_key(
-            true,
-            pre_key_action(true, VK_L, true, false, false)
-        ));
-        assert!(!should_swallow_page_key(
-            false,
-            pre_key_action(true, VK_TAB, false, false, false)
-        ));
-        let debounce = Mutex::new(None);
-        assert!(take_focus_should_emit(&debounce, true));
-        assert!(
-            !take_focus_should_emit(&debounce, true),
-            "console + scheme must not emit focus twice"
-        );
-        assert!(take_focus_should_emit(&debounce, false));
-        assert_eq!(
-            keys_event(false, true, "A".into()),
-            Some(HostEvent::Keys { text: "A".into() })
-        );
-        assert_eq!(keys_event(true, true, "A".into()), None);
-        assert_eq!(keys_event(false, false, "A".into()), None);
-        assert_eq!(keys_event(false, true, String::new()), None);
-        assert!(should_drop_modified_char(KeyEventType::CHAR, true, false));
-        assert!(should_drop_modified_char(KeyEventType::CHAR, false, true));
-        assert!(!should_drop_modified_char(KeyEventType::CHAR, false, false));
-        assert!(!should_drop_modified_char(
-            KeyEventType::RAWKEYDOWN,
-            true,
-            false
-        ));
-        assert!(tab_dispatch_script(true).contains("__idiotequeHandleTab(true)"));
-        assert!(tab_dispatch_script(false).contains("__idiotequeHandleTab(false)"));
-        assert!(is_host_keydown(KeyEventType::RAWKEYDOWN));
-        assert!(is_host_keydown(KeyEventType::KEYDOWN));
-        assert!(!is_host_keydown(KeyEventType::CHAR));
-        assert_eq!(host_key_code(VK_L_LOWER), VK_L);
-        assert_eq!(
-            pre_key_action(true, VK_TAB, false, false, false),
-            PreKeyAction::Tab { next: true }
-        );
-        assert_eq!(
-            pre_key_action(true, VK_TAB, false, true, false),
-            PreKeyAction::Tab { next: false }
-        );
-        assert_eq!(
-            pre_key_action(true, VK_L_LOWER, true, false, false),
-            PreKeyAction::Shortcut("ctrl+l")
-        );
-        assert!(consumes_key(pre_key_action(
-            true, VK_TAB, false, false, false
-        )));
-        assert!(should_inject_take_focus_trap(false, true, true));
-        assert!(
-            !should_inject_take_focus_trap(true, true, true),
-            "health-check must not inject the Tab trap"
-        );
-        assert!(!should_inject_take_focus_trap(false, false, true));
-        assert!(!should_inject_take_focus_trap(false, true, false));
-    }
-
-    #[test]
-    fn vk_typed_char_covers_letters_digits_and_space() {
-        assert_eq!(vk_typed_char(VK_L, false), Some('l'));
-        assert_eq!(vk_typed_char(VK_L, true), Some('L'));
-        assert_eq!(vk_typed_char(VK_L_LOWER, false), Some('l'));
-        assert_eq!(vk_typed_char(0x54, true), Some('T'));
-        assert_eq!(vk_typed_char(0x31, false), Some('1'));
-        assert_eq!(vk_typed_char(0x31, true), None);
-        assert_eq!(vk_typed_char(0x20, false), Some(' '));
-        assert_eq!(vk_typed_char(0x10, false), None, "Shift is not text");
-        assert_eq!(printable_char(b'A' as u32), Some('A'));
-        assert_eq!(printable_char(0), None);
-        assert_eq!(printable_char(9), None);
-    }
-
-    #[test]
-    fn keys_event_emits_only_for_main_browser() {
-        assert_eq!(
-            keys_event(false, true, "A".into()),
-            Some(HostEvent::Keys { text: "A".into() })
-        );
-        assert_eq!(
-            keys_event(true, true, "A".into()),
-            None,
-            "health-check must not emit keys"
-        );
-        assert_eq!(
-            keys_event(false, false, "A".into()),
-            None,
-            "DevTools / popup must not emit keys"
-        );
-        assert_eq!(keys_event(false, true, String::new()), None);
-    }
-
-    #[test]
-    fn on_take_focus_next_true_and_false() {
-        assert_eq!(
-            focus_handoff_event(false, true, FocusHandoff::App { next: true }),
-            Some(HostEvent::Focus {
-                owner: FocusOwner::App,
-                next: Some(true),
-            })
-        );
-        assert_eq!(
-            focus_handoff_event(false, true, FocusHandoff::App { next: false }),
-            Some(HostEvent::Focus {
-                owner: FocusOwner::App,
-                next: Some(false),
-            })
-        );
-        assert_ne!(
-            focus_handoff_event(false, true, FocusHandoff::App { next: true }),
-            focus_handoff_event(false, true, FocusHandoff::App { next: false })
-        );
-    }
-
-    #[test]
-    fn got_focus_stops_swallowing_page_keys() {
-        assert!(
-            !app_owns_keyboard_after_handoff(FocusHandoff::Browser),
-            "OnGotFocus must release chrome's swallow"
-        );
-        assert!(!should_swallow_page_key(
-            app_owns_keyboard_after_handoff(FocusHandoff::Browser),
-            PreKeyAction::Ignore
-        ));
-        assert!(!should_swallow_page_key(
-            app_owns_keyboard_after_handoff(FocusHandoff::Browser),
-            PreKeyAction::Tab { next: true }
-        ));
-        assert!(app_owns_keyboard_after_handoff(FocusHandoff::App {
-            next: true
-        }));
-        assert!(should_swallow_page_key(
-            app_owns_keyboard_after_handoff(FocusHandoff::App { next: false }),
-            PreKeyAction::Ignore
-        ));
-        assert_eq!(drop_browser_focus_plan().set_focus, 0);
-        assert_eq!(give_browser_focus_plan().set_focus, 1);
-        assert_eq!(page_click_activate_plan().set_focus, 1);
-        assert!(
-            !app_owns_keyboard_after_navigate(),
-            "URL-owned navigation must release chrome's swallow"
-        );
-        assert!(!should_swallow_page_key(
-            app_owns_keyboard_after_navigate(),
-            PreKeyAction::Ignore
-        ));
-    }
-
-    #[test]
-    fn unfocus_never_calls_xsetinputfocus() {
-        let drop = drop_browser_focus_plan();
-        assert!(
-            !drop.x11,
-            "Unfocus must not call XSetInputFocus; ADE already owns the toplevel"
-        );
-        assert_eq!(drop.set_focus, 0);
-        let give = give_browser_focus_plan();
-        assert!(give.x11, "Focus still moves X11 onto the CEF child");
-        assert_eq!(give.set_focus, 1);
-        assert_ne!(drop, give);
-        let activate = page_click_activate_plan();
-        assert!(
-            !activate.x11,
-            "page click must not XSetInputFocus; that resets the Google caret"
-        );
-        assert_eq!(activate.set_focus, 1);
-        assert_ne!(activate, give);
-        assert_ne!(activate, drop);
-        assert!(
-            should_ungrab_on_unfocus(),
-            "ADE XUngrab cannot release Ozone's grab on the host display"
-        );
-        assert!(should_swallow_page_key(true, PreKeyAction::Ignore));
-        assert!(should_swallow_page_key(
-            true,
-            PreKeyAction::Tab { next: true }
-        ));
-        assert!(!should_swallow_page_key(
-            true,
-            PreKeyAction::Shortcut("ctrl+l")
-        ));
-    }
-
-    #[test]
-    fn activate_from_chrome_runs_once() {
-        assert!(
-            should_activate_page_from_chrome(true),
-            "OnGotFocus / OnSetFocus / ButtonPress while chrome owns keys must SetFocus(true)"
-        );
-        let plan = page_click_activate_plan();
-        assert!(!plan.x11);
-        assert_eq!(plan.set_focus, 1);
-        assert_eq!(activate_page_log(), "[cef] activate page from chrome");
-        assert!(
-            !should_swallow_page_key(
-                app_owns_keyboard_after_handoff(FocusHandoff::Browser),
-                PreKeyAction::Ignore
-            ),
-            "activate emits owner=browser and stops swallowing"
-        );
-    }
-
-    #[test]
-    fn second_page_click_is_noop() {
-        assert!(
-            !should_activate_page_from_chrome(false),
-            "page already owns keys: second click must not SetFocus again"
-        );
-        assert_ne!(
-            should_activate_page_from_chrome(true),
-            should_activate_page_from_chrome(false)
-        );
-        assert_eq!(
-            page_click_activate_plan(),
-            page_click_activate_plan(),
-            "the activate plan is stable; the once-gate is app_owns_keyboard"
-        );
+        assert!(!is_devtools_url(Some("https://example.test")));
     }
 }

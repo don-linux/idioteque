@@ -23,7 +23,6 @@
   import { dockFromAlt } from "$lib/terminal-dock";
   import { terminal } from "$lib/terminal.svelte";
   import { panels } from "$lib/workspace-panels.svelte";
-  import { surface } from "$lib/workspace-surface.svelte";
   import { workspace } from "$lib/workspace.svelte";
 
   const labels: Record<FooterActionId, string> = {
@@ -115,14 +114,14 @@
             {
               active:
                 (id === "terminal" && (terminal.open || terminal.surface === "terminals")) ||
-                (id === "browser" && surface.current === "browser") ||
+                (id === "browser" && browser.visible) ||
                 (id === "git" && panels.gitVisible),
             },
           ]}
           aria-pressed={id === "terminal"
             ? terminal.open || terminal.surface === "terminals"
             : id === "browser"
-              ? surface.current === "browser"
+              ? browser.visible
               : id === "git"
                 ? panels.gitVisible
                 : undefined}

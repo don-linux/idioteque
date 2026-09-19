@@ -138,7 +138,7 @@ pub fn window_info() -> WindowInfo {
     WindowInfo::default().set_as_windowless(0)
 }
 
-/// Contract 4.5: health is windowless; `parent` is 0.
+/// Contract 4.5: health is windowless.
 #[cfg(test)]
 pub fn health_window_is_windowless() -> bool {
     true
@@ -253,7 +253,7 @@ mod tests {
     }
 
     #[test]
-    fn health_uses_windowless_parent_zero() {
+    fn health_uses_windowless_surface() {
         assert!(health_window_is_windowless());
     }
 }

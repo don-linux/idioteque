@@ -1114,11 +1114,11 @@ mod tests {
     fn apply_terminal_clamps_size_and_trims_family() {
         let next = apply_terminal(
             default_config(),
-            Some("  Hack Nerd Font  ".into()),
+            Some("  Iosevka Nerd Font  ".into()),
             3,
             "tokyo-night".into(),
         );
-        assert_eq!(next.terminal.font_family.as_deref(), Some("Hack Nerd Font"));
+        assert_eq!(next.terminal.font_family.as_deref(), Some("Iosevka Nerd Font"));
         assert_eq!(next.terminal.font_size, MIN_FONT_SIZE);
 
         let wide = apply_terminal(default_config(), Some("".into()), 99, "tokyo-night".into());
@@ -1130,11 +1130,11 @@ mod tests {
     fn apply_terminal_keeps_theme_when_changing_font() {
         let next = apply_terminal(
             default_config(),
-            Some("Hack".into()),
+            Some("Iosevka".into()),
             16,
             "nord".into(),
         );
-        assert_eq!(next.terminal.font_family.as_deref(), Some("Hack"));
+        assert_eq!(next.terminal.font_family.as_deref(), Some("Iosevka"));
         assert_eq!(next.terminal.font_size, 16);
         assert_eq!(next.terminal.theme, "nord");
     }
@@ -1278,9 +1278,9 @@ mod tests {
         let mut config = default_config();
         config.appearance = custom_appearance();
 
-        let next = apply_terminal(config, Some("Hack".into()), 16, "tokyo-night".into());
+        let next = apply_terminal(config, Some("Iosevka".into()), 16, "tokyo-night".into());
         assert_eq!(next.appearance, custom_appearance());
-        assert_eq!(next.terminal.font_family.as_deref(), Some("Hack"));
+        assert_eq!(next.terminal.font_family.as_deref(), Some("Iosevka"));
     }
 
     #[test]
@@ -1484,7 +1484,7 @@ mod tests {
         let removed = remove_recent(config.clone(), "/a");
         assert_eq!(removed.layout, custom_layout());
 
-        let terminal = apply_terminal(config.clone(), Some("Hack".into()), 16, "nord".into());
+        let terminal = apply_terminal(config.clone(), Some("Iosevka".into()), 16, "nord".into());
         assert_eq!(terminal.layout, custom_layout());
 
         let appearance = apply_appearance(config.clone(), "idioteque-light".into());
