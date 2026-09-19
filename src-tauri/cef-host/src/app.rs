@@ -5,9 +5,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use cef::sys::cef_event_flags_t;
 use cef::{
-    wrap_app, wrap_browser_process_handler, wrap_client, wrap_context_menu_handler,
-    wrap_display_handler, wrap_keyboard_handler, wrap_life_span_handler, wrap_load_handler,
-    wrap_request_handler, wrap_task, *,
+    wrap_app, wrap_browser_process_handler, wrap_browser_view_delegate, wrap_client,
+    wrap_context_menu_handler, wrap_display_handler, wrap_keyboard_handler, wrap_life_span_handler,
+    wrap_load_handler, wrap_request_handler, wrap_task, wrap_window_delegate, *,
 };
 
 use crate::args::HostArgs;
@@ -73,8 +73,117 @@ fn effective_ozone_platform(health_check: bool, extra_switches: &[String]) -> &'
     ozone_platform(health_check)
 }
 
-fn required_alloy_native_switches() -> &'static [&'static str] {
-    &["use-alloy-style", "use-native"]
+fn required_alloy_switches() -> &'static [&'static str] {
+    &["use-alloy-style"]
+}
+
+fn extra_switch_name(raw: &str) -> Option<&str> {
+    let trimmed = raw.trim();
+    let stripped = trimmed.strip_prefix("--").unwrap_or(trimmed);
+    if stripped.is_empty() {
+        return None;
+    }
+    Some(
+        stripped
+            .split_once('=')
+            .map(|(name, _)| name)
+            .unwrap_or(stripped),
+    )
+}
+
+/// Switches that would take the visible browser off Views/Wayland.
+/// `ozone-platform-hint` counts: with `DISPLAY` set, `x11` / `auto` send Ozone
+/// back to X11 even though `ozone-platform` is forced afterwards.
+fn denied_extra_switches() -> &'static [&'static str] {
+    &["use-native", "ozone-platform", "ozone-platform-hint"]
+}
+
+fn extra_switch_allowed(raw: &str) -> bool {
+    match extra_switch_name(raw) {
+        Some(name) => !denied_extra_switches().contains(&name),
+        None => false,
+    }
+}
+
+fn extras_for_command_line(extra_switches: &[String]) -> Vec<&str> {
+    extra_switches
+        .iter()
+        .map(String::as_str)
+        .filter(|raw| extra_switch_allowed(raw))
+        .collect()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BrowserCreatePath {
+    Views,
+    Windowless,
+}
+
+fn browser_create_path(health_check: bool) -> BrowserCreatePath {
+    if health_check {
+        BrowserCreatePath::Windowless
+    } else {
+        BrowserCreatePath::Views
+    }
+}
+
+fn should_force_device_scale(scale: Option<f64>) -> bool {
+    match scale {
+        Some(value) if value.is_finite() && (value - 1.0).abs() > f64::EPSILON => true,
+        _ => false,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindowVisibility {
+    Show,
+    Hide,
+}
+
+fn window_visibility(visible: bool) -> WindowVisibility {
+    if visible {
+        WindowVisibility::Show
+    } else {
+        WindowVisibility::Hide
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ViewsWindowFlags {
+    can_resize: i32,
+    can_maximize: i32,
+    can_minimize: i32,
+    with_standard_window_buttons: i32,
+}
+
+fn views_window_flags() -> ViewsWindowFlags {
+    ViewsWindowFlags {
+        can_resize: 1,
+        can_maximize: 1,
+        can_minimize: 1,
+        with_standard_window_buttons: 1,
+    }
+}
+
+fn popup_browser_view_creates_window() -> bool {
+    true
+}
+
+/// CONTRACT §4.6: DevTools es una ventana Views propia. `show_dev_tools` no
+/// recibe `WindowInfo`: pasar uno (aunque sea `default()`) es pedir el camino
+/// nativo, que en Linux es X11.
+fn devtools_window_info() -> Option<WindowInfo> {
+    None
+}
+
+/// `use_default_window = 1` cambiaría la ventana Views del padre por la ventana
+/// por defecto (nativa). El padre es un `BrowserView`, así que siempre 0.
+fn devtools_uses_default_window() -> i32 {
+    0
+}
+
+fn is_devtools_url(url: Option<&str>) -> bool {
+    url.is_some_and(|value| value.starts_with("devtools://"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +193,12 @@ struct PopupDisposition {
 }
 
 fn popup_disposition(target_url: Option<&str>) -> PopupDisposition {
+    if is_devtools_url(target_url) {
+        return PopupDisposition {
+            cancel: false,
+            load_in_main: None,
+        };
+    }
     PopupDisposition {
         cancel: true,
         load_in_main: target_url.map(str::to_string),
@@ -244,6 +359,7 @@ pub struct AppState {
     pub args: HostArgs,
     pub manifest: Manifest,
     pub browser: Mutex<Option<Browser>>,
+    pub window: Mutex<Option<Window>>,
     pub main_id: AtomicI32,
     pub ready_sent: AtomicBool,
     pub health_emitted: AtomicBool,
@@ -260,6 +376,7 @@ impl AppState {
             manifest,
             disable_dev_shm,
             browser: Mutex::new(None),
+            window: Mutex::new(None),
             main_id: AtomicI32::new(0),
             ready_sent: AtomicBool::new(false),
             health_emitted: AtomicBool::new(false),
@@ -315,10 +432,10 @@ impl AppState {
             host.close_dev_tools();
             return;
         }
-        let window_info = WindowInfo::default();
         let settings = BrowserSettings::default();
+        let window_info = devtools_window_info();
         host.show_dev_tools(
-            Some(&window_info),
+            window_info.as_ref(),
             None,
             Some(&settings),
             inspect_at.as_ref(),
@@ -344,6 +461,14 @@ impl AppState {
     }
 
     fn apply_visibility(&self, visible: bool) {
+        if let Ok(guard) = self.window.lock() {
+            if let Some(window) = guard.as_ref() {
+                match window_visibility(visible) {
+                    WindowVisibility::Show => window.show(),
+                    WindowVisibility::Hide => window.hide(),
+                }
+            }
+        }
         if let Some(browser) = self.lock_browser() {
             if let Some(host) = browser.host() {
                 host.was_hidden(platform::hidden_flag(visible));
@@ -352,14 +477,15 @@ impl AppState {
     }
 
     fn apply_bounds(&self, x: i32, y: i32, w: i32, h: i32) {
-        let _ = (x, y);
-        let w = platform::clamp_extent(w);
-        let h = platform::clamp_extent(h);
-        if let Some(browser) = self.lock_browser() {
-            if let Some(host) = browser.host() {
-                host.notify_move_or_resize_started();
-                let _ = (w, h);
-                host.was_resized();
+        let bounds = Rect {
+            x,
+            y,
+            width: platform::clamp_extent(w),
+            height: platform::clamp_extent(h),
+        };
+        if let Ok(guard) = self.window.lock() {
+            if let Some(window) = guard.as_ref() {
+                window.set_bounds(Some(&bounds));
             }
         }
     }
@@ -451,7 +577,7 @@ fn add_switch_value(command_line: &mut CommandLine, name: &str, value: &str) {
 }
 
 fn apply_switches(state: &AppState, command_line: &mut CommandLine) {
-    for name in required_alloy_native_switches() {
+    for name in required_alloy_switches() {
         add_switch(command_line, name);
     }
     add_switch(command_line, "no-first-run");
@@ -494,14 +620,18 @@ fn apply_switches(state: &AppState, command_line: &mut CommandLine) {
             );
         }
     }
-    if let Some(scale) = state.args.scale {
+    if should_force_device_scale(state.args.scale) {
+        let scale = state
+            .args
+            .scale
+            .expect("checked by should_force_device_scale");
         let value = format!("{scale}");
         command_line.append_switch_with_value(
             Some(&cef_str("force-device-scale-factor")),
             Some(&cef_str(&value)),
         );
     }
-    for raw in &state.args.extra_switches {
+    for raw in extras_for_command_line(&state.args.extra_switches) {
         let s = raw.trim();
         let s = s.strip_prefix("--").unwrap_or(s);
         if s.is_empty() {
@@ -522,27 +652,80 @@ fn apply_switches(state: &AppState, command_line: &mut CommandLine) {
     );
 }
 
-fn window_info_for(state: &AppState) -> WindowInfo {
-    let args = &state.args;
-    if args.health_check {
-        return crate::health::window_info();
-    }
-    let bounds = Rect {
+fn window_info_for_health() -> WindowInfo {
+    crate::health::window_info()
+}
+
+fn views_bounds(args: &HostArgs) -> Rect {
+    Rect {
         x: args.bounds.x,
         y: args.bounds.y,
         width: platform::clamp_extent(args.bounds.w),
         height: platform::clamp_extent(args.bounds.h),
-    };
-    WindowInfo {
-        runtime_style: RuntimeStyle::ALLOY,
-        window_name: cef_str(platform::WINDOW_NAME),
-        bounds,
-        ..Default::default()
     }
 }
 
-fn window_info_is_toplevel(info: &WindowInfo) -> bool {
-    info.parent_window == 0 && info.windowless_rendering_enabled == 0
+fn views_preferred_size(bounds: &Rect) -> Size {
+    Size {
+        width: bounds.width,
+        height: bounds.height,
+    }
+}
+
+fn popup_window_bounds() -> Rect {
+    Rect {
+        x: 0,
+        y: 0,
+        width: 800,
+        height: 600,
+    }
+}
+
+fn create_alloy_window(browser_view: BrowserView, bounds: Rect, is_main: bool) -> bool {
+    let Some(state) = STATE.get().cloned() else {
+        return false;
+    };
+    let mut delegate = HostWindowDelegate::new(browser_view, bounds, state, is_main);
+    window_create_top_level(Some(&mut delegate)).is_some()
+}
+
+fn create_visible_browser(state: &Arc<AppState>, client: &mut Client) {
+    let url = cef_str(&state.args.url);
+    let settings = BrowserSettings::default();
+    let mut view_delegate = HostBrowserViewDelegate::new();
+    let Some(browser_view) = browser_view_create(
+        Some(client),
+        Some(&url),
+        Some(&settings),
+        None,
+        None,
+        Some(&mut view_delegate),
+    ) else {
+        fatal(exit::INIT_FAILED, "browser_view_create failed");
+    };
+    if !create_alloy_window(browser_view, views_bounds(&state.args), true) {
+        fatal(exit::INIT_FAILED, "window_create_top_level failed");
+    }
+}
+
+fn create_health_browser(state: &Arc<AppState>, client: &mut Client) {
+    let url = cef_str(&state.args.url);
+    let window_info = window_info_for_health();
+    let mut settings = BrowserSettings::default();
+    settings.windowless_frame_rate = 1;
+    settings.background_color = 0xFF1C1E22;
+    settings.webgl = State::DISABLED;
+    let ok = browser_host_create_browser(
+        Some(&window_info),
+        Some(client),
+        Some(&url),
+        Some(&settings),
+        None,
+        None,
+    );
+    if ok == 0 {
+        fatal(exit::INIT_FAILED, "browser_host_create_browser failed");
+    }
 }
 
 fn make_client(state: Arc<AppState>) -> Client {
@@ -597,6 +780,134 @@ wrap_app! {
     }
 }
 
+wrap_window_delegate! {
+    struct HostWindowDelegate {
+        browser_view: BrowserView,
+        bounds: Rect,
+        state: Arc<AppState>,
+        is_main: bool,
+    }
+
+    impl ViewDelegate {
+        fn preferred_size(&self, _view: Option<&mut View>) -> Size {
+            views_preferred_size(&self.bounds)
+        }
+    }
+
+    impl PanelDelegate {}
+
+    impl WindowDelegate {
+        fn on_window_created(&self, window: Option<&mut Window>) {
+            let Some(window) = window else {
+                return;
+            };
+            if self.is_main {
+                window.set_title(Some(&cef_str(platform::window_identity().title)));
+            }
+            let mut view = View::from(&self.browser_view);
+            window.add_child_view(Some(&mut view));
+            if self.is_main {
+                if let Ok(mut slot) = self.state.window.lock() {
+                    *slot = Some(window.clone());
+                }
+            }
+            window.show();
+        }
+
+        fn on_window_destroyed(&self, _window: Option<&mut Window>) {
+            if self.is_main {
+                if let Ok(mut slot) = self.state.window.lock() {
+                    *slot = None;
+                }
+            }
+        }
+
+        fn initial_bounds(&self, _window: Option<&mut Window>) -> Rect {
+            self.bounds.clone()
+        }
+
+        fn initial_show_state(&self, _window: Option<&mut Window>) -> ShowState {
+            ShowState::NORMAL
+        }
+
+        fn can_resize(&self, _window: Option<&mut Window>) -> i32 {
+            views_window_flags().can_resize
+        }
+
+        fn can_maximize(&self, _window: Option<&mut Window>) -> i32 {
+            views_window_flags().can_maximize
+        }
+
+        fn can_minimize(&self, _window: Option<&mut Window>) -> i32 {
+            views_window_flags().can_minimize
+        }
+
+        fn can_close(&self, _window: Option<&mut Window>) -> i32 {
+            if let Some(browser) = self.browser_view.browser() {
+                if let Some(host) = browser.host() {
+                    return host.try_close_browser();
+                }
+            }
+            1
+        }
+
+        fn with_standard_window_buttons(&self, _window: Option<&mut Window>) -> i32 {
+            views_window_flags().with_standard_window_buttons
+        }
+
+        fn window_runtime_style(&self) -> RuntimeStyle {
+            RuntimeStyle::ALLOY
+        }
+
+        fn linux_window_properties(
+            &self,
+            _window: Option<&mut Window>,
+            properties: Option<&mut LinuxWindowProperties>,
+        ) -> i32 {
+            let Some(properties) = properties else {
+                return 0;
+            };
+            let identity = platform::window_identity();
+            properties.wayland_app_id = cef_str(identity.wayland_app_id);
+            properties.wm_class_class = cef_str(identity.wm_class_class);
+            properties.wm_class_name = cef_str(identity.wm_class_name);
+            properties.wm_role_name = cef_str(identity.wm_role_name);
+            1
+        }
+    }
+}
+
+wrap_browser_view_delegate! {
+    struct HostBrowserViewDelegate {}
+
+    impl ViewDelegate {}
+
+    impl BrowserViewDelegate {
+        fn browser_runtime_style(&self) -> RuntimeStyle {
+            RuntimeStyle::ALLOY
+        }
+
+        fn on_popup_browser_view_created(
+            &self,
+            _browser_view: Option<&mut BrowserView>,
+            popup_browser_view: Option<&mut BrowserView>,
+            _is_devtools: ::std::os::raw::c_int,
+        ) -> ::std::os::raw::c_int {
+            let Some(popup) = popup_browser_view else {
+                return 0;
+            };
+            if !popup_browser_view_creates_window() {
+                return 0;
+            }
+            i32::from(create_alloy_window(
+                popup.clone(),
+                popup_window_bounds(),
+                false,
+            ))
+        }
+    }
+}
+
 wrap_browser_process_handler! {
     struct HostBrowserProcessHandler {
         state: Arc<AppState>,
@@ -610,24 +921,13 @@ wrap_browser_process_handler! {
                 *slot = Some(client.clone());
             }
 
-            let url = cef_str(&self.state.args.url);
-            let window_info = window_info_for(&self.state);
-            let mut settings = BrowserSettings::default();
-            if self.state.args.health_check {
-                settings.windowless_frame_rate = 1;
-                settings.background_color = 0xFF1C1E22;
-                settings.webgl = State::DISABLED;
-            }
-            let ok = browser_host_create_browser(
-                Some(&window_info),
-                Some(&mut client),
-                Some(&url),
-                Some(&settings),
-                None,
-                None,
-            );
-            if ok == 0 {
-                fatal(exit::INIT_FAILED, "browser_host_create_browser failed");
+            match browser_create_path(self.state.args.health_check) {
+                BrowserCreatePath::Windowless => {
+                    create_health_browser(&self.state, &mut client);
+                }
+                BrowserCreatePath::Views => {
+                    create_visible_browser(&self.state, &mut client);
+                }
             }
         }
 
@@ -710,6 +1010,26 @@ wrap_life_span_handler! {
                 }
             }
             i32::from(disposition.cancel)
+        }
+
+        /// CEF solo la llama en Chrome style, y los `WindowInfo` de un padre
+        /// Views se ignoran. Está por si el runtime style se torciera: Alloy, y
+        /// nunca la ventana por defecto en lugar de la Views del padre.
+        fn on_before_dev_tools_popup(
+            &self,
+            _browser: Option<&mut Browser>,
+            window_info: Option<&mut WindowInfo>,
+            _client: Option<&mut Option<Client>>,
+            _settings: Option<&mut BrowserSettings>,
+            _extra_info: Option<&mut Option<DictionaryValue>>,
+            use_default_window: Option<&mut ::std::os::raw::c_int>,
+        ) {
+            if let Some(window_info) = window_info {
+                window_info.runtime_style = RuntimeStyle::ALLOY;
+            }
+            if let Some(use_default_window) = use_default_window {
+                *use_default_window = devtools_uses_default_window();
+            }
         }
 
         fn on_after_created(&self, browser: Option<&mut Browser>) {
@@ -1098,31 +1418,167 @@ mod tests {
     }
 
     #[test]
-    fn alloy_native_required() {
-        assert_eq!(
-            required_alloy_native_switches(),
-            &["use-alloy-style", "use-native"]
-        );
+    fn alloy_style_required_without_use_native() {
+        let switches = required_alloy_switches();
+        assert_eq!(switches, &["use-alloy-style"]);
+        assert!(!switches.contains(&"use-native"));
     }
 
     #[test]
-    fn window_info_visible_is_toplevel_alloy() {
-        let manifest = Manifest {
-            schema: Some(1),
-            cef_version: "152.0.6+".into(),
-            chromium_version: "152.0.7977.83".into(),
-            platform: "linux64".into(),
-            api_version_min: 13300,
-            api_version_last: Some(15200),
-            files: Vec::new(),
-        };
-        let state = AppState::new(empty_args(false), manifest, false);
-        let info = window_info_for(&state);
-        assert!(window_info_is_toplevel(&info));
+    fn extras_cannot_reintroduce_use_native_or_flip_ozone() {
+        assert!(
+            !required_alloy_switches().contains(&"use-native"),
+            "required Alloy switches must not reintroduce use-native: {:?}",
+            required_alloy_switches()
+        );
+        let extras = [
+            "--use-native".to_string(),
+            "--use-native=1".to_string(),
+            "--ozone-platform=x11".to_string(),
+            "--ozone-platform=headless".to_string(),
+            "--disable-gpu".to_string(),
+            "  --foo=bar  ".to_string(),
+            "--".to_string(),
+            String::new(),
+        ];
+        let allowed = extras_for_command_line(&extras);
+        assert_eq!(allowed, ["--disable-gpu", "  --foo=bar  "]);
+        assert!(!allowed
+            .iter()
+            .any(|raw| extra_switch_name(raw) == Some("use-native")));
+        assert!(!allowed
+            .iter()
+            .any(|raw| extra_switch_name(raw) == Some("ozone-platform")));
+        assert!(!extra_switch_allowed("use-native"));
+        assert!(!extra_switch_allowed("--use-native"));
+        assert!(extra_switch_allowed("--disable-gpu"));
+        assert_eq!(effective_ozone_platform(false, &extras), "wayland");
+        assert_eq!(effective_ozone_platform(true, &extras), "headless");
+    }
+
+    /// `ozone-platform` forzado al final no tapa el hint: con `DISPLAY` puesto,
+    /// `--ozone-platform-hint=x11|auto` devolvía Ozone a X11.
+    #[test]
+    fn extras_cannot_hint_ozone_back_to_x11() {
+        assert!(denied_extra_switches().contains(&"ozone-platform-hint"));
+        let extras = [
+            "--ozone-platform-hint=x11".to_string(),
+            "--ozone-platform-hint=auto".to_string(),
+            "--ozone-platform-hint".to_string(),
+            "ozone-platform-hint=x11".to_string(),
+            "  --ozone-platform-hint=x11  ".to_string(),
+            "--disable-gpu".to_string(),
+        ];
+        let allowed = extras_for_command_line(&extras);
+        assert_eq!(allowed, ["--disable-gpu"]);
+        assert!(
+            !allowed
+                .iter()
+                .any(|raw| extra_switch_name(raw) == Some("ozone-platform-hint")),
+            "el hint no puede llegar a la command line: {allowed:?}"
+        );
+        assert!(!extra_switch_allowed("--ozone-platform-hint=x11"));
+        assert!(!extra_switch_allowed("--ozone-platform-hint=auto"));
+        assert!(!extra_switch_allowed("ozone-platform-hint"));
+        // Un switch que solo empieza igual sigue pasando: no es prefix match.
+        assert!(extra_switch_allowed("--ozone-platform-hint-extra=1"));
+        assert_eq!(effective_ozone_platform(false, &extras), "wayland");
+        assert_eq!(effective_ozone_platform(true, &extras), "headless");
+    }
+
+    #[test]
+    fn visible_uses_views_health_uses_windowless() {
+        assert_eq!(browser_create_path(false), BrowserCreatePath::Views);
+        assert_eq!(browser_create_path(true), BrowserCreatePath::Windowless);
+        assert_ne!(browser_create_path(false), browser_create_path(true));
+    }
+
+    #[test]
+    fn window_info_health_is_windowless_alloy() {
+        let info = window_info_for_health();
+        assert_eq!(info.windowless_rendering_enabled, 1);
         assert_eq!(info.runtime_style, RuntimeStyle::ALLOY);
-        assert_eq!(info.window_name.to_string(), platform::WINDOW_NAME);
-        assert_eq!(info.bounds.width, 1200);
-        assert_eq!(info.bounds.height, 800);
+        assert_eq!(info.parent_window, 0);
+    }
+
+    #[test]
+    fn views_preferred_size_is_contract_bounds() {
+        let args = empty_args(false);
+        let bounds = views_bounds(&args);
+        assert_eq!(bounds.x, 0);
+        assert_eq!(bounds.y, 0);
+        assert_eq!(bounds.width, 1200);
+        assert_eq!(bounds.height, 800);
+        let size = views_preferred_size(&bounds);
+        assert_eq!(size.width, 1200);
+        assert_eq!(size.height, 800);
+        let flags = views_window_flags();
+        assert_eq!(flags.can_resize, 1);
+        assert_eq!(flags.can_maximize, 1);
+        assert_eq!(flags.can_minimize, 1);
+        assert_eq!(flags.with_standard_window_buttons, 1);
+    }
+
+    #[test]
+    fn views_bounds_clamps_extents() {
+        let mut args = empty_args(false);
+        args.bounds = Bounds {
+            x: 10,
+            y: 20,
+            w: 0,
+            h: -4,
+        };
+        let bounds = views_bounds(&args);
+        assert_eq!(bounds.x, 10);
+        assert_eq!(bounds.y, 20);
+        assert_eq!(bounds.width, 1);
+        assert_eq!(bounds.height, 1);
+    }
+
+    #[test]
+    fn force_device_scale_skips_one_and_none() {
+        assert!(!should_force_device_scale(None));
+        assert!(!should_force_device_scale(Some(1.0)));
+        assert!(!should_force_device_scale(Some(f64::NAN)));
+        assert!(should_force_device_scale(Some(1.5)));
+        assert!(should_force_device_scale(Some(2.0)));
+    }
+
+    #[test]
+    fn show_hide_are_window_ops() {
+        assert_eq!(window_visibility(true), WindowVisibility::Show);
+        assert_eq!(window_visibility(false), WindowVisibility::Hide);
+        assert_ne!(window_visibility(true), window_visibility(false));
+        assert_eq!(platform::hidden_flag(true), 0);
+        assert_eq!(platform::hidden_flag(false), 1);
+    }
+
+    #[test]
+    fn popup_browser_view_opens_views_window() {
+        assert!(popup_browser_view_creates_window());
+        let popup = popup_window_bounds();
+        assert_eq!(popup.width, 800);
+        assert_eq!(popup.height, 600);
+    }
+
+    /// `show_dev_tools` con `WindowInfo` (aunque sea `default()`) es el camino
+    /// nativo: en Linux, X11. DevTools sale por la Views del padre.
+    #[test]
+    fn devtools_never_asks_for_a_native_window() {
+        assert!(
+            devtools_window_info().is_none(),
+            "DevTools no puede llevar WindowInfo"
+        );
+        assert_eq!(
+            devtools_uses_default_window(),
+            0,
+            "use_default_window = 1 cambia la Views del padre por la nativa"
+        );
+        // La ventana de DevTools la sigue creando el camino Views del popup.
+        assert!(popup_browser_view_creates_window());
+        let devtools = popup_disposition(Some("devtools://devtools/bundled/inspector.html"));
+        assert!(!devtools.cancel);
+        assert_eq!(devtools.load_in_main, None);
     }
 
     #[test]
@@ -1160,7 +1616,10 @@ mod tests {
             pre_key_action(true, VK_B, true, true, false),
             PreKeyAction::Shortcut("ctrl+shift+b")
         );
-        assert_eq!(pre_key_action(true, VK_L, true, false, false), PreKeyAction::Ignore);
+        assert_eq!(
+            pre_key_action(true, VK_L, true, false, false),
+            PreKeyAction::Ignore
+        );
         assert_eq!(
             pre_key_action(true, VK_F5, false, false, false),
             PreKeyAction::Reload {
@@ -1179,7 +1638,10 @@ mod tests {
             pre_key_action(true, VK_RIGHT, false, false, true),
             PreKeyAction::Forward
         );
-        assert_eq!(pre_key_action(true, VK_ESCAPE, false, false, false), PreKeyAction::Stop);
+        assert_eq!(
+            pre_key_action(true, VK_ESCAPE, false, false, false),
+            PreKeyAction::Stop
+        );
     }
 
     #[test]
@@ -1189,4 +1651,24 @@ mod tests {
         assert_eq!(d.load_in_main.as_deref(), Some("https://popup.test"));
     }
 
+    #[test]
+    fn ready_is_visible_main_browser_only() {
+        assert!(emit_ready_event(false));
+        assert!(!emit_ready_event(true));
+        assert!(take_main_browser(false, false));
+        assert!(!take_main_browser(true, false));
+        assert!(!take_main_browser(false, true));
+        assert!(!take_main_browser(true, true));
+    }
+
+    #[test]
+    fn popup_devtools_is_not_cancelled() {
+        let d = popup_disposition(Some("devtools://devtools/bundled/devtools_app.html"));
+        assert!(!d.cancel);
+        assert_eq!(d.load_in_main, None);
+        assert!(is_devtools_url(Some(
+            "devtools://devtools/bundled/inspector.html"
+        )));
+        assert!(!is_devtools_url(Some("https://example.test")));
+    }
 }

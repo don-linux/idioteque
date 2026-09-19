@@ -19,7 +19,8 @@ use super::manifest::{self, EffectiveSource};
 use super::paths::{self, CefPaths};
 
 const GRACEFUL_TIMEOUT: Duration = Duration::from_secs(2);
-const DEFAULT_OS_BOUNDS: (i32, i32, i32, i32) = (0, 0, 1200, 800);
+/// Views DIP, no píxeles de dispositivo: el compositor Wayland pone el scale.
+const DEFAULT_DIP_BOUNDS: (i32, i32, i32, i32) = (0, 0, 1200, 800);
 const DEFAULT_SCALE: f64 = 1.0;
 const NO_DISPLAY: &str = "sin compositor Wayland";
 
@@ -105,12 +106,10 @@ pub fn spawn_host(launch: &HostLaunch) -> Result<HostProcess, String> {
     if let Some((x, y, w, h)) = launch.bounds {
         cmd.arg("--idq-bounds").arg(format!("{x},{y},{w},{h}"));
     }
-    cmd.arg("--idq-scale").arg(launch.scale.to_string());
-    let url = if launch.url.trim().is_empty() {
-        "about:blank"
-    } else {
-        launch.url.as_str()
-    };
+    if should_pass_idq_scale(launch.scale) {
+        cmd.arg("--idq-scale").arg(launch.scale.to_string());
+    }
+    let url = visible_spawn_url(&launch.url);
     cmd.arg("--idq-url").arg(url);
     if launch.health_check {
         cmd.arg("--idq-health-check");
@@ -272,7 +271,7 @@ pub fn browser_spawn(
     let slot = manifest::resolve_effective(&paths)?;
     let binary = paths::host_binary_path(&app)?;
     let scale = resolve_scale(scale);
-    let os_bounds = resolve_os_bounds(bounds.as_ref(), Some(scale));
+    let bounds_dip = resolve_dip_bounds(bounds.as_ref());
 
     let no_sandbox =
         super::sandbox::wants_no_sandbox(&slot.dir) || state.no_sandbox.load(Ordering::SeqCst);
@@ -280,14 +279,15 @@ pub fn browser_spawn(
         state.no_sandbox.store(true, Ordering::SeqCst);
     }
 
+    let policy = visible_ade_policy(&url);
     let launch = HostLaunch {
         binary,
         cef_dir: slot.dir.clone(),
         cache_dir: paths.profile(),
-        bounds: Some(os_bounds),
+        bounds: Some(bounds_dip),
         scale,
-        url,
-        health_check: false,
+        url: policy.url,
+        health_check: policy.health_check,
         no_sandbox,
         log_file: Some(paths.logs_dir().join("chromium.log")),
         stderr_file: Some(paths.logs_dir().join("cef-host.log")),
@@ -328,16 +328,10 @@ pub fn browser_set_bounds(
     y: f64,
     w: f64,
     h: f64,
-    scale: f64,
 ) -> Result<(), String> {
-    let (px, py, pw, ph) = physical_bounds(x, y, w, h, scale);
+    let (x, y, w, h) = dip_bounds(x, y, w, h);
     with_host(&state, |host| {
-        host.send(&HostCommand::SetBounds {
-            x: px,
-            y: py,
-            w: pw.max(1),
-            h: ph.max(1),
-        })
+        host.send(&HostCommand::SetBounds { x, y, w, h })
     })
 }
 
@@ -400,9 +394,7 @@ fn start_forward_thread(
                 state.no_sandbox.store(true, Ordering::SeqCst);
                 let mut process = spawn_host(retry)?;
                 let next = process.take_events();
-                if let Ok(mut guard) = state.host.lock() {
-                    *guard = Some(process);
-                }
+                replace_host(&state, process)?;
                 Ok(next)
             },
             |event| on_event.send(event).is_ok(),
@@ -492,6 +484,17 @@ fn take_and_kill(state: &CefState) -> Result<(), String> {
     Ok(())
 }
 
+fn replace_host(state: &CefState, process: HostProcess) -> Result<(), String> {
+    take_and_kill(state)?;
+    let mut guard = state.host.lock().map_err(|error| error.to_string())?;
+    *guard = Some(process);
+    Ok(())
+}
+
+fn should_pass_idq_scale(scale: f64) -> bool {
+    scale.is_finite() && (scale - 1.0).abs() > f64::EPSILON
+}
+
 fn with_host<T>(
     state: &CefState,
     f: impl FnOnce(&HostProcess) -> Result<T, String>,
@@ -503,12 +506,14 @@ fn with_host<T>(
     f(host)
 }
 
-fn physical_bounds(x: f64, y: f64, w: f64, h: f64, scale: f64) -> (i32, i32, i32, i32) {
+/// CONTRATO §4.1 / §4.4: `--idq-bounds` y `set_bounds` son DIP de Views. El
+/// scale no multiplica la geometría; va aparte en `--idq-scale`.
+fn dip_bounds(x: f64, y: f64, w: f64, h: f64) -> (i32, i32, i32, i32) {
     (
-        (x * scale).round() as i32,
-        (y * scale).round() as i32,
-        (w * scale).round() as i32,
-        (h * scale).round() as i32,
+        x.round() as i32,
+        y.round() as i32,
+        (w.round() as i32).max(1),
+        (h.round() as i32).max(1),
     )
 }
 
@@ -516,14 +521,46 @@ fn resolve_scale(scale: Option<f64>) -> f64 {
     scale.unwrap_or(DEFAULT_SCALE)
 }
 
-fn resolve_os_bounds(bounds: Option<&Bounds>, scale: Option<f64>) -> (i32, i32, i32, i32) {
+/// Visible Ctrl+B spawn. Health check is a separate ADE path.
+fn visible_spawn_health_check() -> bool {
+    false
+}
+
+fn visible_spawn_url(url: &str) -> &str {
+    if url.trim().is_empty() {
+        "about:blank"
+    } else {
+        url
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VisibleAdePolicy {
+    health_check: bool,
+    url: String,
+}
+
+/// Fields `browser_spawn` must apply. Health check is a different ADE path.
+fn visible_ade_policy(url: &str) -> VisibleAdePolicy {
+    VisibleAdePolicy {
+        health_check: visible_spawn_health_check(),
+        url: visible_spawn_url(url).to_string(),
+    }
+}
+
+#[cfg(test)]
+fn visible_spawn_forbids_host_flag(flag: &str) -> bool {
+    matches!(
+        flag,
+        "--idq-health-check" | "--idq-parent" | "--idq-parent=1"
+    ) || flag.starts_with("--idq-parent=")
+        || flag.starts_with("--idq-health-check=")
+}
+
+fn resolve_dip_bounds(bounds: Option<&Bounds>) -> (i32, i32, i32, i32) {
     match bounds {
-        Some(bounds) => {
-            let scale = resolve_scale(scale);
-            let (x, y, w, h) = physical_bounds(bounds.x, bounds.y, bounds.w, bounds.h, scale);
-            (x, y, w.max(1), h.max(1))
-        }
-        None => DEFAULT_OS_BOUNDS,
+        Some(bounds) => dip_bounds(bounds.x, bounds.y, bounds.w, bounds.h),
+        None => DEFAULT_DIP_BOUNDS,
     }
 }
 
@@ -600,7 +637,7 @@ mod tests {
             binary,
             cef_dir,
             cache_dir,
-            bounds: Some(DEFAULT_OS_BOUNDS),
+            bounds: Some(DEFAULT_DIP_BOUNDS),
             scale: 1.0,
             url: "about:blank".into(),
             health_check: false,
@@ -784,14 +821,18 @@ exit 0
 
     #[cfg(unix)]
     #[test]
-    fn spawn_host_passes_os_window_flags() {
+    fn spawn_host_passes_views_window_flags() {
         let tmp = TempDir::new().unwrap();
         let slot = tmp.path().join("slot-dir");
         fs::create_dir_all(&slot).unwrap();
         let cache = tmp.path().join("cache");
         fs::create_dir_all(&cache).unwrap();
         let binary = write_script(tmp.path(), "dump-env", DUMP_SPAWN_ENV);
-        let mut host = spawn_host(&launch(binary, slot.clone(), cache.clone())).expect("spawn");
+        let policy = visible_ade_policy("about:blank");
+        let mut launch = launch(binary, slot.clone(), cache.clone());
+        launch.health_check = policy.health_check;
+        launch.url = policy.url;
+        let mut host = spawn_host(&launch).expect("spawn");
         let events = host.take_events();
         let _ = events.recv_timeout(Duration::from_secs(3)).expect("ready");
         let args = fs::read_to_string(cache.join("args")).expect("args");
@@ -805,14 +846,59 @@ exit 0
                 cache.to_str().expect("utf8 cache"),
                 "--idq-bounds",
                 "0,0,1200,800",
-                "--idq-scale",
-                "1",
                 "--idq-url",
                 "about:blank",
             ]
         );
+        assert!(
+            !lines.contains(&"--idq-scale"),
+            "scale 1 lo da el compositor: {lines:?}"
+        );
+        assert!(
+            !lines
+                .iter()
+                .any(|flag| visible_spawn_forbids_host_flag(flag)),
+            "visible ADE argv no lleva health ni padre nativo: {lines:?}"
+        );
         host.send(&HostCommand::Close).expect("close");
         let _ = events.recv_timeout(Duration::from_secs(3));
+    }
+
+    #[test]
+    fn visible_ade_launch_is_not_health_and_defaults_blank() {
+        let empty = visible_ade_policy("");
+        assert!(!empty.health_check);
+        assert_eq!(empty.url, "about:blank");
+        let spaces = visible_ade_policy("   ");
+        assert!(!spaces.health_check);
+        assert_eq!(spaces.url, "about:blank");
+        let ok = visible_ade_policy("https://ok.test");
+        assert!(!ok.health_check);
+        assert_eq!(ok.url, "https://ok.test");
+        assert!(!visible_spawn_health_check());
+        assert_eq!(visible_spawn_url(""), "about:blank");
+        assert_eq!(visible_spawn_url("   "), "about:blank");
+        assert_eq!(visible_spawn_url("https://ok.test"), "https://ok.test");
+        assert!(visible_spawn_forbids_host_flag("--idq-health-check"));
+        assert!(visible_spawn_forbids_host_flag("--idq-parent"));
+        assert!(visible_spawn_forbids_host_flag("--idq-parent=12345"));
+        assert!(!visible_spawn_forbids_host_flag("--idq-url"));
+        #[cfg(unix)]
+        {
+            let tmp = TempDir::new().unwrap();
+            let mut launch = launch(
+                tmp.path().join("missing-host"),
+                tmp.path().to_path_buf(),
+                tmp.path().join("cache"),
+            );
+            launch.health_check = true;
+            launch.url.clear();
+            let policy = visible_ade_policy(&launch.url);
+            launch.health_check = policy.health_check;
+            launch.url = policy.url;
+            assert!(!launch.health_check);
+            assert_eq!(launch.url, "about:blank");
+        }
     }
 
     #[cfg(unix)]
@@ -838,22 +924,20 @@ exit 0
         }
     }
 
+    /// Views toma DIP: multiplicar por el scale era la geometría física de X11.
     #[test]
-    fn physical_bounds_rounds_css_times_scale() {
-        assert_eq!(
-            physical_bounds(10.2, 20.6, 100.4, 50.5, 2.0),
-            (20, 41, 201, 101)
-        );
-        assert_eq!(
-            physical_bounds(0.0, 36.0, 1200.0, 700.0, 1.0),
-            (0, 36, 1200, 700)
-        );
+    fn dip_bounds_round_without_scaling() {
+        assert_eq!(dip_bounds(10.2, 20.6, 100.4, 50.5), (10, 21, 100, 51));
+        assert_eq!(dip_bounds(0.0, 36.0, 1200.0, 700.0), (0, 36, 1200, 700));
+        assert_eq!(dip_bounds(-4.4, -8.6, 800.0, 600.0), (-4, -9, 800, 600));
+        assert_eq!(dip_bounds(0.0, 0.0, 0.0, 0.0), (0, 0, 1, 1));
+        assert_eq!(dip_bounds(0.0, 0.0, -10.0, -10.0), (0, 0, 1, 1));
     }
 
     #[test]
-    fn resolve_os_bounds_defaults_to_contract_window() {
-        assert_eq!(resolve_os_bounds(None, None), (0, 0, 1200, 800));
-        assert_eq!(resolve_os_bounds(None, Some(2.0)), (0, 0, 1200, 800));
+    fn resolve_dip_bounds_defaults_to_contract_window() {
+        assert_eq!(resolve_dip_bounds(None), (0, 0, 1200, 800));
+        assert_eq!(resolve_dip_bounds(None), DEFAULT_DIP_BOUNDS);
         assert_eq!(resolve_scale(None), 1.0);
         assert_eq!(resolve_scale(Some(1.5)), 1.5);
         let bounds = Bounds {
@@ -862,17 +946,40 @@ exit 0
             w: 100.4,
             h: 50.5,
         };
-        assert_eq!(
-            resolve_os_bounds(Some(&bounds), Some(2.0)),
-            (20, 41, 201, 101)
-        );
+        assert_eq!(resolve_dip_bounds(Some(&bounds)), (10, 21, 100, 51));
         let tiny = Bounds {
             x: 0.0,
             y: 0.0,
             w: 0.0,
             h: 0.0,
         };
-        assert_eq!(resolve_os_bounds(Some(&tiny), Some(1.0)), (0, 0, 1, 1));
+        assert_eq!(resolve_dip_bounds(Some(&tiny)), (0, 0, 1, 1));
+    }
+
+    /// El scale no puede entrar dos veces: DIP a la ventana, `--idq-scale` aparte.
+    #[test]
+    fn scale_never_multiplies_dip_bounds() {
+        let bounds = Bounds {
+            x: 0.0,
+            y: 0.0,
+            w: 1200.0,
+            h: 800.0,
+        };
+        let dip = resolve_dip_bounds(Some(&bounds));
+        assert_eq!(dip, (0, 0, 1200, 800));
+        for scale in [1.0, 1.25, 2.0, 3.0] {
+            assert_eq!(
+                resolve_dip_bounds(Some(&bounds)),
+                dip,
+                "scale {scale} no puede cambiar los DIP"
+            );
+            assert_eq!(resolve_scale(Some(scale)), scale);
+        }
+        assert_ne!(
+            dip,
+            (0, 0, 2400, 1600),
+            "2400x1600 era el tamaño físico X11"
+        );
     }
 
     #[test]
@@ -1292,6 +1399,70 @@ exit 0
     fn take_and_kill_is_ok_on_empty_state() {
         let state = CefState::default();
         take_and_kill(&state).expect("vacío");
+        assert!(!state.host_alive());
+    }
+
+    #[test]
+    fn idq_scale_is_omitted_at_one() {
+        assert!(!should_pass_idq_scale(1.0));
+        assert!(!should_pass_idq_scale(DEFAULT_SCALE));
+        assert!(!should_pass_idq_scale(f64::NAN));
+        assert!(should_pass_idq_scale(1.5));
+        assert!(should_pass_idq_scale(2.0));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn spawn_host_passes_idq_scale_when_not_one() {
+        let tmp = TempDir::new().unwrap();
+        let slot = tmp.path().join("slot-dir");
+        fs::create_dir_all(&slot).unwrap();
+        let cache = tmp.path().join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        let binary = write_script(tmp.path(), "dump-env", DUMP_SPAWN_ENV);
+        let mut launch = launch(binary, slot, cache.clone());
+        launch.scale = 2.0;
+        let mut host = spawn_host(&launch).expect("spawn");
+        let events = host.take_events();
+        let _ = events.recv_timeout(Duration::from_secs(3)).expect("ready");
+        let args = fs::read_to_string(cache.join("args")).expect("args");
+        let lines: Vec<&str> = args.lines().collect();
+        assert!(
+            lines.windows(2).any(|pair| pair == ["--idq-scale", "2"]),
+            "{lines:?}"
+        );
+        host.send(&HostCommand::Close).expect("close");
+        let _ = events.recv_timeout(Duration::from_secs(3));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replace_host_kills_the_previous_process() {
+        let tmp = TempDir::new().unwrap();
+        let stuck = write_script(tmp.path(), "stuck", IGNORE_CLOSE);
+        let ready = write_script(tmp.path(), "ready", FAKE_HOST);
+        let mut first = spawn_ok(stuck, tmp.path(), "cache-a");
+        let first_events = first.take_events();
+        let _ = first_events
+            .recv_timeout(Duration::from_secs(3))
+            .expect("ready");
+        let first_pid = first.pid();
+        let state = CefState::default();
+        state.set_host_for_test(first);
+        assert!(state.host_alive());
+
+        let mut second = spawn_ok(ready, tmp.path(), "cache-b");
+        let second_events = second.take_events();
+        let _ = second_events
+            .recv_timeout(Duration::from_secs(3))
+            .expect("ready 2");
+        replace_host(&state, second).expect("replace");
+        assert!(state.host_alive());
+        assert!(
+            !pid_alive(first_pid),
+            "el host anterior del retry no puede seguir vivo"
+        );
+        take_and_kill(&state).expect("cleanup");
         assert!(!state.host_alive());
     }
 

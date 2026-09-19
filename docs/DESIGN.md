@@ -93,7 +93,7 @@ Una sola terminal, sin pestañas. Se redimensiona arrastrando su borde, igual qu
 
 ### Navegador
 
-No es una superficie del workspace. El cuerpo del IDE sigue siendo el editor o el canvas de terminales. `Ctrl+B` (desde la terminal, `Ctrl+Shift+B`, porque `Ctrl+B` es el prefijo de tmux) o el globo del footer abre **otra ventana**: un proceso Alloy (`cef-host`) con Chromium de verdad. Otro `Ctrl+B` la oculta (unmap) sin matar la página. Inicio sí mata el proceso.
+No es una superficie del workspace. El cuerpo del IDE sigue siendo el editor o el canvas de terminales. `Ctrl+B` (desde la terminal, `Ctrl+Shift+B`, porque `Ctrl+B` es el prefijo de tmux) o el globo del footer abre **otra ventana**: un proceso Alloy (`cef-host`) con Chromium de verdad, una ventana Views propia. Otro `Ctrl+B` la oculta (`CefWindow::Hide`) sin matar la página. Inicio sí mata el proceso.
 
 No hay caja de URL en el IDE. La ventana de página arranca en `about:blank`. DevTools abre en su propia ventana (F12 o `Ctrl+Shift+I`, o “Inspeccionar” en el menú contextual). Los popups se abren en la misma pestaña: hay una sola. Atajos de página (F5, Alt+←/→, Escape) viven en esa ventana.
 

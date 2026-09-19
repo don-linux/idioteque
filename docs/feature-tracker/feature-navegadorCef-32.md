@@ -22,8 +22,8 @@ arranca (“sin compositor Wayland”) y el editor sigue.
 **2. Ciclo de vida**
 
 El primer `Ctrl+B` hace spawn (`about:blank`). El siguiente oculta
-(unmap) sin matar la página. Otro la vuelve a mostrar. Inicio envía
-`close` y mata el proceso.
+(`CefWindow::Hide`) sin matar la página. Otro la vuelve a mostrar. Inicio
+envía `close` y mata el proceso.
 
 **3. Atajos**
 

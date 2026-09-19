@@ -23,10 +23,11 @@ Regla: el ADE nunca importa el crate `cef`; `cef-host` nunca importa `tauri`.
 Clave de plataforma: `linux64` (Linux x86_64). El índice oficial de CEF
 puede listar otras claves; idioteque solo selecciona `linux64`.
 
-El navegador visible es una ventana de sistema Alloy, Ozone `wayland`, una
-pestaña. DevTools abre su propia ventana. Los popups cargan en la misma
-pestaña. `cef-host` implementa el ciclo de la ventana en
-`src-tauri/cef-host/src/platform/`.
+El navegador visible es una ventana Views Alloy toplevel, Ozone `wayland`,
+una pestaña. No `--use-native` (eso es el framework nativo X11). Health
+check es windowless + `CreateBrowser`, sin Views. DevTools abre su propia
+ventana Views. Los popups de página cargan en la misma pestaña. `cef-host`
+exige el compositor en `src-tauri/cef-host/src/platform/`.
 
 Una flag de ventana padre nativa no es válida: el host sale con código `2`.
 
@@ -181,10 +182,11 @@ esa es inválida y el proceso sale `2`.
 
 - `--idq-cef-dir <dir>` slot a cargar (obligatorio).
 - `--idq-cache-dir <dir>` `root_cache_path` (obligatorio).
-- `--idq-bounds x,y,w,h` tamaño de la ventana OS en píxeles físicos.
+- `--idq-bounds x,y,w,h` tamaño de la ventana Views en DIP.
   Defecto: `0,0,1200,800`.
-- `--idq-scale <f>` device scale factor (se pasa como
-  `--force-device-scale-factor`).
+- `--idq-scale <f>` device scale factor. Solo se reenvía como
+  `--force-device-scale-factor` si no es `1`. En `1` o ausente lo da el
+  compositor Wayland (el flag es TEST ONLY en Ozone Wayland).
 - `--idq-url <url>` URL inicial (por defecto `about:blank`).
 - `--idq-health-check` modo health check (sección 4.5).
 - `--idq-no-sandbox` pasa `no_sandbox = 1`.
@@ -226,11 +228,17 @@ separados por espacio, p. ej. `--disable-gpu`), `IDIOTEQUE_CEF_NO_SANDBOX=1`,
 `IDIOTEQUE_CEF_SOFTWARE_GL=1` (ANGLE/SwiftShader por software, para un
 compositor sin aceleración; una máquina sin sandbox conserva su GPU).
 `IDIOTEQUE_CEF_ARGS` no saca el health de `headless` ni el visible de
-`wayland`.
+`wayland`. Se tiran tres switches, no solo el último: `use-native`,
+`ozone-platform` y `ozone-platform-hint`. El hint cuenta porque con `DISPLAY`
+puesto, `x11` / `auto` devuelven Ozone a X11 aunque `ozone-platform` se fuerce
+después. No es prefix match: `--ozone-platform-hint-extra` sí pasa.
 
-**Ozone.** El visible fuerza `--ozone-platform=wayland`. El health check
-fuerza `--ozone-platform=headless`. Ambos llevan `--use-alloy-style` y
-`--use-native`. `RuntimeStyle::ALLOY`. Nombre de ventana: `idioteque-browser`.
+**Ozone.** El visible fuerza `--ozone-platform=wayland` y
+`--use-alloy-style`. Crea el browser con `CefBrowserView::CreateBrowserView`
++ `CefWindow::CreateTopLevelWindow` (Views, Alloy). No lleva
+`--use-native`. El health check fuerza `--ozone-platform=headless` y
+`CreateBrowser` windowless. `RuntimeStyle::ALLOY`. Nombre de ventana:
+`idioteque-browser`.
 
 **Memoria compartida.** Chromium usa memoria compartida: cada región
 (transfer buffers de la GPU, data pipes de Mojo, fuentes) es un fichero que
@@ -308,10 +316,10 @@ CEF con `post_task`.
 - `{"cmd":"navigate","url":"…"}`
 - `{"cmd":"back"}`, `{"cmd":"forward"}`, `{"cmd":"stop"}`
 - `{"cmd":"reload","ignoreCache":false}`
-- `{"cmd":"set_bounds","x":0,"y":0,"w":1200,"h":800}` — tamaño de la
-  ventana OS en píxeles físicos.
-- `{"cmd":"show"}`, `{"cmd":"hide"}` — map / unmap de la ventana toplevel
-  y `was_hidden(false/true)`. Hide no mata el proceso.
+- `{"cmd":"set_bounds","x":0,"y":0,"w":1200,"h":800}` — `CefWindow::SetBounds`
+  en DIP.
+- `{"cmd":"show"}`, `{"cmd":"hide"}` — `CefWindow::Show` / `Hide` y
+  `was_hidden(false/true)`. Hide no mata el proceso.
 - `{"cmd":"devtools"}` — abre DevTools si no está, lo cierra si está.
 - `{"cmd":"close"}` — cierre ordenado: `close_browser(true)`, `quit_message_loop`,
   `shutdown`, exit 0.
@@ -350,7 +358,14 @@ Menú contextual: los items por defecto de CEF más "Inspeccionar" (abre
 DevTools en el punto del clic) y "Recargar".
 
 Popups (`on_before_popup`): se cancelan y la URL se carga en el frame
-principal (una sola pestaña). DevTools sí abre su ventana propia.
+principal (una sola pestaña). Un `devtools://` no se cancela.
+
+DevTools abre su propia ventana **Views**, no una nativa: `show_dev_tools` va
+sin `WindowInfo` (pasar uno, aunque sea `default()`, pide el camino nativo, que
+en Linux es X11) y la ventana la crea `OnPopupBrowserViewCreated` con
+`CefWindow::CreateTopLevelWindow`. `OnBeforeDevToolsPopup` (que CEF solo llama
+en Chrome style) fuerza `RuntimeStyle::ALLOY` y deja `use_default_window` en
+`0`: a `1` cambiaría la ventana Views del padre por la de por defecto.
 
 ### 4.7 Códigos de salida
 
@@ -374,7 +389,9 @@ Todos devuelven `Result<_, String>` con mensajes en español, como `pty_*`.
   — spawnea el host con el motor efectivo. Solo puede haber uno (`id`
   implícito `"browser"`); si ya existe, lo mata primero. `BrowserBoot =
   { cef: String, chromium: String, apiVersion: u32, source: "bundled"|"installed", noSandbox: bool }`.
-  Bounds de ventana OS; si faltan, `0,0,1200,800`. Scale por defecto `1`.
+  Bounds en DIP de la ventana Views; si faltan, `0,0,1200,800`. Scale por
+  defecto `1`, y solo viaja como `--idq-scale` si no es `1`; nunca multiplica
+  los bounds.
   Si no hay helper setuid ni user namespaces, el primer spawn ya lleva
   `--idq-no-sandbox` y `noSandbox` sale `true`. Si aun así el host muere
   antes de `ready` con exit `15`, abort `1` o `initialize` `11`, reintenta
@@ -383,10 +400,11 @@ Todos devuelven `Result<_, String>` con mensajes en español, como `pty_*`.
   Wayland». El editor y las terminales siguen.
 - `browser_command { cmd: BrowserCommand }` — `BrowserCommand` es el enum de
   4.4 serializado con `#[serde(tag = "cmd", rename_all = "snake_case")]`.
-- `browser_set_bounds { x, y, w, h, scale }` — tamaño de la ventana OS
-  (CSS × scale, redondeado a i32).
-- `browser_set_visible { visible: bool }` — map / unmap de la ventana
-  toplevel (`show` / `hide`). No mata el proceso.
+- `browser_set_bounds { x, y, w, h }` — geometría de la ventana Views en DIP,
+  redondeada a i32 (`w`, `h` mínimo `1`). El scale **no** multiplica: en
+  Wayland lo pone el compositor. No lleva `scale`.
+- `browser_set_visible { visible: bool }` — `CefWindow::Show` / `Hide`.
+  No mata el proceso.
 - `browser_kill` — `close`, espera 2 s, `SIGKILL` si sigue.
 - `cef_runtime_info -> CefRuntimeInfo`:
   `{ current: SlotInfo, base: SlotInfo, candidate: SlotInfo | null, denylist: DenyEntry[], lastCheckAt: string | null, pendingPromotion: {...} | null, hostApiVersion: 15200, platform: "linux64", hostAlive: bool }`
@@ -397,7 +415,9 @@ Todos devuelven `Result<_, String>` con mensajes en español, como `pty_*`.
 `BrowserEvent` (Channel) es el enum de 4.3 con `#[serde(tag = "event", rename_all = "kebab-case")]`
 más `{"event":"exit","code":n}` cuando el proceso termina.
 
-`Bounds = { x: f64, y: f64, w: f64, h: f64 }` en CSS px de la ventana OS.
+`Bounds = { x: f64, y: f64, w: f64, h: f64 }` en DIP de la ventana Views (a
+scale 1 coinciden con los CSS px del IDE). Multiplicar por el scale era la
+geometría física de X11.
 
 ## 6. Evento global `cef-update`
 

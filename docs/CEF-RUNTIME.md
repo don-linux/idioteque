@@ -9,8 +9,9 @@ de nombres, rutas y mensajes está en [`cef/CONTRACT.md`](cef/CONTRACT.md).
   `cef-host`.
 - **`cef-host`** es un binario aparte (`src-tauri/cef-host`) compilado contra
   el crate `cef` 152.3.0 (API de CEF `15200`). Carga la `libcef` del slot que
-  se le indique y abre una ventana Alloy propia (Ozone `wayland` cuando es
-  visible; `headless` en el health). El mismo binario hace el health check.
+  se le indique y abre una ventana Views Alloy propia (Ozone `wayland` cuando
+  es visible; `headless` + windowless en el health). El mismo binario hace el
+  health check.
 - **Base**: el CEF de fábrica que viaja en cada release. Vive en el bundle
   (`<resource_dir>/cef/base/`). Hoy es
   `152.0.6+g708dc14+chromium-152.0.7977.83` (Chromium 152.0.7977.83).
@@ -151,11 +152,12 @@ que Electron y Chrome; está en cualquier escritorio con navegador.
 
 ### Ventana Alloy y sandbox
 
-El visible es Ozone `wayland` (Alloy nativo, `use-alloy-style` +
-`use-native`). Sin `WAYLAND_DISPLAY` el proceso no arranca: exit 16,
+El visible es Ozone `wayland` (Views Alloy, `--use-alloy-style`).
+No `--use-native`. Sin `WAYLAND_DISPLAY` el proceso no arranca: exit 16,
 “sin compositor Wayland”. El health es windowless / Ozone `headless` y
 no abre display. `IDIOTEQUE_CEF_ARGS` no saca el visible de wayland ni
-el health de headless.
+el health de headless, y no mete `--use-native` ni `--ozone-platform-hint`
+(con `DISPLAY` puesto, el hint `x11` / `auto` devuelve Ozone a X11).
 
 `chrome-sandbox` solo se exporta como `CHROME_DEVEL_SANDBOX` si es setuid-root.
 En `tauri dev` el helper es del usuario; en la AppImage el squashfs no puede

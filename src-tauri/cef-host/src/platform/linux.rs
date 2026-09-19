@@ -5,6 +5,26 @@ use crate::exit::{self, fatal};
 pub const WINDOW_NAME: &str = "idioteque-browser";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowIdentity {
+    pub title: &'static str,
+    pub wayland_app_id: &'static str,
+    pub wm_class_class: &'static str,
+    pub wm_class_name: &'static str,
+    pub wm_role_name: &'static str,
+}
+
+/// Views Alloy identity on Wayland. All fields are the CEF window, not the editor.
+pub fn window_identity() -> WindowIdentity {
+    WindowIdentity {
+        title: WINDOW_NAME,
+        wayland_app_id: WINDOW_NAME,
+        wm_class_class: WINDOW_NAME,
+        wm_class_name: WINDOW_NAME,
+        wm_role_name: WINDOW_NAME,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisplayEnvError {
     Empty,
 }
@@ -30,22 +50,8 @@ pub fn ensure_display() {
     }
 }
 
-/// CEF Alloy creates the toplevel. No extra native threads.
+/// CEF Views creates the toplevel. No extra native threads.
 pub fn init_threads() {}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VisibilityOp {
-    Show,
-    Hide,
-}
-
-pub fn plan_visibility(visible: bool) -> VisibilityOp {
-    if visible {
-        VisibilityOp::Show
-    } else {
-        VisibilityOp::Hide
-    }
-}
 
 pub fn hidden_flag(visible: bool) -> i32 {
     i32::from(!visible)
@@ -70,9 +76,7 @@ mod tests {
     }
 
     #[test]
-    fn show_maps_hide_unmaps() {
-        assert_eq!(plan_visibility(true), VisibilityOp::Show);
-        assert_eq!(plan_visibility(false), VisibilityOp::Hide);
+    fn hidden_flag_inverts_visibility() {
         assert_eq!(hidden_flag(true), 0);
         assert_eq!(hidden_flag(false), 1);
     }
@@ -87,5 +91,30 @@ mod tests {
     #[test]
     fn window_name_is_stable() {
         assert_eq!(WINDOW_NAME, "idioteque-browser");
+        assert_ne!(WINDOW_NAME, "idioteque");
+    }
+
+    #[test]
+    fn window_identity_is_browser_not_editor() {
+        let identity = window_identity();
+        const BROWSER: &str = "idioteque-browser";
+        assert_eq!(WINDOW_NAME, BROWSER);
+        assert_eq!(identity.title, BROWSER);
+        assert_eq!(identity.wayland_app_id, BROWSER);
+        assert_eq!(identity.wm_class_class, BROWSER);
+        assert_eq!(identity.wm_class_name, BROWSER);
+        assert_eq!(identity.wm_role_name, BROWSER);
+        for field in [
+            identity.title,
+            identity.wayland_app_id,
+            identity.wm_class_class,
+            identity.wm_class_name,
+            identity.wm_role_name,
+        ] {
+            assert_eq!(field, BROWSER);
+            assert_ne!(field, "idioteque");
+            assert_ne!(field, "chromium");
+            assert_ne!(field, "cef");
+        }
     }
 }
